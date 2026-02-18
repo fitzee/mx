@@ -1,0 +1,3 @@
+DEFINITION MODULE App;
+  VAR Width, Height: CARDINAL;
+END App.

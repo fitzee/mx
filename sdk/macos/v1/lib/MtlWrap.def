@@ -1,0 +1,18 @@
+DEFINITION MODULE FOR "C" MtlWrap;
+
+  PROCEDURE mtl_create_device(): ADDRESS;
+  PROCEDURE mtl_create_queue(device: ADDRESS): ADDRESS;
+  PROCEDURE mtl_attach_layer(device: ADDRESS; nsview: ADDRESS;
+                              width, height: CARDINAL): ADDRESS;
+  PROCEDURE mtl_load_default_library(device: ADDRESS): ADDRESS;
+  PROCEDURE mtl_compile_library(device: ADDRESS; source: ADDRESS): ADDRESS;
+  PROCEDURE mtl_create_pipeline(device: ADDRESS; library: ADDRESS;
+                                 vertex_fn, fragment_fn: ADDRESS): ADDRESS;
+  PROCEDURE mtl_create_buffer(device: ADDRESS; data: ADDRESS;
+                               size: CARDINAL): ADDRESS;
+  PROCEDURE mtl_draw(queue: ADDRESS; layer: ADDRESS; pipeline: ADDRESS;
+                      vertex_buffer: ADDRESS; vertex_count: CARDINAL;
+                      clear_rgba: ADDRESS);
+  PROCEDURE mtl_release(handle: ADDRESS);
+
+END MtlWrap.

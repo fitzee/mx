@@ -1,0 +1,5 @@
+DEFINITION MODULE Resolver;
+
+PROCEDURE Resolve(): INTEGER;
+
+END Resolver.

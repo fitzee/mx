@@ -1,0 +1,25 @@
+DEFINITION MODULE Gfx;
+
+  TYPE
+    Device   = ADDRESS;
+    Queue    = ADDRESS;
+    Layer    = ADDRESS;
+    Library  = ADDRESS;
+    Pipeline = ADDRESS;
+    Buffer   = ADDRESS;
+
+  PROCEDURE CreateDevice(): Device;
+  PROCEDURE CreateQueue(dev: Device): Queue;
+  PROCEDURE AttachLayer(dev: Device; view: ADDRESS;
+                        w, h: CARDINAL): Layer;
+  PROCEDURE LoadDefaultLibrary(dev: Device): Library;
+  PROCEDURE CompileLibrary(dev: Device; source: ADDRESS): Library;
+  PROCEDURE CreatePipeline(dev: Device; lib: Library;
+                           vertexFn, fragmentFn: ADDRESS): Pipeline;
+  PROCEDURE CreateBuffer(dev: Device; data: ADDRESS;
+                         size: CARDINAL): Buffer;
+  PROCEDURE Draw(q: Queue; l: Layer; p: Pipeline; vb: Buffer;
+                 vertexCount: CARDINAL; clearRGBA: ADDRESS);
+  PROCEDURE Release(handle: ADDRESS);
+
+END Gfx.

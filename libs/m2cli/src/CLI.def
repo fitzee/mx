@@ -1,0 +1,24 @@
+DEFINITION MODULE CLI;
+
+(* Add a boolean flag: -short / --long *)
+PROCEDURE AddFlag(short: ARRAY OF CHAR; long: ARRAY OF CHAR;
+                  description: ARRAY OF CHAR);
+
+(* Add an option that takes a value: -short VAL / --long VAL *)
+PROCEDURE AddOption(short: ARRAY OF CHAR; long: ARRAY OF CHAR;
+                    description: ARRAY OF CHAR);
+
+(* Parse command-line arguments. argc is the count, getArg is
+   the procedure that retrieves arg by index. *)
+PROCEDURE Parse(ac: CARDINAL; getArg: PROCEDURE(CARDINAL, VAR ARRAY OF CHAR));
+
+(* Returns 1 if the flag was present, 0 otherwise. *)
+PROCEDURE HasFlag(long: ARRAY OF CHAR): INTEGER;
+
+(* Returns 1 if the option was present, copies value to buf. 0 otherwise. *)
+PROCEDURE GetOption(long: ARRAY OF CHAR; VAR buf: ARRAY OF CHAR): INTEGER;
+
+(* Print usage help based on registered flags and options. *)
+PROCEDURE PrintHelp;
+
+END CLI.

@@ -1,0 +1,28 @@
+DEFINITION MODULE Lockfile;
+
+PROCEDURE Read(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE Write(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE Exists(path: ARRAY OF CHAR): INTEGER;
+
+(* Enhanced lockfile with version/source/sha256/path *)
+PROCEDURE WriteEnhanced(path: ARRAY OF CHAR): INTEGER;
+
+(* Accessors for parsed lockfile entries *)
+PROCEDURE LockDepCount(): INTEGER;
+PROCEDURE GetDepResolvedPath(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE GetDepSha(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE GetDepSource(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE GetDepLockVersion(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE GetDepLockName(i: INTEGER; VAR buf: ARRAY OF CHAR);
+
+(* Set a dep entry for lockfile writing *)
+PROCEDURE SetDepEntry(i: INTEGER; name: ARRAY OF CHAR; version: ARRAY OF CHAR;
+                      source: ARRAY OF CHAR; sha: ARRAY OF CHAR;
+                      path: ARRAY OF CHAR);
+PROCEDURE SetLockDepCount(n: INTEGER);
+
+(* bootstrap.lock support *)
+PROCEDURE WriteBoot(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE VerifyBoot(path: ARRAY OF CHAR): INTEGER;
+
+END Lockfile.

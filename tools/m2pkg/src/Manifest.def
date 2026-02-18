@@ -1,0 +1,43 @@
+DEFINITION MODULE Manifest;
+
+PROCEDURE Read(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE Clear;
+PROCEDURE WriteTemplate(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE GetName(VAR buf: ARRAY OF CHAR);
+PROCEDURE GetVersion(VAR buf: ARRAY OF CHAR);
+PROCEDURE GetEntry(VAR buf: ARRAY OF CHAR);
+PROCEDURE IsM2Plus(): INTEGER;
+PROCEDURE GetIncludes(VAR buf: ARRAY OF CHAR);
+PROCEDURE DepCount(): INTEGER;
+PROCEDURE GetDepName(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE GetDepPath(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE IsDepLocal(i: INTEGER): INTEGER;
+PROCEDURE ExtraCCount(): INTEGER;
+PROCEDURE GetExtraC(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE GetManifestVersion(): INTEGER;
+PROCEDURE GetEdition(VAR buf: ARRAY OF CHAR);
+
+(* [cc] section accessors *)
+PROCEDURE GetCCFlags(VAR buf: ARRAY OF CHAR);
+PROCEDURE GetLDFlags(VAR buf: ARRAY OF CHAR);
+PROCEDURE CCLibCount(): INTEGER;
+PROCEDURE GetCCLib(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE CCExtraCCount(): INTEGER;
+PROCEDURE GetCCExtraC(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE CCFrameworkCount(): INTEGER;
+PROCEDURE GetCCFramework(i: INTEGER; VAR buf: ARRAY OF CHAR);
+
+(* Non-local dep version accessor *)
+PROCEDURE GetDepVersion(i: INTEGER; VAR buf: ARRAY OF CHAR);
+
+(* [features] section accessors *)
+PROCEDURE FeatureCount(): INTEGER;
+PROCEDURE GetFeatureName(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE GetFeatureDefault(i: INTEGER; VAR buf: ARRAY OF CHAR);
+PROCEDURE IsFeatureEnabled(name: ARRAY OF CHAR): INTEGER;
+
+(* [registry] section *)
+PROCEDURE GetRegistryURL(VAR buf: ARRAY OF CHAR);
+PROCEDURE SetRegistryURL(url: ARRAY OF CHAR);
+
+END Manifest.

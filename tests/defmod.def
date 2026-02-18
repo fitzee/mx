@@ -1,0 +1,10 @@
+DEFINITION MODULE Stack;
+  EXPORT QUALIFIED Push, Pop, Init, Item, MaxSize;
+
+  CONST MaxSize = 100;
+  TYPE Item = INTEGER;
+
+  PROCEDURE Init;
+  PROCEDURE Push(x: Item);
+  PROCEDURE Pop(): Item;
+END Stack.

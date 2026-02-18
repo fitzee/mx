@@ -1,0 +1,9 @@
+[package]
+name = "m2pkg0"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal bootstrapper for m2pkg — the Modula-2 package manager"
+
+[[bin]]
+name = "m2pkg0"
+path = "src/main.rs"

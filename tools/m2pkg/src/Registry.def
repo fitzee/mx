@@ -1,0 +1,44 @@
+DEFINITION MODULE Registry;
+
+(* Initialize registry directory (~/.m2pkg/registry/) *)
+PROCEDURE Init(): INTEGER;
+
+(* Publish current package to local registry *)
+PROCEDURE Publish(): INTEGER;
+
+(* Lookup a package version in the registry index.
+   Returns 0 if found, -1 if not found.
+   Sets sha256 hex in shaBuf. *)
+PROCEDURE Lookup(name: ARRAY OF CHAR; version: ARRAY OF CHAR;
+                 VAR shaBuf: ARRAY OF CHAR): INTEGER;
+
+(* Fetch a package from registry to cache.
+   Returns 0 on success, sets resolved path in pathBuf. *)
+PROCEDURE Fetch(name: ARRAY OF CHAR; version: ARRAY OF CHAR;
+                VAR pathBuf: ARRAY OF CHAR): INTEGER;
+
+(* Verify a cached package against its registry sha256.
+   Returns 0 if valid, -1 if mismatch or missing. *)
+PROCEDURE Verify(name: ARRAY OF CHAR; version: ARRAY OF CHAR): INTEGER;
+
+(* Lookup a package by name and semver range spec.
+   Scans all versions in index/<name>/, picks latest matching.
+   Returns 0 on success, sets resolvedVersion and sha. *)
+PROCEDURE LookupRange(name: ARRAY OF CHAR; rangeSpec: ARRAY OF CHAR;
+                      VAR resolvedVersion: ARRAY OF CHAR;
+                      VAR shaBuf: ARRAY OF CHAR): INTEGER;
+
+(* Check if a specific version is already published.
+   Returns 1 if exists, 0 if not. *)
+PROCEDURE VersionExists(name: ARRAY OF CHAR; version: ARRAY OF CHAR): INTEGER;
+
+(* Get the latest published version of a package.
+   Returns 0 on success with version in latestBuf, -1 if no versions. *)
+PROCEDURE GetLatestVersion(name: ARRAY OF CHAR; VAR latestBuf: ARRAY OF CHAR): INTEGER;
+
+(* Fetch a package from a remote HTTP registry.
+   Returns 0 on success, sets resolved path in pathBuf. *)
+PROCEDURE FetchRemote(url: ARRAY OF CHAR; name: ARRAY OF CHAR;
+                      version: ARRAY OF CHAR; VAR pathBuf: ARRAY OF CHAR): INTEGER;
+
+END Registry.

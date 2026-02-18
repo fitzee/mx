@@ -1,0 +1,13 @@
+IMPLEMENTATION MODULE MathUtils;
+
+PROCEDURE Square(n: INTEGER): INTEGER;
+BEGIN
+  RETURN n * n
+END Square;
+
+PROCEDURE Cube(n: INTEGER): INTEGER;
+BEGIN
+  RETURN n * n * n
+END Cube;
+
+END MathUtils.

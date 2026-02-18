@@ -1,0 +1,22 @@
+DEFINITION MODULE Semver;
+
+TYPE Version = RECORD major, minor, patch: INTEGER END;
+
+(* Parse "X.Y.Z" into Version. Returns 0 on success, -1 on error. *)
+PROCEDURE Parse(s: ARRAY OF CHAR; VAR v: Version): INTEGER;
+
+(* Compare two versions. Returns -1, 0, or 1. *)
+PROCEDURE Compare(a, b: Version): INTEGER;
+
+(* Returns 1 if s is a valid semver string "X.Y.Z", 0 otherwise. *)
+PROCEDURE IsValid(s: ARRAY OF CHAR): INTEGER;
+
+(* Check if version v matches range spec.
+   Supported specs: "1.2.3" (exact), "^0.1.0" (caret), "~1.2.3" (tilde), ">=1.0.0".
+   Returns 1 if matches, 0 if not. *)
+PROCEDURE MatchesRange(v: Version; rangeSpec: ARRAY OF CHAR): INTEGER;
+
+(* Format version as "X.Y.Z" into buf. *)
+PROCEDURE ToString(v: Version; VAR buf: ARRAY OF CHAR);
+
+END Semver.

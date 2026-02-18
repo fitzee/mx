@@ -1,0 +1,9 @@
+DEFINITION MODULE Cache;
+
+PROCEDURE ComputeKey(name: ARRAY OF CHAR; version: ARRAY OF CHAR;
+                     entrySha: ARRAY OF CHAR; VAR key: ARRAY OF CHAR);
+PROCEDURE IsCached(key: ARRAY OF CHAR): INTEGER;
+PROCEDURE StoreResult(key: ARRAY OF CHAR; artifactPath: ARRAY OF CHAR): INTEGER;
+PROCEDURE LookupResult(key: ARRAY OF CHAR; destPath: ARRAY OF CHAR): INTEGER;
+
+END Cache.
