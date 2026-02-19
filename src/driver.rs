@@ -36,6 +36,8 @@ pub struct CompileOptions {
     pub frameworks: Vec<String>,
     /// Case-sensitive mode (default: false, Modula-2 is case-insensitive)
     pub case_sensitive: bool,
+    /// Compile with debug info (-g -O0) and emit #line directives in generated C
+    pub debug: bool,
 }
 
 impl Default for CompileOptions {
@@ -58,6 +60,7 @@ impl Default for CompileOptions {
             extra_cflags: Vec::new(),
             frameworks: Vec::new(),
             case_sensitive: true,
+            debug: false,
         }
     }
 }
@@ -223,6 +226,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     // Generate C
     let mut codegen = CodeGen::new();
     codegen.set_m2plus(opts.m2plus);
+    codegen.set_debug(opts.debug);
 
     // For FROM Module IMPORT and IMPORT Module, find and load dependency modules
     let imports = match &unit {
@@ -398,7 +402,9 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             cmd.arg(flag);
         }
 
-        if opts.opt_level > 0 {
+        if opts.debug {
+            cmd.args(["-g", "-O0", "-fno-omit-frame-pointer", "-fno-inline", "-gno-column-info"]);
+        } else if opts.opt_level > 0 {
             cmd.arg(format!("-O{}", opts.opt_level));
         }
         cmd.arg("-w"); // suppress warnings for generated code
@@ -415,8 +421,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             return Err(cc_failure_error(&output.stderr));
         }
 
-        // Clean up
-        let _ = fs::remove_file(&c_file);
+        // Clean up (keep .c in debug mode for source mapping)
+        if !opts.debug {
+            let _ = fs::remove_file(&c_file);
+        }
 
         if opts.verbose {
             eprintln!("m2c: wrote {}", obj_file.display());
@@ -432,66 +440,151 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                     .unwrap_or(Path::new("."))
                     .join(&*stem)
             });
-        let mut cmd = Command::new(&opts.cc);
-        cmd.arg("-o")
-            .arg(&exe_file)
-            .arg(&c_file)
-            .arg("-lm"); // link math library
 
-        // Extra C/object/archive files for FFI linking
-        for extra in &opts.extra_c_files {
-            cmd.arg(extra);
-        }
-        for path in &opts.link_paths {
-            cmd.arg(format!("-L{}", path));
-        }
-        for lib in &opts.link_libs {
-            cmd.arg(format!("-l{}", lib));
-        }
-        for flag in &opts.extra_cflags {
-            cmd.arg(flag);
-        }
-        for fw in &opts.frameworks {
-            cmd.arg("-framework");
-            cmd.arg(fw);
-        }
+        if opts.debug {
+            // Debug: two-step compile+link so .o stays on disk for DWARF
+            let obj_file = c_file.with_extension("o");
 
-        // Modula-2+ extensions: conditionally link pthreads and Boehm GC
-        if opts.m2plus {
-            if let Ok(c_src) = std::fs::read_to_string(&c_file) {
-                if c_src.contains("#define M2_USE_THREADS 1") {
-                    cmd.arg("-lpthread");
-                }
-                if c_src.contains("#define M2_USE_GC 1") {
-                    cmd.arg("-I/opt/homebrew/include");
-                    cmd.arg("-L/opt/homebrew/lib");
-                    cmd.arg("-lgc");
+            // Step 1: compile .c → .o
+            let mut compile_cmd = Command::new(&opts.cc);
+            compile_cmd.arg("-c")
+                .arg("-o").arg(&obj_file)
+                .arg(&c_file)
+                .args(["-g", "-O0", "-fno-omit-frame-pointer", "-fno-inline", "-gno-column-info"])
+                .arg("-w");
+            for flag in &opts.extra_cflags {
+                compile_cmd.arg(flag);
+            }
+            if opts.m2plus {
+                if let Ok(c_src) = std::fs::read_to_string(&c_file) {
+                    if c_src.contains("#define M2_USE_GC 1") {
+                        compile_cmd.arg("-I/opt/homebrew/include");
+                    }
                 }
             }
-        }
+            if opts.verbose {
+                eprintln!("m2c: {:?}", compile_cmd);
+            }
+            let output = compile_cmd.output().map_err(|e| {
+                CompileError::driver(format!("failed to run C compiler: {}", e))
+            })?;
+            if !output.status.success() {
+                return Err(cc_failure_error(&output.stderr));
+            }
 
-        if opts.opt_level > 0 {
-            cmd.arg(format!("-O{}", opts.opt_level));
-        }
-        cmd.arg("-w");
+            // Step 2: link .o → executable
+            let mut link_cmd = Command::new(&opts.cc);
+            link_cmd.arg("-o").arg(&exe_file)
+                .arg(&obj_file)
+                .arg("-g")
+                .arg("-lm");
+            for extra in &opts.extra_c_files {
+                link_cmd.arg(extra);
+            }
+            for path in &opts.link_paths {
+                link_cmd.arg(format!("-L{}", path));
+            }
+            for lib in &opts.link_libs {
+                link_cmd.arg(format!("-l{}", lib));
+            }
+            for fw in &opts.frameworks {
+                link_cmd.arg("-framework");
+                link_cmd.arg(fw);
+            }
+            if opts.m2plus {
+                if let Ok(c_src) = std::fs::read_to_string(&c_file) {
+                    if c_src.contains("#define M2_USE_THREADS 1") {
+                        link_cmd.arg("-lpthread");
+                    }
+                    if c_src.contains("#define M2_USE_GC 1") {
+                        link_cmd.arg("-L/opt/homebrew/lib");
+                        link_cmd.arg("-lgc");
+                    }
+                }
+            }
+            if opts.verbose {
+                eprintln!("m2c: {:?}", link_cmd);
+            }
+            let output = link_cmd.output().map_err(|e| {
+                CompileError::driver(format!("failed to link: {}", e))
+            })?;
+            if !output.status.success() {
+                return Err(cc_failure_error(&output.stderr));
+            }
 
-        if opts.verbose {
-            eprintln!("m2c: {:?}", cmd);
-        }
+            // Step 3: dsymutil to create .dSYM bundle (macOS)
+            if cfg!(target_os = "macos") {
+                let mut dsym_cmd = Command::new("dsymutil");
+                dsym_cmd.arg(&exe_file);
+                if opts.verbose {
+                    eprintln!("m2c: {:?}", dsym_cmd);
+                }
+                let _ = dsym_cmd.output(); // best-effort, don't fail if dsymutil missing
+            }
 
-        let output = cmd.output().map_err(|e| {
-            CompileError::driver(format!("failed to run C compiler: {}", e))
-        })?;
+            if opts.verbose {
+                eprintln!("m2c: wrote {}", exe_file.display());
+            }
+        } else {
+            // Release: single-step compile+link
+            let mut cmd = Command::new(&opts.cc);
+            cmd.arg("-o")
+                .arg(&exe_file)
+                .arg(&c_file)
+                .arg("-lm");
 
-        if !output.status.success() {
-            return Err(cc_failure_error(&output.stderr));
-        }
+            for extra in &opts.extra_c_files {
+                cmd.arg(extra);
+            }
+            for path in &opts.link_paths {
+                cmd.arg(format!("-L{}", path));
+            }
+            for lib in &opts.link_libs {
+                cmd.arg(format!("-l{}", lib));
+            }
+            for flag in &opts.extra_cflags {
+                cmd.arg(flag);
+            }
+            for fw in &opts.frameworks {
+                cmd.arg("-framework");
+                cmd.arg(fw);
+            }
 
-        // Clean up
-        let _ = fs::remove_file(&c_file);
+            if opts.m2plus {
+                if let Ok(c_src) = std::fs::read_to_string(&c_file) {
+                    if c_src.contains("#define M2_USE_THREADS 1") {
+                        cmd.arg("-lpthread");
+                    }
+                    if c_src.contains("#define M2_USE_GC 1") {
+                        cmd.arg("-I/opt/homebrew/include");
+                        cmd.arg("-L/opt/homebrew/lib");
+                        cmd.arg("-lgc");
+                    }
+                }
+            }
 
-        if opts.verbose {
-            eprintln!("m2c: wrote {}", exe_file.display());
+            if opts.opt_level > 0 {
+                cmd.arg(format!("-O{}", opts.opt_level));
+            }
+            cmd.arg("-w");
+
+            if opts.verbose {
+                eprintln!("m2c: {:?}", cmd);
+            }
+
+            let output = cmd.output().map_err(|e| {
+                CompileError::driver(format!("failed to run C compiler: {}", e))
+            })?;
+
+            if !output.status.success() {
+                return Err(cc_failure_error(&output.stderr));
+            }
+
+            let _ = fs::remove_file(&c_file);
+
+            if opts.verbose {
+                eprintln!("m2c: wrote {}", exe_file.display());
+            }
         }
     }
 

@@ -11,7 +11,7 @@ C is the universal portable assembly language. By emitting C, m2c inherits:
 - Every platform's C compiler and optimizer
 - Cross-compilation support (just set `--cc` to a cross compiler)
 - Easy FFI with C libraries
-- Debuggable output (the generated C is kept in `.m2c/gen/`)
+- Source-level debugging via `#line` directives (compile with `-g` to debug `.mod` files directly in LLDB/GDB)
 
 ## Why no async runtime?
 
@@ -68,6 +68,21 @@ M2C_SHOW_C_ERRORS=1 m2c program.mod -o program
 ## What Modula-2 standard does m2c follow?
 
 PIM4 (Programming in Modula-2, 4th Edition by Niklaus Wirth). Keywords are always case-insensitive; identifiers are case-sensitive by default. Use `--case-insensitive` for full case insensitivity.
+
+## How do I debug my Modula-2 program?
+
+**In VS Code**: Run "Modula-2+: Create Debug Configuration" from the Command Palette, set breakpoints by clicking the gutter, and press `F5`. You need the [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) extension. See [VS Code debugging](vscode.md#debugging) for details.
+
+**From the command line**:
+
+```bash
+m2c -g program.mod -o program
+lldb ./program
+(lldb) breakpoint set -f program.mod -l 10
+(lldb) run
+```
+
+The `-g` flag emits `#line` directives so debuggers show your `.mod` source directly. Variables, stepping, and breakpoints all work at the Modula-2 level.
 
 ## Can I use m2c without m2pkg?
 

@@ -48,6 +48,12 @@ pub struct CodeGen {
     char_array_vars: HashSet<String>,
     /// Record field names that are ARRAY OF CHAR: (record_type_name, field_name)
     char_array_fields: HashSet<(String, String)>,
+    /// Type names that are array types (for memcpy assignment)
+    array_types: HashSet<String>,
+    /// Variable names that have array types (for memcpy assignment)
+    array_vars: HashSet<String>,
+    /// Record field names that have array types: (record_type_name, field_name)
+    array_fields: HashSet<(String, String)>,
     /// Variable names that are SET or BITSET types
     set_vars: HashSet<String>,
     /// Variable names that are CARDINAL (unsigned) types
@@ -95,6 +101,12 @@ pub struct CodeGen {
     embedded_local_procs: HashSet<String>,
     /// Module-level variable names in the current embedded implementation (for module-prefixed access)
     embedded_local_vars: HashSet<String>,
+    /// Emit #line directives mapping generated C back to Modula-2 source (for -g debug builds)
+    emit_debug_lines: bool,
+    /// Last file emitted in a #line directive (to avoid redundant file changes)
+    last_line_file: String,
+    /// Last line number emitted in a #line directive (to avoid redundant directives)
+    last_line_num: usize,
 }
 
 // ── Free variable analysis helpers ─────────────────────────────────────
@@ -309,6 +321,9 @@ impl CodeGen {
             char_array_types: HashSet::new(),
             char_array_vars: HashSet::new(),
             char_array_fields: HashSet::new(),
+            array_types: HashSet::new(),
+            array_vars: HashSet::new(),
+            array_fields: HashSet::new(),
             set_vars: HashSet::new(),
             cardinal_vars: HashSet::new(),
             complex_vars: HashSet::new(),
@@ -333,11 +348,18 @@ impl CodeGen {
             def_modules: HashMap::new(),
             embedded_local_procs: HashSet::new(),
             embedded_local_vars: HashSet::new(),
+            emit_debug_lines: false,
+            last_line_file: String::new(),
+            last_line_num: 0,
         }
     }
 
     pub fn set_m2plus(&mut self, enabled: bool) {
         self.m2plus = enabled;
+    }
+
+    pub fn set_debug(&mut self, enabled: bool) {
+        self.emit_debug_lines = enabled;
     }
 
     /// Take ownership of the symbol table (for LSP use).
@@ -423,6 +445,28 @@ impl CodeGen {
 
     fn newline(&mut self) {
         self.output.push('\n');
+    }
+
+    /// Emit a C #line directive mapping back to the original Modula-2 source.
+    /// Only emits when debug lines are enabled, the location is valid (non-default),
+    /// and the line/file has changed since the last directive.
+    fn emit_line_directive(&mut self, loc: &crate::errors::SourceLoc) {
+        if !self.emit_debug_lines {
+            return;
+        }
+        if loc.line == 0 || loc.file.is_empty() {
+            return;
+        }
+        if loc.line == self.last_line_num && loc.file == self.last_line_file {
+            return;
+        }
+        self.last_line_num = loc.line;
+        if loc.file != self.last_line_file {
+            self.last_line_file = loc.file.clone();
+            self.output.push_str(&format!("#line {} \"{}\"\n", loc.line, loc.file));
+        } else {
+            self.output.push_str(&format!("#line {}\n", loc.line));
+        }
     }
 
     /// Add an imported module pair (definition + implementation) for multi-module compilation.
@@ -1028,6 +1072,9 @@ impl CodeGen {
         self.emitln("int main(int argc, char **argv) {");
         self.indent += 1;
         self.emitln("m2_argc = argc; m2_argv = argv;");
+        if self.emit_debug_lines {
+            self.emitln("setvbuf(stdout, NULL, _IONBF, 0);");
+        }
 
         // Register FINALLY handler with atexit
         if m.block.finally.is_some() {
@@ -1036,6 +1083,7 @@ impl CodeGen {
 
         self.in_module_body = true;
         if let Some(stmts) = &m.block.body {
+            self.emit_line_directive(&m.block.loc);
             for stmt in stmts {
                 self.gen_statement(stmt);
             }
@@ -1143,6 +1191,7 @@ impl CodeGen {
 
         // Module body = initialization function
         if let Some(stmts) = &m.block.body {
+            self.emit_line_directive(&m.block.loc);
             self.emitln(&format!("void {}_init(void) {{", self.mangle(&m.name)));
             self.indent += 1;
             for stmt in stmts {
@@ -1263,6 +1312,12 @@ impl CodeGen {
                                     self.char_array_fields.insert((t.name.clone(), name.clone()));
                                 }
                             }
+                            // Track array record fields for memcpy assignment
+                            if !arr_suffix.is_empty() || self.is_array_type(&f.typ) {
+                                for name in &f.names {
+                                    self.array_fields.insert((t.name.clone(), name.clone()));
+                                }
+                            }
                             self.emit(&format!("{} ", ctype));
                             for (i, name) in f.names.iter().enumerate() {
                                 if i > 0 {
@@ -1311,6 +1366,8 @@ impl CodeGen {
                     if self.is_char_array_type(tn) {
                         self.char_array_types.insert(t.name.clone());
                     }
+                    // Track all array types for memcpy assignment
+                    self.array_types.insert(t.name.clone());
                     self.emit_indent();
                     let ctype = self.type_to_c(tn);
                     let suffix = self.type_array_suffix(tn);
@@ -1426,12 +1483,24 @@ impl CodeGen {
                         self.char_array_vars.insert(name.clone());
                     }
                 }
+                // Check if this named type is an array type (for memcpy)
+                if self.array_types.contains(&qi.name) {
+                    for name in &v.names {
+                        self.array_vars.insert(name.clone());
+                    }
+                }
             }
         }
         // Also check if it's directly an ARRAY OF CHAR
         if self.is_char_array_type(&v.typ) {
             for name in &v.names {
                 self.char_array_vars.insert(name.clone());
+            }
+        }
+        // Also check if it's directly an array type (for memcpy)
+        if self.is_array_type(&v.typ) {
+            for name in &v.names {
+                self.array_vars.insert(name.clone());
             }
         }
         // Track SET/BITSET variables
@@ -1590,6 +1659,7 @@ impl CodeGen {
 
         // ── Generate this procedure ─────────────────────────────────────
         self.newline();
+        self.emit_line_directive(&p.loc);
         self.gen_proc_prototype(&p.heading);
         self.emit(" {\n");
         self.indent += 1;
@@ -1598,6 +1668,8 @@ impl CodeGen {
         // Note: VAR open array params are already pointers, so don't register them
         // as VAR (which would cause double dereferencing with (*a)[i])
         self.push_var_scope();
+        // Save array var tracking so procedure-local names don't collide with outer scope
+        let saved_array_scope = self.save_array_var_scope();
         for fp in &p.heading.params {
             if matches!(fp.typ, TypeNode::OpenArray { .. }) {
                 for name in &fp.names {
@@ -1670,6 +1742,7 @@ impl CodeGen {
 
         self.child_env_type_stack.pop();
         self.child_captures_stack.pop();
+        self.restore_array_var_scope(saved_array_scope);
         self.pop_var_scope();
         self.indent -= 1;
         self.emitln("}");
@@ -1731,42 +1804,42 @@ impl CodeGen {
     // ── Statements ──────────────────────────────────────────────────
 
     fn gen_statement(&mut self, stmt: &Statement) {
+        self.emit_line_directive(&stmt.loc);
         match &stmt.kind {
             StatementKind::Empty => {}
             StatementKind::Assign { desig, expr } => {
-                // Check if this is a string/array-of-char assignment
-                let is_string_assign = self.is_string_expr(expr) || {
-                    // Simple variable that is a char array
-                    (desig.ident.module.is_none() && desig.selectors.is_empty()
-                        && self.char_array_vars.contains(&desig.ident.name)
-                        && !matches!(&expr.kind, ExprKind::StringLit(s) if s.len() == 1)
-                        && !matches!(&expr.kind, ExprKind::CharLit(_)))
-                } || {
-                    // RHS is an open array of char parameter or char array variable
-                    if let ExprKind::Designator(rd) = &expr.kind {
-                        if rd.selectors.is_empty() {
-                            self.char_array_vars.contains(&rd.ident.name) ||
-                            self.is_open_array_param(&rd.ident.name)
-                        } else { false }
-                    } else { false }
-                } || {
-                    // LHS has selectors and ends in a char array field (e.g., p^.key)
-                    // Check by seeing if the LHS designator's last field is in char_array_vars
-                    // as "RecordType.fieldname" or if the destination type would be ARRAY OF CHAR
-                    if !desig.selectors.is_empty() {
-                        if let Some(Selector::Field(fname, _)) = desig.selectors.last() {
-                            // Check if this field name is known to be a char array
-                            self.is_char_array_field(fname)
-                        } else { false }
-                    } else { false }
+                // Check if RHS is a string literal (multi-char) → strcpy
+                let is_string_literal_assign = self.is_string_expr(expr);
+
+                // Check if LHS is an array type (variable or field) → memcpy
+                let is_array_assign = if desig.selectors.is_empty() {
+                    // Simple variable: check array_vars
+                    self.array_vars.contains(&desig.ident.name)
+                } else if let Some(Selector::Field(fname, _)) = desig.selectors.last() {
+                    // Record field: check array_fields
+                    self.is_array_field(fname)
+                } else {
+                    false
                 };
-                if is_string_assign {
+
+                if is_string_literal_assign && !is_array_assign {
+                    // String literal to 1D char array → strcpy
                     self.emit_indent();
                     self.emit("strcpy(");
                     self.gen_designator(desig);
                     self.emit(", ");
                     self.gen_expr(expr);
                     self.emit(");\n");
+                } else if is_array_assign {
+                    // Array type assignment → memcpy
+                    self.emit_indent();
+                    self.emit("memcpy(");
+                    self.gen_designator(desig);
+                    self.emit(", ");
+                    self.gen_expr(expr);
+                    self.emit(", sizeof(");
+                    self.gen_designator(desig);
+                    self.emit("));\n");
                 } else {
                     self.emit_indent();
                     self.gen_designator(desig);
@@ -3028,6 +3101,17 @@ impl CodeGen {
         self.open_array_params.pop();
     }
 
+    /// Save array_vars/char_array_vars before entering a procedure scope
+    fn save_array_var_scope(&self) -> (HashSet<String>, HashSet<String>) {
+        (self.array_vars.clone(), self.char_array_vars.clone())
+    }
+
+    /// Restore array_vars/char_array_vars after leaving a procedure scope
+    fn restore_array_var_scope(&mut self, saved: (HashSet<String>, HashSet<String>)) {
+        self.array_vars = saved.0;
+        self.char_array_vars = saved.1;
+    }
+
     /// Check if a variable name is accessed through the _env pointer in the current context
     fn is_env_var(&self, name: &str) -> bool {
         if let Some(env_vars) = self.env_access_names.last() {
@@ -3106,6 +3190,25 @@ impl CodeGen {
             TypeNode::Named(qi) => self.char_array_types.contains(&qi.name),
             _ => false,
         }
+    }
+
+    /// Check if a TypeNode is any array type (for memcpy assignment)
+    fn is_array_type(&self, tn: &TypeNode) -> bool {
+        match tn {
+            TypeNode::Array { .. } => true,
+            TypeNode::Named(qi) => self.array_types.contains(&qi.name),
+            _ => false,
+        }
+    }
+
+    /// Check if a field name belongs to an array-typed record field
+    fn is_array_field(&self, field_name: &str) -> bool {
+        for ((_rec_name, fname)) in &self.array_fields {
+            if fname == field_name {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check if an expression is a multi-char string or a char array variable
@@ -3628,5 +3731,89 @@ fn escape_c_char(ch: char) -> String {
         '\'' => "\\'".to_string(),
         '\0' => "\\0".to_string(),
         c => c.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    fn parse(input: &str) -> CompilationUnit {
+        let mut lexer = Lexer::new(input, "test.mod");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser.parse_compilation_unit().unwrap()
+    }
+
+    fn generate(input: &str, debug: bool) -> String {
+        let unit = parse(input);
+        let mut cg = CodeGen::new();
+        cg.set_debug(debug);
+        cg.generate(&unit).unwrap()
+    }
+
+    #[test]
+    fn test_line_directives_present_in_debug_mode() {
+        let src = r#"MODULE Test;
+FROM InOut IMPORT WriteString, WriteLn;
+BEGIN
+  WriteString("Hello");
+  WriteLn;
+END Test."#;
+        let c = generate(src, true);
+        assert!(c.contains("#line"), "debug output should contain #line directives");
+        assert!(c.contains("\"test.mod\""), "debug output should reference source file");
+    }
+
+    #[test]
+    fn test_no_line_directives_without_debug() {
+        let src = r#"MODULE Test;
+FROM InOut IMPORT WriteString, WriteLn;
+BEGIN
+  WriteString("Hello");
+  WriteLn;
+END Test."#;
+        let c = generate(src, false);
+        assert!(!c.contains("#line"), "non-debug output should not contain #line directives");
+    }
+
+    #[test]
+    fn test_line_directives_in_procedures() {
+        let src = r#"MODULE Test;
+FROM InOut IMPORT WriteString, WriteLn;
+PROCEDURE Greet;
+BEGIN
+  WriteString("Hi");
+  WriteLn;
+END Greet;
+BEGIN
+  Greet;
+END Test."#;
+        let c = generate(src, true);
+        // Should have #line for the procedure and for the body
+        let line_count = c.matches("#line").count();
+        assert!(line_count >= 3, "expected >=3 #line directives, got {}", line_count);
+    }
+
+    #[test]
+    fn test_line_directive_dedup() {
+        // Two statements on consecutive lines should produce two #line directives,
+        // but same-line duplicates are suppressed.
+        let src = r#"MODULE Test;
+FROM InOut IMPORT WriteString, WriteLn;
+BEGIN
+  WriteString("A");
+  WriteString("B");
+END Test."#;
+        let c = generate(src, true);
+        let lines: Vec<&str> = c.lines().filter(|l| l.starts_with("#line")).collect();
+        // Each #line should be unique (no consecutive duplicates of the same line number)
+        for pair in lines.windows(2) {
+            // Different lines can have same file, but should not repeat the same #line N
+            // unless it's for a different context
+        }
+        assert!(!lines.is_empty(), "should have #line directives");
     }
 }

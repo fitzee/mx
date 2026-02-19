@@ -138,6 +138,7 @@ pub struct BuildConfig {
     pub opt_level: u8,
     pub verbose: bool,
     pub features: Vec<String>,
+    pub debug: bool,
 }
 
 // ── build_project ───────────────────────────────────────────────────
@@ -250,6 +251,7 @@ pub fn build_project(
     opts.opt_level = config.opt_level;
     opts.verbose = config.verbose;
     opts.features = config.features.clone();
+    opts.debug = config.debug;
 
     // Apply manifest [cc] section
     opts.extra_cflags = manifest.cc.cflags.clone();

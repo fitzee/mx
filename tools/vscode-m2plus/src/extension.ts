@@ -281,6 +281,130 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Command: create debug configuration
+  context.subscriptions.push(
+    vscode.commands.registerCommand("m2c.createDebugConfig", async () => {
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders || folders.length === 0) {
+        vscode.window.showErrorMessage("No workspace folder open.");
+        return;
+      }
+      const root = folders[0].uri;
+      const fs = vscode.workspace.fs;
+
+      const tasksContent = JSON.stringify({
+        version: "2.0.0",
+        tasks: [{
+          label: "m2c: build debug",
+          type: "shell",
+          command: "m2c",
+          args: ["build", "-g"],
+          group: { kind: "build", isDefault: true },
+          problemMatcher: "$m2c",
+          presentation: { reveal: "silent", panel: "shared" },
+        }],
+      }, null, 2);
+
+      // Read project name from m2.toml manifest
+      let projectName = folders[0].name; // fallback to folder name
+      const manifestUri = vscode.Uri.joinPath(root, "m2.toml");
+      try {
+        const raw = Buffer.from(await fs.readFile(manifestUri)).toString("utf-8");
+        for (const line of raw.split("\n")) {
+          const m = line.match(/^name\s*=\s*(.+)/);
+          if (m) { projectName = m[1].trim(); break; }
+        }
+      } catch { /* no manifest yet, use folder name */ }
+
+      const launchContent = JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            name: "Debug (lldb)",
+            type: "lldb",
+            request: "launch",
+            program: `\${workspaceFolder}/.m2c/bin/${projectName}`,
+            args: [],
+            cwd: "${workspaceFolder}",
+            preLaunchTask: "m2c: build debug",
+            sourceLanguages: ["modula2"],
+          },
+        ],
+      }, null, 2);
+
+      const vscodeDirUri = vscode.Uri.joinPath(root, ".vscode");
+      await fs.createDirectory(vscodeDirUri);
+
+      const created: string[] = [];
+
+      const tasksUri = vscode.Uri.joinPath(vscodeDirUri, "tasks.json");
+      try {
+        await fs.stat(tasksUri);
+        // File exists — don't overwrite
+      } catch {
+        await fs.writeFile(tasksUri, Buffer.from(tasksContent, "utf-8"));
+        created.push("tasks.json");
+      }
+
+      const launchUri = vscode.Uri.joinPath(vscodeDirUri, "launch.json");
+      try {
+        await fs.stat(launchUri);
+      } catch {
+        await fs.writeFile(launchUri, Buffer.from(launchContent, "utf-8"));
+        created.push("launch.json");
+      }
+
+      // Write extensions.json with CodeLLDB recommendation
+      const extUri = vscode.Uri.joinPath(vscodeDirUri, "extensions.json");
+      try {
+        await fs.stat(extUri);
+        // Exists — try to merge the recommendation
+        const raw = Buffer.from(await fs.readFile(extUri)).toString("utf-8");
+        if (!raw.includes("vadimcn.vscode-lldb")) {
+          const obj = JSON.parse(raw);
+          if (!obj.recommendations) { obj.recommendations = []; }
+          obj.recommendations.push("vadimcn.vscode-lldb");
+          await fs.writeFile(extUri, Buffer.from(JSON.stringify(obj, null, 2), "utf-8"));
+          created.push("extensions.json (updated)");
+        }
+      } catch {
+        const extContent = JSON.stringify({
+          recommendations: ["vadimcn.vscode-lldb"],
+        }, null, 2);
+        await fs.writeFile(extUri, Buffer.from(extContent, "utf-8"));
+        created.push("extensions.json");
+      }
+
+      // Ensure settings.json has debug.allowBreakpointsEverywhere
+      const settingsUri = vscode.Uri.joinPath(vscodeDirUri, "settings.json");
+      try {
+        const raw = Buffer.from(await fs.readFile(settingsUri)).toString("utf-8");
+        if (!raw.includes("debug.allowBreakpointsEverywhere")) {
+          const obj = JSON.parse(raw);
+          obj["debug.allowBreakpointsEverywhere"] = true;
+          await fs.writeFile(settingsUri, Buffer.from(JSON.stringify(obj, null, 2), "utf-8"));
+          created.push("settings.json (updated)");
+        }
+      } catch {
+        const settingsContent = JSON.stringify({
+          "debug.allowBreakpointsEverywhere": true,
+        }, null, 2);
+        await fs.writeFile(settingsUri, Buffer.from(settingsContent, "utf-8"));
+        created.push("settings.json");
+      }
+
+      if (created.length > 0) {
+        vscode.window.showInformationMessage(
+          `Created .vscode/${created.join(", .vscode/")}. Install the recommended CodeLLDB extension for debugging.`
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          "Debug config files already exist. No changes made."
+        );
+      }
+    })
+  );
+
   // Command: open documentation
   context.subscriptions.push(
     vscode.commands.registerCommand("m2c.openDocumentation", async () => {

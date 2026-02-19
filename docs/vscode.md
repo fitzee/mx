@@ -74,6 +74,8 @@ Open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) and type "Modula-2+":
 |---------|-------------|
 | **Modula-2+: Restart Language Server** | Stop and restart the `m2c --lsp` process |
 | **Modula-2+: Reindex Workspace** | Force the server to rebuild its workspace index. Displays file and symbol counts on completion. |
+| **Modula-2+: Initialize Project** | Scaffold a new project (creates `m2.toml`, `src/Main.mod`, `tests/Main.mod`) |
+| **Modula-2+: Create Debug Configuration** | Create `.vscode/tasks.json` and `launch.json` for debugging. Does not overwrite existing files. |
 
 ## Tasks
 
@@ -85,6 +87,7 @@ The extension provides four tasks via a TaskProvider. Access them from Terminal 
 | run | `m2c run` | Compile and run |
 | test | `m2c test` | Compile and run tests |
 | clean | `m2c clean` | Remove `.m2c/` build directory |
+| init | `m2c init` | Initialize a new project |
 
 The **build** task is assigned to the Build group; **test** to the Test group.
 
@@ -129,6 +132,95 @@ The LSP server automatically detects projects by looking for `m2.toml` manifest 
 - Saving `m2.toml` or `m2.lock` triggers automatic reindexing
 
 No manual `-I` configuration is needed for projects with an `m2.toml` manifest.
+
+## Debugging
+
+The extension provides full source-level debugging of Modula-2 programs using LLDB via the [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) extension.
+
+### Quick start
+
+1. Install the **CodeLLDB** extension from the VS Code marketplace (`vadimcn.vscode-lldb`).
+2. Run **Modula-2+: Create Debug Configuration** from the Command Palette.
+3. Set a breakpoint by clicking the gutter next to a line number in a `.mod` file.
+4. Press `F5` to build in debug mode and launch the debugger.
+
+### What "Create Debug Configuration" does
+
+The command creates four files in `.vscode/`:
+
+| File | Purpose |
+|------|---------|
+| `tasks.json` | Build task that runs `m2c build -g` |
+| `launch.json` | CodeLLDB launch config with the binary name read from `m2.toml` |
+| `extensions.json` | Recommends the CodeLLDB extension |
+| `settings.json` | Sets `debug.allowBreakpointsEverywhere: true` (required for `.mod` breakpoints) |
+
+Existing files are not overwritten. Delete a file and re-run the command to regenerate it.
+
+### How it works
+
+When compiled with `-g`, the compiler:
+
+1. Emits C `#line` preprocessor directives mapping generated C back to `.mod` source lines
+2. Compiles to a `.o` file (kept on disk for DWARF debug info)
+3. Links to produce the executable
+4. Runs `dsymutil` (macOS) to create a `.dSYM` bundle
+5. Sets stdout to unbuffered so I/O appears immediately when stepping
+
+The C compiler flags used in debug mode:
+
+```
+-g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info
+```
+
+`-gno-column-info` suppresses C-level column positions so the debugger highlights whole `.mod` source lines rather than positions within the generated C.
+
+### Debugging features
+
+- **Breakpoints**: Click the gutter to set breakpoints on any executable line
+- **Step over** (`F10`): Advance one Modula-2 statement at a time
+- **Step into** (`F11`): Enter a procedure call
+- **Step out** (`Shift+F11`): Return from the current procedure
+- **Continue** (`F5`): Run to the next breakpoint
+- **Variables**: Local variables appear in the VARIABLES panel when paused
+- **Watch**: Add expressions to the WATCH panel to track values across steps
+- **Call stack**: View the full call stack with Modula-2 procedure names
+- **Debug console**: Type LLDB commands directly (e.g., `p myVar`, `frame variable`)
+
+### Build artifacts in debug mode
+
+```
+src/
+  Main.c          # generated C (preserved for source mapping)
+  Main.o          # object file (kept for DWARF debug info)
+.m2c/
+  bin/
+    <name>        # executable with debug info
+    <name>.dSYM/  # macOS debug symbol bundle
+```
+
+### Variable naming
+
+Local variables map 1:1 to their Modula-2 names. Module-level variables appear as `Module_varName` in the debugger. Procedure names follow the same convention (`Module_ProcName` for imported procedures).
+
+### Troubleshooting debugging
+
+**Breakpoints not working (red dots don't appear)**:
+- Ensure `debug.allowBreakpointsEverywhere` is `true` in `.vscode/settings.json`
+- Re-run "Create Debug Configuration" to regenerate the settings file
+
+**Breakpoints appear but program doesn't stop**:
+- Run `m2c clean && m2c build -g` to force a fresh debug build
+- Ensure the binary name in `launch.json` matches the `name` field in `m2.toml`
+- Check the Debug Console for error messages
+
+**Output doesn't appear when stepping**:
+- This should work automatically (stdout is unbuffered in debug mode)
+- If using a non-debug build, rebuild with `m2c build -g`
+
+**Debugger shows assembly instead of source**:
+- The `.dSYM` bundle may be missing — rebuild with `m2c clean && m2c build -g`
+- Ensure the `.mod` source files haven't moved since the last build
 
 ## Output and logs
 

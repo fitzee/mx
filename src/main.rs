@@ -33,7 +33,7 @@ fn main() {
     if args.len() < 2 || args.iter().any(|a| a == "--help" || a == "-h") {
         eprintln!("m2c - Modula-2 to C Compiler (PIM4)");
         eprintln!("Usage: m2c [options] file.mod");
-        eprintln!("       m2c build [--release] [-v] [--cc <cmd>] [--feature <name>]...");
+        eprintln!("       m2c build [--release] [-g] [-v] [--cc <cmd>] [--feature <name>]...");
         eprintln!("       m2c run [--release] [-v] [-- <args>...]");
         eprintln!("       m2c test [-v] [--feature <name>]...");
         eprintln!("       m2c clean");
@@ -59,6 +59,7 @@ fn main() {
         eprintln!("  --diagnostics-json  Emit errors as JSONL to stderr");
         eprintln!("  --feature <name>    Enable a feature for conditional compilation");
         eprintln!("  --lsp               Start LSP server (JSON-RPC over stdio)");
+        eprintln!("  -g, --debug    Compile with debug info (DWARF via #line mapping)");
         eprintln!("  -l <lib>       Link with library");
         eprintln!("  -L <path>      Add library search path");
         eprintln!("  file.c/.o/.a   Extra C/object/archive files to link");
@@ -175,6 +176,7 @@ fn main() {
                 opts.include_paths.push(PathBuf::from(&args[i]));
             }
             "-v" => opts.verbose = true,
+            "-g" | "--debug" => opts.debug = true,
             "--m2plus" => opts.m2plus = true,
             "--case-insensitive" => opts.case_sensitive = false,
             "--diagnostics-json" => opts.diagnostics_json = true,
@@ -397,6 +399,7 @@ fn run_subcommand(args: &[String]) {
     // Parse subcommand flags
     let mut verbose = false;
     let mut release = false;
+    let mut debug = false;
     let mut cc = "cc".to_string();
     let mut features: Vec<String> = Vec::new();
     let mut run_args: Vec<String> = Vec::new();
@@ -413,6 +416,7 @@ fn run_subcommand(args: &[String]) {
             "--" => saw_dashdash = true,
             "-v" => verbose = true,
             "--release" => release = true,
+            "-g" | "--debug" => debug = true,
             "--cc" => {
                 i += 1;
                 if i >= args.len() {
@@ -517,6 +521,7 @@ fn run_subcommand(args: &[String]) {
         opt_level: if release { 2 } else { 0 },
         verbose,
         features,
+        debug,
     };
 
     match build::build_project(&config, is_run, &run_args) {

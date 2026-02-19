@@ -35,6 +35,41 @@ m2c -O0 program.mod -o debug_build    # no optimization (default)
 m2c -O2 program.mod -o release_build  # optimized
 ```
 
+### Debug builds
+
+```bash
+# Compile with debug info
+m2c -g program.mod -o program
+
+# Debug build via build subcommand
+m2c build -g
+```
+
+Debug mode enables source-level debugging of Modula-2 programs. The compiler:
+
+1. Emits C `#line` directives mapping generated C back to `.mod` source lines
+2. Uses a two-step compile: `.c` → `.o` (kept on disk) → executable
+3. Runs `dsymutil` on macOS to create a `.dSYM` debug symbol bundle
+4. Sets stdout to unbuffered for immediate I/O when stepping in a debugger
+
+The C compiler flags used in debug mode:
+
+```
+-g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info
+```
+
+The `.c` and `.o` files are preserved next to the source for DWARF debug info. `-gno-column-info` suppresses C-level column positions so debuggers highlight whole `.mod` lines.
+
+```bash
+# Example LLDB session
+m2c -g hello.mod -o hello
+lldb ./hello
+(lldb) breakpoint set -f hello.mod -l 7
+(lldb) run
+```
+
+For VS Code debugging with breakpoints, stepping, and variable inspection, see [VS Code integration — Debugging](vscode.md#debugging).
+
 ### Linking
 
 ```bash
@@ -138,13 +173,16 @@ Projects with an `m2.toml` manifest can use the built-in build subcommands.
 ### Subcommands
 
 ```bash
-m2c build [--release] [-v] [--cc <cmd>] [--feature <name>]...
-m2c run [--release] [-v] [-- <args>...]
+m2c build [--release] [-g] [-v] [--cc <cmd>] [--feature <name>]...
+m2c run [--release] [-g] [-v] [-- <args>...]
 m2c test [-v] [--feature <name>]...
 m2c clean
+m2c init [name]
 ```
 
-**build** compiles the project. With `--release`, uses `-O2`. Prints "up to date" if nothing changed.
+**build** compiles the project. With `--release`, uses `-O2`. With `-g`/`--debug`, enables debug info and `#line` directives. Prints "up to date" if nothing changed.
+
+**init** scaffolds a new project with `m2.toml`, `src/Main.mod`, and `tests/Main.mod`.
 
 **run** compiles and executes the binary. Arguments after `--` are passed to the program.
 

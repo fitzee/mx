@@ -1,0 +1,182 @@
+{
+  "name": "m2plus",
+  "displayName": "Modula-2+ (m2c)",
+  "description": "Modula-2 / Modula-2+ language support powered by m2c",
+  "version": "0.1.0",
+  "publisher": "m2c",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:modula2",
+    "onView:m2cDocsBrowser"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "modula2",
+        "aliases": [
+          "Modula-2",
+          "Modula-2+",
+          "modula2"
+        ],
+        "extensions": [
+          ".mod",
+          ".def",
+          ".MOD",
+          ".DEF"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "modula2",
+        "scopeName": "source.modula2",
+        "path": "./syntaxes/modula2.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Modula-2+ (m2c)",
+      "properties": {
+        "m2c.serverPath": {
+          "type": "string",
+          "default": "m2c",
+          "description": "Path to the m2c binary"
+        },
+        "m2c.m2plus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Modula-2+ extensions"
+        },
+        "m2c.includePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional include paths (-I flags)"
+        },
+        "m2c.diagnostics.debounceMs": {
+          "type": "number",
+          "default": 250,
+          "description": "Diagnostics debounce delay in milliseconds"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "m2c-docs",
+          "title": "Modula-2 Docs",
+          "icon": "$(book)"
+        }
+      ]
+    },
+    "views": {
+      "m2c-docs": [
+        {
+          "id": "m2cDocsBrowser",
+          "name": "Language Reference"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "m2c.restartServer",
+        "title": "Restart Language Server",
+        "category": "Modula-2+"
+      },
+      {
+        "command": "m2c.reindexWorkspace",
+        "title": "Reindex Workspace",
+        "category": "Modula-2+"
+      },
+      {
+        "command": "m2c.openDocumentation",
+        "title": "Open Documentation",
+        "category": "Modula-2+"
+      },
+      {
+        "command": "m2c.refreshDocs",
+        "title": "Refresh Documentation",
+        "category": "Modula-2+",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "m2c.showDoc",
+        "title": "Show Documentation Entry",
+        "category": "Modula-2+"
+      },
+      {
+        "command": "m2c.initProject",
+        "title": "Initialize Project",
+        "category": "Modula-2+"
+      },
+      {
+        "command": "m2c.createDebugConfig",
+        "title": "Create Debug Configuration",
+        "category": "Modula-2+"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "m2c.refreshDocs",
+          "when": "view == m2cDocsBrowser",
+          "group": "navigation"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "m2c",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The m2c subcommand to run (build, run, test, clean, init)"
+          }
+        },
+        "required": ["command"]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "modula2"
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "m2c",
+        "owner": "m2c",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.+):(\\d+):(\\d+): (error|warning): (.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -61,11 +61,15 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 1. Read source file
 2. Find and parse all transitively imported `.def` and `.mod` files
 3. Run lexer → parser → codegen
-4. Write generated C to a temp file
+4. Write generated C to a file
 5. Invoke the system C compiler (`cc` by default)
 6. Link and produce the final binary
 
 The driver handles include path resolution, finding `.def`/`.mod` files, and constructing the C compiler command line.
+
+**Debug mode** (`-g`): The driver uses a two-step compile (`.c` → `.o` → executable) so the `.o` file stays on disk for DWARF debug info. On macOS, `dsymutil` creates a `.dSYM` bundle after linking. The codegen emits `#line` directives and `setvbuf(stdout, NULL, _IONBF, 0)` for unbuffered I/O. The C compiler receives `-g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info`.
+
+**Release mode**: Single-step compile+link; the `.c` file is cleaned up after compilation.
 
 ## Analysis-only path (LSP)
 
@@ -217,9 +221,10 @@ The build system stamps all source files (mtime + size + FNV-1a hash) and stores
 
 ### Unit tests (cargo test)
 
-104 tests covering:
+135 tests covering:
 - Lexer: tokenization, keywords, case sensitivity, feature pragmas
 - Parser: AST construction for various constructs
+- CodeGen: `#line` directive emission, debug/non-debug mode
 - LSP handlers: completion, hover, call hierarchy, signature help, highlighting
 - Workspace index: call graph, incremental reindex, multi-root
 - Analysis: scope map, reference index, symbol table
