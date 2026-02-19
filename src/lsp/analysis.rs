@@ -1,15 +1,24 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use crate::analyze::{self, AnalysisResult, ScopeMap};
 use crate::ast::{CompilationUnit, DefinitionModule};
-use crate::codegen::CodeGen;
-use crate::errors::CompileError;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::symtab::SymbolTable;
+use crate::types::TypeRegistry;
+
+/// Cache entry for a parsed .def file, with mtime for invalidation.
+struct DefCacheEntry {
+    def_mod: DefinitionModule,
+    mtime: SystemTime,
+}
 
 /// Cache for parsed .def files. Keyed by canonical path.
+/// Invalidates entries when the file's mtime changes.
 pub struct DefCache {
-    entries: HashMap<PathBuf, DefinitionModule>,
+    entries: HashMap<PathBuf, DefCacheEntry>,
 }
 
 impl DefCache {
@@ -18,75 +27,89 @@ impl DefCache {
     }
 
     fn get_or_parse(&mut self, path: &Path) -> Option<&DefinitionModule> {
-        let key = path.to_path_buf();
-        if !self.entries.contains_key(&key) {
-            let source = std::fs::read_to_string(path).ok()?;
-            let name = path.to_string_lossy().to_string();
+        // Canonicalize path for consistent cache keys
+        let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+        // Check if cached entry is still valid (mtime hasn't changed)
+        let current_mtime = std::fs::metadata(&key)
+            .and_then(|m| m.modified())
+            .ok();
+
+        let needs_reparse = if let Some(entry) = self.entries.get(&key) {
+            match current_mtime {
+                Some(mt) => mt != entry.mtime,
+                None => true, // can't read mtime, re-parse
+            }
+        } else {
+            true // not cached
+        };
+
+        if needs_reparse {
+            let source = std::fs::read_to_string(&key).ok()?;
+            let name = key.to_string_lossy().to_string();
             let mut lexer = Lexer::new(&source, &name);
             let tokens = lexer.tokenize().ok()?;
             let mut parser = Parser::new(tokens);
             if let Ok(CompilationUnit::DefinitionModule(def_mod)) = parser.parse_compilation_unit() {
-                self.entries.insert(key.clone(), def_mod);
+                let mtime = current_mtime.unwrap_or(SystemTime::UNIX_EPOCH);
+                self.entries.insert(key.clone(), DefCacheEntry { def_mod, mtime });
             }
         }
-        self.entries.get(&key)
+
+        self.entries.get(&key).map(|e| &e.def_mod)
     }
 }
 
-/// Result of analyzing a document.
-pub struct AnalysisResult {
-    pub errors: Vec<CompileError>,
-    pub unit: Option<CompilationUnit>,
-    pub symtab: Option<SymbolTable>,
+/// Analyze a source file: lex, parse, run sema (no codegen).
+/// Returns the full AnalysisResult with symtab, types, scope_map, and diagnostics.
+pub fn analyze(
+    source: &str,
+    filename: &str,
+    _m2plus: bool,
+    include_paths: &[PathBuf],
+    def_cache: &mut DefCache,
+) -> AnalysisResult {
+    // Collect def modules for imports
+    let def_modules = collect_def_modules(source, filename, include_paths, def_cache);
+    let def_refs: Vec<&DefinitionModule> = def_modules.iter().collect();
+
+    analyze::analyze_source(source, filename, &def_refs)
 }
 
-/// Analyze a source file: lex, parse, run sema. Returns errors and AST.
-pub fn analyze(source: &str, filename: &str, m2plus: bool, include_paths: &[PathBuf], def_cache: &mut DefCache) -> AnalysisResult {
-    let mut errors = Vec::new();
+/// Pre-parse the source to extract imports, then load .def files from disk/cache.
+fn collect_def_modules(
+    source: &str,
+    filename: &str,
+    include_paths: &[PathBuf],
+    def_cache: &mut DefCache,
+) -> Vec<DefinitionModule> {
+    let mut result = Vec::new();
 
-    // Lex
+    // Quick lex+parse just to get imports (reuse the parser)
     let mut lexer = Lexer::new(source, filename);
     let tokens = match lexer.tokenize() {
         Ok(t) => t,
-        Err(e) => {
-            errors.push(e);
-            return AnalysisResult { errors, unit: None, symtab: None };
-        }
+        Err(_) => return result,
     };
-
-    // Parse
     let mut parser = Parser::new(tokens);
     let unit = match parser.parse_compilation_unit() {
         Ok(u) => u,
-        Err(e) => {
-            let accumulated = parser.get_errors();
-            if !accumulated.is_empty() {
-                errors.extend_from_slice(accumulated);
-            } else {
-                errors.push(e);
-            }
-            return AnalysisResult { errors, unit: None, symtab: None };
-        }
+        Err(_) => return result,
     };
 
-    // Run codegen (which includes sema) to collect semantic errors
-    let mut codegen = CodeGen::new();
-    codegen.set_m2plus(m2plus);
-
-    // Load imported module definitions if available
     let imports = match &unit {
-        CompilationUnit::ProgramModule(m) => m.imports.clone(),
-        CompilationUnit::ImplementationModule(m) => m.imports.clone(),
-        _ => Vec::new(),
+        CompilationUnit::ProgramModule(m) => &m.imports,
+        CompilationUnit::ImplementationModule(m) => &m.imports,
+        _ => return result,
     };
 
     let input_path = Path::new(filename);
-    for imp in &imports {
+    for imp in imports {
         if let Some(ref from_mod) = imp.from_module {
             if !crate::stdlib::is_stdlib_module(from_mod) {
                 if let Some(def_path) = find_def_file(from_mod, input_path, include_paths) {
                     if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
-                        codegen.register_def_module(def_mod);
+                        result.push(def_mod.clone());
                     }
                 }
             }
@@ -95,7 +118,7 @@ pub fn analyze(source: &str, filename: &str, m2plus: bool, include_paths: &[Path
                 if !crate::stdlib::is_stdlib_module(mod_name) {
                     if let Some(def_path) = find_def_file(mod_name, input_path, include_paths) {
                         if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
-                            codegen.register_def_module(def_mod);
+                            result.push(def_mod.clone());
                         }
                     }
                 }
@@ -103,25 +126,13 @@ pub fn analyze(source: &str, filename: &str, m2plus: bool, include_paths: &[Path
         }
     }
 
-    match codegen.generate_or_errors(&unit) {
-        Ok(_) => {}
-        Err(errs) => {
-            errors.extend(errs);
-        }
-    }
-
-    let symtab = Some(codegen.take_symtab());
-
-    AnalysisResult {
-        errors,
-        unit: Some(unit),
-        symtab,
-    }
+    result
 }
 
-fn find_def_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]) -> Option<PathBuf> {
+/// Unified find_def_file: searches same dir as input, then include paths.
+pub fn find_def_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]) -> Option<PathBuf> {
     let dir = input_path.parent().unwrap_or(Path::new("."));
-    let candidates = vec![
+    let candidates = [
         dir.join(format!("{}.def", module_name)),
         dir.join(format!("{}.DEF", module_name)),
         dir.join(format!("{}.def", module_name.to_lowercase())),
@@ -130,7 +141,7 @@ fn find_def_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]
         if c.exists() { return Some(c.clone()); }
     }
     for inc_dir in include_paths {
-        let candidates = vec![
+        let candidates = [
             inc_dir.join(format!("{}.def", module_name)),
             inc_dir.join(format!("{}.DEF", module_name)),
             inc_dir.join(format!("{}.def", module_name.to_lowercase())),

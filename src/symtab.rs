@@ -23,6 +23,7 @@ pub struct Symbol {
     pub exported: bool,
     pub module: Option<String>,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +116,12 @@ impl SymbolTable {
         self.lookup_in_scope(self.current_scope(), name)
     }
 
+    /// Return all symbols defined directly in the given scope (not inherited from parent).
+    pub fn symbols_in_scope(&self, scope_id: usize) -> Vec<&Symbol> {
+        if scope_id >= self.scopes.len() { return vec![]; }
+        self.scopes[scope_id].symbols.values().collect()
+    }
+
     pub fn lookup_in_scope(&self, scope_id: usize, name: &str) -> Option<&Symbol> {
         let scope = &self.scopes[scope_id];
         if let Some(sym) = scope.symbols.get(name) {
@@ -159,5 +166,43 @@ impl SymbolTable {
     /// Return the number of scopes.
     pub fn scope_count(&self) -> usize {
         self.scopes.len()
+    }
+
+    /// Return the parent scope ID, if any.
+    pub fn scope_parent(&self, scope_id: usize) -> Option<usize> {
+        self.scopes.get(scope_id).and_then(|s| s.parent)
+    }
+
+    /// Look up a symbol by name, returning both the defining scope ID and the symbol.
+    /// Walks the parent chain from the current scope.
+    pub fn lookup_with_scope(&self, name: &str) -> Option<(usize, &Symbol)> {
+        self.lookup_in_scope_with_id(self.current_scope(), name)
+    }
+
+    /// Look up a symbol starting from a specific scope, returning (defining_scope_id, &Symbol).
+    pub fn lookup_in_scope_with_id(&self, scope_id: usize, name: &str) -> Option<(usize, &Symbol)> {
+        let scope = &self.scopes[scope_id];
+        if let Some(sym) = scope.symbols.get(name) {
+            return Some((scope_id, sym));
+        }
+        if let Some(parent) = scope.parent {
+            return self.lookup_in_scope_with_id(parent, name);
+        }
+        None
+    }
+
+    /// Look up a qualified name, returning (defining_scope_id, &Symbol).
+    pub fn lookup_qualified_with_scope(&self, module: &str, name: &str) -> Option<(usize, &Symbol)> {
+        if let Some(sym) = self.lookup(module) {
+            if let SymbolKind::Module { scope_id } = &sym.kind {
+                let scope = &self.scopes[*scope_id];
+                if let Some(s) = scope.symbols.get(name) {
+                    if s.exported {
+                        return Some((*scope_id, s));
+                    }
+                }
+            }
+        }
+        None
     }
 }

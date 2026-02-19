@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::analyze::{Reference, ReferenceIndex, ScopeMap};
 use crate::ast::*;
 use crate::builtins;
 use crate::errors::{CompileError, CompileResult, SourceLoc};
@@ -15,6 +16,15 @@ pub struct SemanticAnalyzer {
     in_loop: usize,
     current_proc_return: Option<TypeId>,
     pub foreign_modules: HashSet<String>,
+    /// Scope map for LSP: maps source regions to scope IDs.
+    scope_map: ScopeMap,
+    /// Stack of (scope_id, start_line, start_col) for scope span recording.
+    scope_start_stack: Vec<(usize, usize, usize)>,
+    /// Tracks the last source position seen (for estimating scope end).
+    last_line: usize,
+    last_col: usize,
+    /// Reference index: all symbol references with resolved identity.
+    ref_index: ReferenceIndex,
 }
 
 impl SemanticAnalyzer {
@@ -28,9 +38,20 @@ impl SemanticAnalyzer {
             in_loop: 0,
             current_proc_return: None,
             foreign_modules: HashSet::new(),
+            scope_map: ScopeMap::new(),
+            scope_start_stack: Vec::new(),
+            last_line: 0,
+            last_col: 0,
+            ref_index: ReferenceIndex::new(),
         };
         sa.register_builtins();
         sa
+    }
+
+    /// Consume the analyzer and return all semantic artifacts.
+    /// Used by the LSP analysis path (no codegen needed).
+    pub fn into_results(self) -> (SymbolTable, TypeRegistry, ScopeMap, ReferenceIndex, Vec<CompileError>) {
+        (self.symtab, self.types, self.scope_map, self.ref_index, self.errors)
     }
 
     fn register_builtins(&mut self) {
@@ -76,19 +97,70 @@ impl SemanticAnalyzer {
     }
 
     fn define_sym(&mut self, mut sym: Symbol, loc: &SourceLoc) {
+        let name = sym.name.clone();
+        let name_len = name.len();
         sym.loc = loc.clone();
+        self.update_last_pos(loc);
+        // Record definition reference
+        if loc.line > 0 {
+            self.ref_index.push(Reference {
+                line: loc.line,
+                col: loc.col,
+                len: name_len,
+                def_scope: self.current_scope,
+                name: name.clone(),
+                is_definition: true,
+            });
+        }
         if let Err(msg) = self.symtab.define(self.current_scope, sym) {
             self.error(loc, msg);
         }
     }
 
+    fn update_last_pos(&mut self, loc: &SourceLoc) {
+        if loc.line > self.last_line || (loc.line == self.last_line && loc.col > self.last_col) {
+            self.last_line = loc.line;
+            self.last_col = loc.col;
+        }
+    }
+
+    /// Record a use-reference to a resolved symbol.
+    fn record_use_ref(&mut self, loc: &SourceLoc, name: &str, def_scope: usize) {
+        if loc.line > 0 && !name.is_empty() {
+            self.ref_index.push(Reference {
+                line: loc.line,
+                col: loc.col,
+                len: name.len(),
+                def_scope,
+                name: name.to_string(),
+                is_definition: false,
+            });
+        }
+    }
+
+    /// Enter a scope and record its start position for the ScopeMap.
+    fn enter_scope_at(&mut self, name: &str, loc: &SourceLoc) -> usize {
+        let scope_id = self.enter_scope(name);
+        self.scope_start_stack.push((scope_id, loc.line, loc.col));
+        self.update_last_pos(loc);
+        scope_id
+    }
+
+    /// Leave a scope and record its span in the ScopeMap.
+    fn leave_scope_at(&mut self) {
+        if let Some((scope_id, start_line, start_col)) = self.scope_start_stack.pop() {
+            self.scope_map.push(scope_id, start_line, start_col, self.last_line, self.last_col);
+        }
+        self.leave_scope();
+    }
+
     // ── Module analysis ─────────────────────────────────────────────
 
     fn analyze_program_module(&mut self, m: &ProgramModule) {
-        let scope_id = self.enter_scope(&m.name);
+        let scope_id = self.enter_scope_at(&m.name, &m.loc);
         self.process_imports(&m.imports);
         self.analyze_block(&m.block);
-        self.leave_scope();
+        self.leave_scope_at();
 
         // Register module in parent scope
         let sym = Symbol {
@@ -98,6 +170,7 @@ impl SemanticAnalyzer {
             exported: false,
             module: None,
             loc: SourceLoc::default(),
+            doc: None,
         };
         self.define_sym(sym, &m.loc);
     }
@@ -106,7 +179,7 @@ impl SemanticAnalyzer {
         if m.foreign_lang.is_some() {
             self.foreign_modules.insert(m.name.clone());
         }
-        let scope_id = self.enter_scope(&m.name);
+        let scope_id = self.enter_scope_at(&m.name, &m.loc);
         self.process_imports(&m.imports);
 
         // In PIM4, all names in a definition module are exported by default.
@@ -131,6 +204,7 @@ impl SemanticAnalyzer {
                         exported: export_all || exported_names.contains(&c.name),
                         module: Some(m.name.clone()),
                         loc: SourceLoc::default(),
+                        doc: c.doc.clone(),
                     };
                     self.define_sym(sym, &c.loc);
                 }
@@ -151,6 +225,7 @@ impl SemanticAnalyzer {
                         exported: export_all || exported_names.contains(&t.name),
                         module: Some(m.name.clone()),
                         loc: SourceLoc::default(),
+                        doc: t.doc.clone(),
                     };
                     self.define_sym(sym, &t.loc);
                 }
@@ -164,6 +239,7 @@ impl SemanticAnalyzer {
                             exported: export_all || exported_names.contains(name),
                             module: Some(m.name.clone()),
                             loc: SourceLoc::default(),
+                            doc: v.doc.clone(),
                         };
                         self.define_sym(sym, &v.loc);
                     }
@@ -181,6 +257,7 @@ impl SemanticAnalyzer {
                         exported: export_all || exported_names.contains(&h.name),
                         module: Some(m.name.clone()),
                         loc: SourceLoc::default(),
+                        doc: h.doc.clone(),
                     };
                     self.define_sym(sym, &h.loc);
                 }
@@ -193,12 +270,13 @@ impl SemanticAnalyzer {
                         exported: export_all || exported_names.contains(&e.name),
                         module: Some(m.name.clone()),
                         loc: SourceLoc::default(),
+                        doc: e.doc.clone(),
                     };
                     self.define_sym(sym, &e.loc);
                 }
             }
         }
-        self.leave_scope();
+        self.leave_scope_at();
 
         let sym = Symbol {
             name: m.name.clone(),
@@ -207,15 +285,16 @@ impl SemanticAnalyzer {
             exported: false,
             module: None,
             loc: SourceLoc::default(),
+            doc: None,
         };
         self.define_sym(sym, &m.loc);
     }
 
     fn analyze_implementation_module(&mut self, m: &ImplementationModule) {
-        let scope_id = self.enter_scope(&m.name);
+        let scope_id = self.enter_scope_at(&m.name, &m.loc);
         self.process_imports(&m.imports);
         self.analyze_block(&m.block);
-        self.leave_scope();
+        self.leave_scope_at();
 
         let sym = Symbol {
             name: m.name.clone(),
@@ -224,6 +303,7 @@ impl SemanticAnalyzer {
             exported: false,
             module: None,
             loc: SourceLoc::default(),
+            doc: None,
         };
         self.define_sym(sym, &m.loc);
     }
@@ -244,6 +324,7 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: None,
                     loc: SourceLoc::default(),
+                    doc: None,
                 };
                 let _ = self.symtab.define(self.current_scope, mod_sym);
 
@@ -258,6 +339,7 @@ impl SemanticAnalyzer {
                             exported: false,
                             module: Some(from_mod.clone()),
                             loc: imported.loc,
+                            doc: imported.doc,
                         });
                     } else {
                         // Register as unknown procedure stub
@@ -272,6 +354,7 @@ impl SemanticAnalyzer {
                             exported: false,
                             module: Some(from_mod.clone()),
                             loc: SourceLoc::default(),
+                            doc: None,
                         };
                         let _ = self.symtab.define(self.current_scope, sym);
                     }
@@ -294,6 +377,7 @@ impl SemanticAnalyzer {
                         exported: false,
                         module: None,
                         loc: SourceLoc::default(),
+                        doc: None,
                     };
                     let _ = self.symtab.define(self.current_scope, sym);
                 }
@@ -304,6 +388,7 @@ impl SemanticAnalyzer {
     // ── Block / declarations ────────────────────────────────────────
 
     fn analyze_block(&mut self, block: &Block) {
+        self.update_last_pos(&block.loc);
         // First pass: register all type names as placeholders for forward references
         for decl in &block.decls {
             if let Declaration::Type(t) = decl {
@@ -319,6 +404,7 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: None,
                     loc: SourceLoc::default(),
+                    doc: None,
                 };
                 let _ = self.symtab.define(self.current_scope, sym);
             }
@@ -346,6 +432,7 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: None,
                     loc: SourceLoc::default(),
+                    doc: c.doc.clone(),
                 };
                 self.define_sym(sym, &c.loc);
             }
@@ -369,6 +456,7 @@ impl SemanticAnalyzer {
                         exported: false,
                         module: None,
                         loc: SourceLoc::default(),
+                        doc: t.doc.clone(),
                     };
                     self.define_sym(sym, &t.loc);
                 }
@@ -383,6 +471,7 @@ impl SemanticAnalyzer {
                         exported: false,
                         module: None,
                         loc: SourceLoc::default(),
+                        doc: v.doc.clone(),
                     };
                     self.define_sym(sym, &v.loc);
                 }
@@ -400,13 +489,14 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: None,
                     loc: SourceLoc::default(),
+                    doc: p.doc.clone(),
                 };
                 self.define_sym(sym, &p.loc);
 
                 // Analyze procedure body
                 let saved_return = self.current_proc_return;
                 self.current_proc_return = ret;
-                self.enter_scope(&p.heading.name);
+                self.enter_scope_at(&p.heading.name, &p.loc);
 
                 // Define parameters as local variables
                 for param in &params {
@@ -417,12 +507,13 @@ impl SemanticAnalyzer {
                         exported: false,
                         module: None,
                         loc: SourceLoc::default(),
+                        doc: None,
                     };
                     let _ = self.symtab.define(self.current_scope, sym);
                 }
 
                 self.analyze_block(&p.block);
-                self.leave_scope();
+                self.leave_scope_at();
                 self.current_proc_return = saved_return;
             }
             Declaration::Module(m) => {
@@ -437,6 +528,7 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: None,
                     loc: SourceLoc::default(),
+                    doc: e.doc.clone(),
                 };
                 self.define_sym(sym, &e.loc);
             }
@@ -598,6 +690,7 @@ impl SemanticAnalyzer {
                         exported: false,
                         module: None,
                         loc: SourceLoc::default(),
+                        doc: None,
                     };
                     let _ = self.symtab.define(self.current_scope, sym);
                 }
@@ -682,19 +775,22 @@ impl SemanticAnalyzer {
     }
 
     fn resolve_named_type(&mut self, qi: &QualIdent) -> TypeId {
-        let sym = if let Some(module) = &qi.module {
-            self.symtab.lookup_qualified(module, &qi.name).cloned()
+        let resolved = if let Some(module) = &qi.module {
+            self.symtab.lookup_qualified_with_scope(module, &qi.name)
+                .map(|(ds, sym)| (ds, sym.typ, sym.kind.clone()))
         } else {
-            self.symtab.lookup(&qi.name).cloned()
+            self.symtab.lookup_in_scope_with_id(self.current_scope, &qi.name)
+                .map(|(ds, sym)| (ds, sym.typ, sym.kind.clone()))
         };
 
-        if let Some(sym) = sym {
-            match &sym.kind {
-                SymbolKind::Type => sym.typ,
-                SymbolKind::EnumVariant(_) => sym.typ,
+        if let Some((def_scope, typ, kind)) = resolved {
+            self.record_use_ref(&qi.loc, &qi.name, def_scope);
+            match &kind {
+                SymbolKind::Type => typ,
+                SymbolKind::EnumVariant(_) => typ,
                 _ => {
                     // Could be using a type name that's also a module, etc.
-                    sym.typ
+                    typ
                 }
             }
         } else {
@@ -735,6 +831,7 @@ impl SemanticAnalyzer {
     // ── Statement analysis ──────────────────────────────────────────
 
     fn analyze_statement(&mut self, stmt: &Statement) {
+        self.update_last_pos(&stmt.loc);
         match &stmt.kind {
             StatementKind::Empty => {}
             StatementKind::Assign { desig, expr } => {
@@ -850,8 +947,10 @@ impl SemanticAnalyzer {
                 step,
                 body,
             } => {
-                if let Some(sym) = self.symtab.lookup(var) {
-                    let vt = sym.typ;
+                let lookup = self.symtab.lookup_in_scope_with_id(self.current_scope, var)
+                    .map(|(ds, sym)| (ds, sym.typ));
+                if let Some((def_scope, vt)) = lookup {
+                    self.record_use_ref(&stmt.loc, var, def_scope);
                     if !self.types.get(vt).is_ordinal() {
                         self.error(&stmt.loc, "FOR variable must be ordinal type");
                     }
@@ -1093,21 +1192,33 @@ impl SemanticAnalyzer {
 
     fn analyze_designator(&mut self, desig: &Designator) -> TypeId {
         let sym_type = if let Some(module) = &desig.ident.module {
-            if let Some(sym) = self.symtab.lookup_qualified(module, &desig.ident.name) {
-                sym.typ
+            // Qualified access: Module.Name
+            let lookup = self.symtab.lookup_qualified_with_scope(module, &desig.ident.name)
+                .map(|(ds, sym)| (ds, sym.typ));
+            if let Some((def_scope, typ)) = lookup {
+                self.record_use_ref(&desig.ident.loc, &desig.ident.name, def_scope);
+                typ
             } else {
                 // Try direct lookup as fallback
-                if let Some(sym) = self.symtab.lookup(&desig.ident.name) {
-                    sym.typ
+                let lookup2 = self.symtab.lookup_in_scope_with_id(self.current_scope, &desig.ident.name)
+                    .map(|(ds, sym)| (ds, sym.typ));
+                if let Some((def_scope, typ)) = lookup2 {
+                    self.record_use_ref(&desig.ident.loc, &desig.ident.name, def_scope);
+                    typ
                 } else {
                     TY_VOID
                 }
             }
-        } else if let Some(sym) = self.symtab.lookup(&desig.ident.name) {
-            sym.typ
         } else {
-            // Don't error for imported names that might be forward-declared
-            TY_VOID
+            let lookup = self.symtab.lookup_in_scope_with_id(self.current_scope, &desig.ident.name)
+                .map(|(ds, sym)| (ds, sym.typ));
+            if let Some((def_scope, typ)) = lookup {
+                self.record_use_ref(&desig.ident.loc, &desig.ident.name, def_scope);
+                typ
+            } else {
+                // Don't error for imported names that might be forward-declared
+                TY_VOID
+            }
         };
 
         let mut current_type = sym_type;

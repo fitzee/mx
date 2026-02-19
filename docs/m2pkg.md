@@ -1,113 +1,217 @@
 # m2pkg — Modula-2 Package Manager
 
-`m2pkg` is a self-hosted package manager for Modula-2, written in Modula-2 itself. It reads `m2.mod` manifests, resolves local path dependencies, and invokes `m2c` to build projects.
+`m2pkg` is a self-hosted package manager for Modula-2, written in Modula-2 itself. It reads `m2.toml` manifests, resolves dependencies, and invokes `m2c` to build projects.
 
-## Quick Start
+## Quick start
 
-```sh
+```bash
 # Bootstrap: build m2pkg from source using m2pkg0
-cd path/to/m2  # project root
-cargo build    # ensure m2c is built
-cd tools/m2pkg0 && cargo run -- build
+cd path/to/m2
+cargo build --release         # build m2c
+cd tools/m2pkg0
+cargo build --release         # build bootstrapper
+cargo run -- build            # build m2pkg using m2c
 
-# Or use the bootstrapper directly
-./tools/m2pkg0/target/debug/m2pkg0 run version
+# The self-hosted binary is at tools/m2pkg/target/m2pkg
 ```
 
 ## Commands
 
 ### `m2pkg init`
-Create a new `m2.mod` manifest template in the current directory.
+Create a new `m2.toml` manifest template in the current directory.
 
-### `m2pkg build [--release] [--target T]`
-Build the package. Reads `m2.mod`, constructs the `m2c` command, and compiles. Output goes to `target/<name>`.
+### `m2pkg build [--release]`
+Build the package. Reads `m2.toml`, resolves dependencies, constructs the `m2c` command, and compiles. Output goes to `target/<name>`.
 
 - `--release` — pass `-O2` to m2c
-- `--target T` — (reserved for cross-compilation)
 
-### `m2pkg run [--release] [--target T]`
-Build and immediately run the package.
+### `m2pkg run [--release] [-- args...]`
+Build and immediately run the package. Arguments after `--` are passed to the program.
 
 ### `m2pkg resolve`
-Validate dependencies and generate `m2.lock`.
+Validate dependencies and generate/update `m2.lock`.
+
+### `m2pkg publish`
+Publish the package to the registry. Enforces: valid semver, no duplicates, version >= latest.
+
+### `m2pkg fetch <name> <version>`
+Download a package from the registry to the local cache.
 
 ### `m2pkg version`
 Print the m2pkg version.
 
-## Package Manifest (`m2.mod`)
+### `m2pkg clean`
+Remove build artifacts.
 
-INI-like format with `key=value` pairs:
+### `m2pkg check`
+Validate the manifest and lockfile.
+
+### `m2pkg verify`
+Verify lockfile integrity (SHA-256 hashes).
+
+## Package manifest (`m2.toml`)
+
+INI-like format with `key=value` pairs and `[section]` headers:
 
 ```ini
-# m2.mod - package manifest
+# m2.toml - package manifest
+manifest_version=1
 name=hello
 version=0.1.0
+edition=pim4
 entry=src/Main.mod
 m2plus=false
 includes=src
-extra-c=libs/helper.c
 
 [deps]
 mylib=path:../mylib
+otherlib=0.2.0
+
+[cc]
+cflags=-Wall
+ldflags=-L/usr/local/lib
+libs=m pthread
+extra-c=libs/helper.c
+frameworks=CoreFoundation
+
+[test]
+entry=tests/Main.mod
+includes=tests
+
+[features]
+threading=false
+gc=false
 ```
 
-### Fields
+### Core fields
 
-| Key        | Description |
-|------------|-------------|
-| `name`     | Package name |
-| `version`  | Semantic version string |
-| `entry`    | Path to the main module (.mod file) |
-| `m2plus`   | `true` or `false` — enable M2+ extensions |
-| `includes` | Space-separated include search paths |
-| `extra-c`  | Extra C source files to compile and link |
+| Key | Description | Default |
+|-----|-------------|---------|
+| `name` | Package name (required) | — |
+| `version` | Semantic version X.Y.Z (required) | — |
+| `entry` | Path to the main module | `src/Main.mod` |
+| `m2plus` | Enable M2+ extensions | `false` |
+| `edition` | Set to `m2plus` for extensions | `pim4` |
+| `includes` | Space-separated include directories | — |
+| `manifest_version` | Manifest format version | `1` |
 
-### Dependencies (`[deps]` section)
-
-v0 supports only local path dependencies:
+### `[deps]` section
 
 ```ini
 [deps]
-mylib=path:../mylib
+mylib=path:../mylib         # local path dependency
+otherlib=0.2.0              # registry dependency (semver)
 ```
 
-Each dependency must have its own `m2.mod` manifest. The dependency's `src/` directory is added to the include path.
+Each dependency must have its own `m2.toml`. Its include directories are added to the compiler's search path.
+
+### `[cc]` section
+
+C compiler integration. All values are space-separated lists.
+
+| Key | Description |
+|-----|-------------|
+| `cflags` | Extra C compiler flags |
+| `ldflags` | Linker flags |
+| `libs` | Libraries to link (names only, not `-l` prefix) |
+| `extra-c` | Extra C source files to compile and link |
+| `frameworks` | macOS frameworks |
+
+These are transitive — a dependency's `[cc]` settings propagate to dependents.
+
+### `[test]` section
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `entry` | Test entry point module | `tests/Main.mod` |
+| `includes` | Test-only include directories | — |
+
+### `[features]` section
+
+Define feature gates for conditional compilation:
+
+```ini
+[features]
+threading=false
+gc=false
+```
+
+Features are enabled via `--feature` flags and control `(*$IF name*)` pragmas in source.
+
+### `[registry]` section
+
+```ini
+[registry]
+url=https://registry.example.com
+```
 
 ## Lockfile (`m2.lock`)
 
-Generated by `m2pkg resolve`. Records the resolved dependency graph:
+Generated by `m2pkg resolve`. Records the resolved dependency graph with integrity hashes:
 
 ```ini
-# m2.lock - generated by m2pkg resolve
-
 [package]
 name=hello
 version=0.1.0
 
 [dep.mylib]
+version=0.1.0
+source=local
+sha256=abc123def456...
 path=../mylib
 ```
 
+Do not edit manually. Regenerate with `m2pkg resolve`.
+
+The lockfile's content hash (`Lockfile::content_hash()`, FNV-1a 64-bit) is used by the LSP server as a cache key — changes to `m2.lock` invalidate the analysis cache and trigger reindexing.
+
+## Registry and cache
+
+| Path | Contents |
+|------|----------|
+| `~/.m2pkg/registry/` | Package index and published packages |
+| `~/.m2pkg/cache/` | Downloaded package cache |
+
+### Semver resolution
+
+Registry dependencies use semver ranges:
+- `^1.2.3` — compatible with 1.2.3 (>=1.2.3, <2.0.0)
+- `~1.2.3` — patch-level changes (>=1.2.3, <1.3.0)
+- `>=1.0.0` — minimum version
+- `1.2.3` — exact version
+
 ## Architecture
 
-m2pkg is self-hosted: it's written in Modula-2 and compiled by m2c. The bootstrapping chain is:
+m2pkg is self-hosted: written in Modula-2, compiled by m2c. The bootstrapping chain is:
 
-1. `cargo build` — build the m2c compiler
+1. `cargo build` — build the m2c compiler (Rust)
 2. `m2pkg0 build` — the Rust bootstrapper compiles m2pkg using m2c
 3. `m2pkg build` — m2pkg can now build itself and other packages
 
-### Module Structure
+### Module structure
 
-| Module   | Purpose |
-|----------|---------|
-| Main     | CLI entry point, command dispatch |
-| Manifest | Parse and query `m2.mod` files |
-| Builder  | Construct and execute m2c commands |
+| Module | Purpose |
+|--------|---------|
+| Main | CLI entry point, command dispatch |
+| Manifest | Parse and query `m2.toml` files |
+| Builder | Construct and execute m2c commands |
 | Lockfile | Read and write `m2.lock` files |
 | Resolver | Validate dependencies, generate lockfile |
-| Cache    | Build cache (v0: stub) |
-| Sys      | Foreign C bindings to `libs/m2sys/` |
+| Registry | Package publishing, fetching, version lookup |
+| Semver | Semantic version parsing, comparison, range matching |
+| Sys | Foreign C bindings to `libs/m2sys/` |
 
-### C Shim (`libs/m2sys/`)
+### C shim (`libs/m2sys/`)
 
-Provides file I/O, process execution, SHA-256, and path utilities that aren't available in standard Modula-2. The M2 `Sys` module binds to these via `DEFINITION MODULE FOR "C"`.
+Provides capabilities not available in standard Modula-2:
+- File I/O (read, write, stat, mkdir, rmdir)
+- Process execution (exec, wait)
+- SHA-256 hashing
+- Path utilities (join, basename, dirname)
+- Tar archive creation
+
+The M2 `Sys` module binds to these via `DEFINITION MODULE FOR "C"`.
+
+### Bootstrap integrity
+
+`bootstrap.lock` contains `entry_sha256` and `tree_sha256` for verifying that the bootstrapped m2pkg binary matches expectations.

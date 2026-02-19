@@ -13,7 +13,7 @@ fn find_project_root() -> Option<PathBuf> {
     // Walk up from the current exe or cwd looking for Cargo.toml + tools/m2pkg/
     let mut dir = env::current_dir().ok()?;
     for _ in 0..10 {
-        if dir.join("tools/m2pkg/m2.mod").exists() {
+        if dir.join("tools/m2pkg/m2.toml").exists() {
             return Some(dir);
         }
         if !dir.pop() {
@@ -57,9 +57,9 @@ fn build_m2pkg(root: &Path, m2c: &Path) -> Result<PathBuf, String> {
 
     let output = out_dir.join("m2pkg");
 
-    // Read m2.mod to determine entry and extra-c
-    let manifest = std::fs::read_to_string(pkg_dir.join("m2.mod"))
-        .map_err(|e| format!("cannot read m2.mod: {}", e))?;
+    // Read m2.toml to determine entry and extra-c
+    let manifest = std::fs::read_to_string(pkg_dir.join("m2.toml"))
+        .map_err(|e| format!("cannot read m2.toml: {}", e))?;
 
     let mut entry = String::from("src/Main.mod");
     let mut includes = Vec::new();
@@ -140,7 +140,7 @@ fn main() -> ExitCode {
     let root = match find_project_root() {
         Some(r) => r,
         None => {
-            eprintln!("m2pkg0: cannot find project root (no tools/m2pkg/m2.mod found)");
+            eprintln!("m2pkg0: cannot find project root (no tools/m2pkg/m2.toml found)");
             return ExitCode::from(1);
         }
     };

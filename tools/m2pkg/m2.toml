@@ -1,4 +1,4 @@
-# m2.mod - m2pkg package manifest (self-hosting)
+# m2.toml - m2pkg package manifest (self-hosting)
 name=m2pkg
 version=0.1.0
 entry=src/Main.mod

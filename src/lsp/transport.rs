@@ -77,3 +77,15 @@ pub fn send_notification(method: &str, params: Json) {
     ]);
     write_message(&msg);
 }
+
+/// Send a JSON-RPC request from server to client (e.g. window/workDoneProgress/create).
+/// Returns the request id used.
+pub fn send_request(id: i64, method: &str, params: Json) {
+    let msg = Json::obj(vec![
+        ("jsonrpc", Json::str_val("2.0")),
+        ("id", Json::int_val(id)),
+        ("method", Json::str_val(method)),
+        ("params", params),
+    ]);
+    write_message(&msg);
+}

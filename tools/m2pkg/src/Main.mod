@@ -39,7 +39,7 @@ BEGIN
   WriteString("Usage: m2pkg <command> [options]"); WriteLn;
   WriteLn;
   WriteString("Commands:"); WriteLn;
-  WriteString("  init       Create a new m2.mod manifest"); WriteLn;
+  WriteString("  init       Create a new m2.toml manifest"); WriteLn;
   WriteString("  build      Build the package"); WriteLn;
   WriteString("  run        Build and run the package"); WriteLn;
   WriteString("  resolve    Generate m2.lock from dependencies"); WriteLn;
@@ -62,24 +62,24 @@ END ShowHelp;
 PROCEDURE DoInit;
 VAR mf: ARRAY [0..15] OF CHAR;
 BEGIN
-  Assign("m2.mod", mf);
+  Assign("m2.toml", mf);
   IF m2sys_file_exists(ADR(mf)) = 1 THEN
-    WriteString("m2pkg: m2.mod already exists"); WriteLn;
+    WriteString("m2pkg: m2.toml already exists"); WriteLn;
     RETURN
   END;
-  rc := WriteTemplate("m2.mod");
+  rc := WriteTemplate("m2.toml");
   IF rc = 0 THEN
-    WriteString("m2pkg: created m2.mod"); WriteLn
+    WriteString("m2pkg: created m2.toml"); WriteLn
   ELSE
-    WriteString("m2pkg: failed to create m2.mod"); WriteLn
+    WriteString("m2pkg: failed to create m2.toml"); WriteLn
   END
 END DoInit;
 
 PROCEDURE LoadManifest(): INTEGER;
 BEGIN
-  rc := Read("m2.mod");
+  rc := Read("m2.toml");
   IF rc < 0 THEN
-    WriteString("m2pkg: cannot read m2.mod (are you in a package directory?)"); WriteLn;
+    WriteString("m2pkg: cannot read m2.toml (are you in a package directory?)"); WriteLn;
     RETURN 1
   END;
   RETURN 0

@@ -27,6 +27,7 @@ pub struct ProgramModule {
     pub is_safe: bool,
     pub is_unsafe: bool,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +40,7 @@ pub struct DefinitionModule {
     pub is_unsafe: bool,
     pub foreign_lang: Option<String>,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +52,7 @@ pub struct ImplementationModule {
     pub is_safe: bool,
     pub is_unsafe: bool,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 // ── Imports / Exports ───────────────────────────────────────────────
@@ -106,6 +109,7 @@ pub enum Declaration {
 pub struct ExceptionDecl {
     pub name: Ident,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +117,7 @@ pub struct ConstDecl {
     pub name: Ident,
     pub expr: Expr,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +125,7 @@ pub struct TypeDecl {
     pub name: Ident,
     pub typ: Option<TypeNode>, // None = opaque type in DEFINITION MODULE
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +133,7 @@ pub struct VarDecl {
     pub names: Vec<Ident>,
     pub typ: TypeNode,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +141,7 @@ pub struct ProcDecl {
     pub heading: ProcHeading,
     pub block: Block,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +154,7 @@ pub struct ProcHeading {
     /// (*$EXPORTC "name"*) — emit procedure with C linkage under this name
     pub export_c_name: Option<String>,
     pub loc: SourceLoc,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]

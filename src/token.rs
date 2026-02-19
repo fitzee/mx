@@ -116,6 +116,9 @@ pub enum TokenKind {
     // Pragmas
     Pragma(String, Option<String>),   // (*$DIRECTIVE "arg"*)
 
+    // Documentation comment: (** ... *) or (*! ... *)
+    DocComment(String),
+
     // Special
     Eof,
 }
@@ -277,6 +280,7 @@ impl TokenKind {
             TokenKind::Ampersand => "'&'",
             TokenKind::Tilde => "'~'",
             TokenKind::Pragma(_, _) => "pragma",
+            TokenKind::DocComment(_) => "doc comment",
             TokenKind::Eof => "end of file",
         }
     }

@@ -366,7 +366,8 @@ impl CodeGen {
         for imp in imports {
             if let Some(ref from_mod) = imp.from_module {
                 match from_mod.as_str() {
-                    "Thread" | "Mutex" | "Condition" => self.uses_threads = true,
+                    "Thread" | "Mutex" | "Condition"
+                    | "THREAD" | "MUTEX" | "CONDITION" => self.uses_threads = true,
                     _ => {}
                 }
             }
@@ -667,6 +668,33 @@ impl CodeGen {
         self.emitln(&format!("/* Imported Module {} */", imp.name));
         self.newline();
 
+        // Forward declare all record types as structs (to allow pointer-to-struct typedefs)
+        // Must come before any struct definitions so that type references resolve.
+
+        // From the definition module:
+        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+            let impl_type_names: HashSet<String> = imp.block.decls.iter()
+                .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
+                .collect();
+            for d in &def_mod.definitions {
+                if let Definition::Type(t) = d {
+                    if !impl_type_names.contains(&t.name) {
+                        if matches!(&t.typ, Some(TypeNode::Record { .. })) {
+                            self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                        }
+                    }
+                }
+            }
+        }
+        // From the implementation block:
+        for decl in &imp.block.decls {
+            if let Declaration::Type(t) = decl {
+                if matches!(&t.typ, Some(TypeNode::Record { .. })) {
+                    self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                }
+            }
+        }
+
         // Emit type and const declarations from the corresponding definition module,
         // but skip types that are redefined in the implementation module
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
@@ -682,15 +710,6 @@ impl CodeGen {
                     }
                     Definition::Const(c) => self.gen_const_decl(c),
                     _ => {}
-                }
-            }
-        }
-
-        // Forward declare all record types as structs (to allow pointer-to-struct typedefs)
-        for decl in &imp.block.decls {
-            if let Declaration::Type(t) = decl {
-                if matches!(&t.typ, Some(TypeNode::Record { .. })) {
-                    self.emitln(&format!("typedef struct {} {};", t.name, t.name));
                 }
             }
         }

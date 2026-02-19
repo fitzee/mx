@@ -9,6 +9,7 @@ pub struct Lexer {
     col: usize,
     file: String,
     features: HashSet<String>,
+    case_sensitive: bool,
 }
 
 impl Lexer {
@@ -20,7 +21,12 @@ impl Lexer {
             col: 1,
             file: file.to_string(),
             features: HashSet::new(),
+            case_sensitive: true,
         }
+    }
+
+    pub fn set_case_sensitive(&mut self, val: bool) {
+        self.case_sensitive = val;
     }
 
     pub fn set_features(&mut self, features: &[String]) {
@@ -72,6 +78,63 @@ impl Lexer {
         if self.peek() == Some('$') {
             self.advance(); // consume '$'
             return self.read_pragma(loc);
+        }
+
+        // Check for doc comment: (** ...*) or (*! ...*)
+        let is_doc = self.peek() == Some('*') || self.peek() == Some('!');
+        let mut content = String::new();
+        if is_doc {
+            let marker = self.advance().unwrap(); // consume '*' or '!'
+            // (*** is NOT a doc comment — only exactly (** or (*!
+            if marker == '*' && self.peek() == Some('*') {
+                // Three or more stars — treat as regular comment
+                let mut depth = 1;
+                while depth > 0 {
+                    match self.peek() {
+                        None => return Err(CompileError::lexer(loc, "unterminated comment")),
+                        Some('(') => { self.advance(); if self.peek() == Some('*') { self.advance(); depth += 1; } }
+                        Some('*') => { self.advance(); if self.peek() == Some(')') { self.advance(); depth -= 1; } }
+                        _ => { self.advance(); }
+                    }
+                }
+                return Ok(None);
+            }
+            // Read doc comment content until closing *)
+            let mut depth = 1;
+            while depth > 0 {
+                match self.peek() {
+                    None => return Err(CompileError::lexer(loc, "unterminated doc comment")),
+                    Some('(') => {
+                        self.advance();
+                        if self.peek() == Some('*') {
+                            self.advance();
+                            depth += 1;
+                            content.push_str("(*");
+                        } else {
+                            content.push('(');
+                        }
+                    }
+                    Some('*') => {
+                        self.advance();
+                        if self.peek() == Some(')') {
+                            self.advance();
+                            depth -= 1;
+                            if depth > 0 { content.push_str("*)"); }
+                        } else {
+                            content.push('*');
+                        }
+                    }
+                    Some(ch) => {
+                        content.push(ch);
+                        self.advance();
+                    }
+                }
+            }
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(Some(Token::new(TokenKind::DocComment(trimmed), loc)));
+            }
+            return Ok(None);
         }
 
         let mut depth = 1;
@@ -432,7 +495,16 @@ impl Lexer {
                 break;
             }
         }
-        let kind = TokenKind::keyword_from_str(&name).unwrap_or(TokenKind::Ident(name));
+        // Keywords are ALWAYS case-insensitive (standard Modula-2 behavior).
+        // Identifiers: case-sensitive by default, uppercase if case_sensitive=false.
+        let canon = name.to_ascii_uppercase();
+        let kind = if let Some(kw) = TokenKind::keyword_from_str(&canon) {
+            kw
+        } else if self.case_sensitive {
+            TokenKind::Ident(name)
+        } else {
+            TokenKind::Ident(canon)
+        };
         Token::new(kind, loc)
     }
 
@@ -601,11 +673,60 @@ mod tests {
 
     #[test]
     fn test_identifiers() {
+        // Default mode: case-sensitive, identifiers preserve original case
         let tokens = lex("foo Bar baz123");
         assert_eq!(tokens, vec![
             TokenKind::Ident("foo".to_string()),
             TokenKind::Ident("Bar".to_string()),
             TokenKind::Ident("baz123".to_string()),
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn test_case_insensitive_keywords() {
+        // Keywords are ALWAYS case-insensitive regardless of mode
+        let tokens = lex("for while if module begin end");
+        assert_eq!(tokens, vec![
+            TokenKind::For, TokenKind::While, TokenKind::If,
+            TokenKind::Module, TokenKind::Begin, TokenKind::End, TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn test_case_insensitive_mixed_case_keywords() {
+        let tokens = lex("For While Module Begin End");
+        assert_eq!(tokens, vec![
+            TokenKind::For, TokenKind::While, TokenKind::Module,
+            TokenKind::Begin, TokenKind::End, TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn test_case_sensitive_identifiers() {
+        // Default mode (case_sensitive=true): keywords still case-insensitive,
+        // but identifiers preserve their original case
+        let tokens = lex("for Bar MODULE myVar");
+        assert_eq!(tokens, vec![
+            TokenKind::For,                          // keyword: always case-insensitive
+            TokenKind::Ident("Bar".to_string()),     // identifier: original case preserved
+            TokenKind::Module,                        // keyword: uppercase still works
+            TokenKind::Ident("myVar".to_string()),   // identifier: original case preserved
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn test_case_insensitive_identifiers() {
+        // With case_sensitive=false, identifiers are also canonicalized to uppercase
+        let mut lexer = Lexer::new("foo Bar baz123 for", "test");
+        lexer.set_case_sensitive(false);
+        let tokens: Vec<TokenKind> = lexer.tokenize().unwrap().into_iter().map(|t| t.kind).collect();
+        assert_eq!(tokens, vec![
+            TokenKind::Ident("FOO".to_string()),
+            TokenKind::Ident("BAR".to_string()),
+            TokenKind::Ident("BAZ123".to_string()),
+            TokenKind::For,  // keyword
             TokenKind::Eof,
         ]);
     }
@@ -659,7 +780,7 @@ mod tests {
             TokenKind::Var,
             TokenKind::Ident("x".to_string()),
             TokenKind::Colon,
-            TokenKind::Ident("INTEGER".to_string()),
+            TokenKind::Ident("INTEGER".to_string()),  // INTEGER is a keyword-like builtin, stays uppercase
             TokenKind::Semi,
             TokenKind::Eof,
         ]);
@@ -684,15 +805,15 @@ mod tests {
     #[test]
     fn test_feature_nested_if() {
         let tokens = lex_with_features(
-            "A (*$IF a*) B (*$IF b*) C (*$END*) D (*$END*) E",
+            "AA (*$IF a*) BB (*$IF b*) CC (*$END*) DD (*$END*) EE",
             &["a"],
         );
-        // a is enabled, b is not: A B D E
+        // a is enabled, b is not: AA BB DD EE
         assert_eq!(tokens, vec![
-            TokenKind::Ident("A".to_string()),
-            TokenKind::Ident("B".to_string()),
-            TokenKind::Ident("D".to_string()),
-            TokenKind::Ident("E".to_string()),
+            TokenKind::Ident("AA".to_string()),
+            TokenKind::Ident("BB".to_string()),
+            TokenKind::Ident("DD".to_string()),
+            TokenKind::Ident("EE".to_string()),
             TokenKind::Eof,
         ]);
     }

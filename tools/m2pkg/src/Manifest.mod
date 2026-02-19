@@ -261,7 +261,7 @@ BEGIN
 
   (* Warn if manifest_version is missing *)
   IF mManifestVersion = 0 THEN
-    WriteString("m2pkg: warning: manifest_version not set in m2.mod (assuming v1)"); WriteLn;
+    WriteString("m2pkg: warning: manifest_version not set in m2.toml (assuming v1)"); WriteLn;
     mManifestVersion := 1
   END;
 
@@ -302,7 +302,7 @@ BEGIN
   Assign("w", wmode);
   fh := m2sys_fopen(ADR(path), ADR(wmode));
   IF fh < 0 THEN RETURN -1 END;
-  Assign("# m2.mod - package manifest", ln);
+  Assign("# m2.toml - package manifest", ln);
   n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
   Assign("manifest_version=1", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
   Assign("name=mypackage", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);

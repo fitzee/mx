@@ -42,9 +42,9 @@ BEGIN
   WHILE j < ndeps2 DO
     IF IsDepLocal(j) = 1 THEN
       GetDepPath(j, depPath2);
-      (* Build path to dep's m2.mod *)
+      (* Build path to dep's m2.toml *)
       Assign(depPath2, depManifest);
-      Concat(depManifest, "/m2.mod", tmp);
+      Concat(depManifest, "/m2.toml", tmp);
       Assign(tmp, depManifest);
       (* Save current manifest state, read dep manifest *)
       Clear;
@@ -97,7 +97,7 @@ BEGIN
   END;
   (* Re-read main manifest to restore state *)
   Clear;
-  rc2 := Read("m2.mod")
+  rc2 := Read("m2.toml")
 END AppendDepCC;
 
 PROCEDURE Build(release: INTEGER; target: ARRAY OF CHAR): INTEGER;

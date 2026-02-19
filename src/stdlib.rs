@@ -9,27 +9,28 @@ pub fn register_module(
     scope: usize,
     module: &str,
 ) {
-    match module {
-        "InOut" => register_inout(symtab, types, scope),
-        "RealInOut" => register_realinout(symtab, types, scope),
-        "MathLib0" | "MathLib" => register_mathlib(symtab, types, scope),
-        "Strings" => register_strings(symtab, types, scope),
-        "Storage" => register_storage(symtab, types, scope),
+    let upper = module.to_ascii_uppercase();
+    match upper.as_str() {
+        "INOUT" => register_inout(symtab, types, scope),
+        "REALINOUT" => register_realinout(symtab, types, scope),
+        "MATHLIB0" | "MATHLIB" => register_mathlib(symtab, types, scope),
+        "STRINGS" => register_strings(symtab, types, scope),
+        "STORAGE" => register_storage(symtab, types, scope),
         "SYSTEM" => register_system(symtab, types, scope),
-        "Terminal" => register_terminal(symtab, types, scope),
-        "FileSystem" => register_filesystem(symtab, types, scope),
+        "TERMINAL" => register_terminal(symtab, types, scope),
+        "FILESYSTEM" => register_filesystem(symtab, types, scope),
         // ISO standard I/O modules
-        "STextIO" => register_stextio(symtab, types, scope),
-        "SWholeIO" => register_swholeio(symtab, types, scope),
-        "SRealIO" => register_srealio(symtab, types, scope),
-        "SLongIO" => register_slongio(symtab, types, scope),
-        "SIOResult" => register_sioresult(symtab, types, scope),
-        "Args" => register_args(symtab, types, scope),
-        "BinaryIO" => register_binaryio(symtab, types, scope),
+        "STEXTIO" => register_stextio(symtab, types, scope),
+        "SWHOLEIO" => register_swholeio(symtab, types, scope),
+        "SREALIO" => register_srealio(symtab, types, scope),
+        "SLONGIO" => register_slongio(symtab, types, scope),
+        "SIORESULT" => register_sioresult(symtab, types, scope),
+        "ARGS" => register_args(symtab, types, scope),
+        "BINARYIO" => register_binaryio(symtab, types, scope),
         // Modula-2+ concurrency modules
-        "Thread" => register_thread(symtab, types, scope),
-        "Mutex" => register_mutex(symtab, types, scope),
-        "Condition" => register_condition(symtab, types, scope),
+        "THREAD" => register_thread(symtab, types, scope),
+        "MUTEX" => register_mutex(symtab, types, scope),
+        "CONDITION" => register_condition(symtab, types, scope),
         _ => {} // Unknown module - will be resolved later from .def files
     }
 }
@@ -40,6 +41,17 @@ fn def_proc(
     name: &str,
     params: Vec<ParamInfo>,
     ret: Option<TypeId>,
+) {
+    def_proc_doc(symtab, scope, name, params, ret, None);
+}
+
+fn def_proc_doc(
+    symtab: &mut SymbolTable,
+    scope: usize,
+    name: &str,
+    params: Vec<ParamInfo>,
+    ret: Option<TypeId>,
+    doc: Option<&str>,
 ) {
     let _ = symtab.define(
         scope,
@@ -54,11 +66,16 @@ fn def_proc(
             exported: true,
             module: None,
             loc: SourceLoc::default(),
+            doc: doc.map(|s| s.to_string()),
         },
     );
 }
 
 fn def_var(symtab: &mut SymbolTable, scope: usize, name: &str, typ: TypeId) {
+    def_var_doc(symtab, scope, name, typ, None);
+}
+
+fn def_var_doc(symtab: &mut SymbolTable, scope: usize, name: &str, typ: TypeId, doc: Option<&str>) {
     let _ = symtab.define(
         scope,
         Symbol {
@@ -68,6 +85,7 @@ fn def_var(symtab: &mut SymbolTable, scope: usize, name: &str, typ: TypeId) {
             exported: true,
             module: None,
             loc: SourceLoc::default(),
+            doc: doc.map(|s| s.to_string()),
         },
     );
 }
@@ -81,90 +99,133 @@ fn p(name: &str, typ: TypeId, is_var: bool) -> ParamInfo {
 }
 
 fn register_inout(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "Read", vec![p("ch", TY_CHAR, true)], None);
-    def_proc(symtab, scope, "ReadString", vec![p("s", TY_STRING, true)], None);
-    def_proc(symtab, scope, "ReadInt", vec![p("n", TY_INTEGER, true)], None);
-    def_proc(symtab, scope, "ReadCard", vec![p("n", TY_CARDINAL, true)], None);
-    def_proc(symtab, scope, "Write", vec![p("ch", TY_CHAR, false)], None);
-    def_proc(symtab, scope, "WriteString", vec![p("s", TY_STRING, false)], None);
-    def_proc(symtab, scope, "WriteInt", vec![p("n", TY_INTEGER, false), p("w", TY_INTEGER, false)], None);
-    def_proc(symtab, scope, "WriteCard", vec![p("n", TY_CARDINAL, false), p("w", TY_INTEGER, false)], None);
-    def_proc(symtab, scope, "WriteHex", vec![p("n", TY_CARDINAL, false), p("w", TY_INTEGER, false)], None);
-    def_proc(symtab, scope, "WriteOct", vec![p("n", TY_CARDINAL, false), p("w", TY_INTEGER, false)], None);
-    def_proc(symtab, scope, "WriteLn", vec![], None);
-    def_var(symtab, scope, "Done", TY_BOOLEAN);
-    def_proc(symtab, scope, "OpenInput", vec![p("ext", TY_STRING, false)], None);
-    def_proc(symtab, scope, "OpenOutput", vec![p("ext", TY_STRING, false)], None);
-    def_proc(symtab, scope, "CloseInput", vec![], None);
-    def_proc(symtab, scope, "CloseOutput", vec![], None);
+    def_proc_doc(symtab, scope, "Read", vec![p("ch", TY_CHAR, true)], None,
+        Some("Read a single character from standard input."));
+    def_proc_doc(symtab, scope, "ReadString", vec![p("s", TY_STRING, true)], None,
+        Some("Read a whitespace-delimited string from standard input."));
+    def_proc_doc(symtab, scope, "ReadInt", vec![p("n", TY_INTEGER, true)], None,
+        Some("Read an INTEGER value from standard input. Sets `Done` to TRUE on success."));
+    def_proc_doc(symtab, scope, "ReadCard", vec![p("n", TY_CARDINAL, true)], None,
+        Some("Read a CARDINAL value from standard input. Sets `Done` to TRUE on success."));
+    def_proc_doc(symtab, scope, "Write", vec![p("ch", TY_CHAR, false)], None,
+        Some("Write a single character to standard output."));
+    def_proc_doc(symtab, scope, "WriteString", vec![p("s", TY_STRING, false)], None,
+        Some("Write a string to standard output."));
+    def_proc_doc(symtab, scope, "WriteInt", vec![p("n", TY_INTEGER, false), p("w", TY_INTEGER, false)], None,
+        Some("Write an INTEGER value to standard output, right-justified in a field of width `w`."));
+    def_proc_doc(symtab, scope, "WriteCard", vec![p("n", TY_CARDINAL, false), p("w", TY_INTEGER, false)], None,
+        Some("Write a CARDINAL value to standard output, right-justified in a field of width `w`."));
+    def_proc_doc(symtab, scope, "WriteHex", vec![p("n", TY_CARDINAL, false), p("w", TY_INTEGER, false)], None,
+        Some("Write a CARDINAL value in hexadecimal to standard output, right-justified in width `w`."));
+    def_proc_doc(symtab, scope, "WriteOct", vec![p("n", TY_CARDINAL, false), p("w", TY_INTEGER, false)], None,
+        Some("Write a CARDINAL value in octal to standard output, right-justified in width `w`."));
+    def_proc_doc(symtab, scope, "WriteLn", vec![], None,
+        Some("Write a newline to standard output."));
+    def_proc_doc(symtab, scope, "ReadChar", vec![p("ch", TY_CHAR, true)], None,
+        Some("Read a single character from standard input (alias for Read)."));
+    def_proc_doc(symtab, scope, "WriteChar", vec![p("ch", TY_CHAR, false)], None,
+        Some("Write a single character to standard output (alias for Write)."));
+    def_var_doc(symtab, scope, "Done", TY_BOOLEAN,
+        Some("TRUE if the last I/O operation succeeded."));
+    def_proc_doc(symtab, scope, "OpenInput", vec![p("ext", TY_STRING, false)], None,
+        Some("Prompt for an input filename and open it. Appends `ext` as extension if non-empty."));
+    def_proc_doc(symtab, scope, "OpenOutput", vec![p("ext", TY_STRING, false)], None,
+        Some("Prompt for an output filename and open it. Appends `ext` as extension if non-empty."));
+    def_proc_doc(symtab, scope, "CloseInput", vec![], None,
+        Some("Close the currently open input file."));
+    def_proc_doc(symtab, scope, "CloseOutput", vec![], None,
+        Some("Close the currently open output file."));
 }
 
 fn register_realinout(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "ReadReal", vec![p("r", TY_REAL, true)], None);
-    def_proc(symtab, scope, "WriteReal", vec![p("r", TY_REAL, false), p("w", TY_INTEGER, false)], None);
-    def_proc(symtab, scope, "WriteFixPt", vec![
+    def_proc_doc(symtab, scope, "ReadReal", vec![p("r", TY_REAL, true)], None,
+        Some("Read a REAL value from standard input. Sets `Done` to TRUE on success."));
+    def_proc_doc(symtab, scope, "WriteReal", vec![p("r", TY_REAL, false), p("w", TY_INTEGER, false)], None,
+        Some("Write a REAL value to standard output in general format, right-justified in width `w`."));
+    def_proc_doc(symtab, scope, "WriteFixPt", vec![
         p("r", TY_REAL, false),
         p("w", TY_INTEGER, false),
         p("d", TY_INTEGER, false),
-    ], None);
-    def_proc(symtab, scope, "WriteRealOct", vec![p("r", TY_REAL, false)], None);
-    def_var(symtab, scope, "Done", TY_BOOLEAN);
+    ], None,
+        Some("Write a REAL value in fixed-point notation with `d` decimal places, in a field of width `w`."));
+    def_proc_doc(symtab, scope, "WriteRealOct", vec![p("r", TY_REAL, false)], None,
+        Some("Write the internal (hexadecimal float) representation of a REAL value."));
+    def_var_doc(symtab, scope, "Done", TY_BOOLEAN,
+        Some("TRUE if the last I/O operation succeeded."));
 }
 
 fn register_mathlib(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "sqrt", vec![p("x", TY_REAL, false)], Some(TY_REAL));
-    def_proc(symtab, scope, "sin", vec![p("x", TY_REAL, false)], Some(TY_REAL));
-    def_proc(symtab, scope, "cos", vec![p("x", TY_REAL, false)], Some(TY_REAL));
-    def_proc(symtab, scope, "arctan", vec![p("x", TY_REAL, false)], Some(TY_REAL));
-    def_proc(symtab, scope, "exp", vec![p("x", TY_REAL, false)], Some(TY_REAL));
-    def_proc(symtab, scope, "ln", vec![p("x", TY_REAL, false)], Some(TY_REAL));
-    def_proc(symtab, scope, "entier", vec![p("x", TY_REAL, false)], Some(TY_INTEGER));
-    def_proc(symtab, scope, "real", vec![p("x", TY_INTEGER, false)], Some(TY_REAL));
+    def_proc_doc(symtab, scope, "sqrt", vec![p("x", TY_REAL, false)], Some(TY_REAL),
+        Some("Return the square root of `x`."));
+    def_proc_doc(symtab, scope, "sin", vec![p("x", TY_REAL, false)], Some(TY_REAL),
+        Some("Return the sine of `x` (radians)."));
+    def_proc_doc(symtab, scope, "cos", vec![p("x", TY_REAL, false)], Some(TY_REAL),
+        Some("Return the cosine of `x` (radians)."));
+    def_proc_doc(symtab, scope, "arctan", vec![p("x", TY_REAL, false)], Some(TY_REAL),
+        Some("Return the arctangent of `x` (result in radians)."));
+    def_proc_doc(symtab, scope, "exp", vec![p("x", TY_REAL, false)], Some(TY_REAL),
+        Some("Return e raised to the power `x`."));
+    def_proc_doc(symtab, scope, "ln", vec![p("x", TY_REAL, false)], Some(TY_REAL),
+        Some("Return the natural logarithm of `x`."));
+    def_proc_doc(symtab, scope, "entier", vec![p("x", TY_REAL, false)], Some(TY_INTEGER),
+        Some("Return the largest integer not greater than `x` (floor)."));
+    def_proc_doc(symtab, scope, "real", vec![p("x", TY_INTEGER, false)], Some(TY_REAL),
+        Some("Convert an INTEGER value to REAL."));
 }
 
 fn register_strings(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "Assign", vec![p("src", TY_STRING, false), p("dst", TY_STRING, true)], None);
-    def_proc(symtab, scope, "Insert", vec![
+    def_proc_doc(symtab, scope, "Assign", vec![p("src", TY_STRING, false), p("dst", TY_STRING, true)], None,
+        Some("Copy string `src` into `dst`, truncating if `dst` is shorter."));
+    def_proc_doc(symtab, scope, "Insert", vec![
         p("sub", TY_STRING, false),
         p("dst", TY_STRING, true),
         p("pos", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "Delete", vec![
+    ], None,
+        Some("Insert string `sub` into `dst` at position `pos`. Truncates if result exceeds capacity."));
+    def_proc_doc(symtab, scope, "Delete", vec![
         p("s", TY_STRING, true),
         p("pos", TY_CARDINAL, false),
         p("len", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "Pos", vec![
+    ], None,
+        Some("Delete `len` characters from string `s` starting at position `pos`."));
+    def_proc_doc(symtab, scope, "Pos", vec![
         p("sub", TY_STRING, false),
         p("s", TY_STRING, false),
-    ], Some(TY_CARDINAL));
-    def_proc(symtab, scope, "Length", vec![p("s", TY_STRING, false)], Some(TY_CARDINAL));
-    def_proc(symtab, scope, "Copy", vec![
+    ], Some(TY_CARDINAL),
+        Some("Return the position of the first occurrence of `sub` in `s`, or MAX(CARDINAL) if not found."));
+    def_proc_doc(symtab, scope, "Length", vec![p("s", TY_STRING, false)], Some(TY_CARDINAL),
+        Some("Return the length of string `s`."));
+    def_proc_doc(symtab, scope, "Copy", vec![
         p("src", TY_STRING, false),
         p("pos", TY_CARDINAL, false),
         p("len", TY_CARDINAL, false),
         p("dst", TY_STRING, true),
-    ], None);
-    def_proc(symtab, scope, "Concat", vec![
+    ], None,
+        Some("Copy `len` characters from `src` starting at `pos` into `dst`."));
+    def_proc_doc(symtab, scope, "Concat", vec![
         p("s1", TY_STRING, false),
         p("s2", TY_STRING, false),
         p("dst", TY_STRING, true),
-    ], None);
-    def_proc(symtab, scope, "CompareStr", vec![
+    ], None,
+        Some("Concatenate strings `s1` and `s2` into `dst`. Truncates if result exceeds capacity."));
+    def_proc_doc(symtab, scope, "CompareStr", vec![
         p("s1", TY_STRING, false),
         p("s2", TY_STRING, false),
-    ], Some(TY_INTEGER));
+    ], Some(TY_INTEGER),
+        Some("Compare strings `s1` and `s2`. Returns negative if s1 < s2, zero if equal, positive if s1 > s2."));
 }
 
 fn register_storage(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "ALLOCATE", vec![
+    def_proc_doc(symtab, scope, "ALLOCATE", vec![
         p("p", TY_ADDRESS, true),
         p("size", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "DEALLOCATE", vec![
+    ], None,
+        Some("Allocate `size` bytes of memory and store the pointer in `p`. Called implicitly by NEW."));
+    def_proc_doc(symtab, scope, "DEALLOCATE", vec![
         p("p", TY_ADDRESS, true),
         p("size", TY_CARDINAL, false),
-    ], None);
+    ], None,
+        Some("Free the memory pointed to by `p` (must have been allocated with ALLOCATE). Called implicitly by DISPOSE."));
 }
 
 fn register_system(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
@@ -176,6 +237,7 @@ fn register_system(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         exported: true,
         module: Some("SYSTEM".to_string()),
         loc: SourceLoc::default(),
+        doc: Some("Machine word type. Compatible with all types of the same size.".to_string()),
     });
     let _ = symtab.define(scope, Symbol {
         name: "BYTE".to_string(),
@@ -184,6 +246,7 @@ fn register_system(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         exported: true,
         module: Some("SYSTEM".to_string()),
         loc: SourceLoc::default(),
+        doc: Some("Single byte type. Compatible with CHAR and small ordinal types.".to_string()),
     });
     let _ = symtab.define(scope, Symbol {
         name: "ADDRESS".to_string(),
@@ -192,34 +255,45 @@ fn register_system(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         exported: true,
         module: Some("SYSTEM".to_string()),
         loc: SourceLoc::default(),
+        doc: Some("Machine address type. Compatible with all pointer types.".to_string()),
     });
 
     // Procedures
-    def_proc(symtab, scope, "ADR", vec![p("x", TY_INTEGER, false)], Some(TY_ADDRESS));
-    def_proc(symtab, scope, "TSIZE", vec![p("T", TY_INTEGER, false)], Some(TY_CARDINAL));
-    def_proc(symtab, scope, "NEWPROCESS", vec![
+    def_proc_doc(symtab, scope, "ADR", vec![p("x", TY_INTEGER, false)], Some(TY_ADDRESS),
+        Some("Return the memory address of variable `x`."));
+    def_proc_doc(symtab, scope, "TSIZE", vec![p("T", TY_INTEGER, false)], Some(TY_CARDINAL),
+        Some("Return the size in bytes of type `T`."));
+    def_proc_doc(symtab, scope, "NEWPROCESS", vec![
         p("p", TY_ADDRESS, false),
         p("a", TY_ADDRESS, false),
         p("n", TY_CARDINAL, false),
         p("new", TY_ADDRESS, true),
-    ], None);
-    def_proc(symtab, scope, "TRANSFER", vec![
+    ], None,
+        Some("Create a new coroutine from procedure `p` with workspace `a` of `n` bytes."));
+    def_proc_doc(symtab, scope, "TRANSFER", vec![
         p("from", TY_ADDRESS, true),
         p("to", TY_ADDRESS, true),
-    ], None);
-    def_proc(symtab, scope, "IOTRANSFER", vec![
+    ], None,
+        Some("Transfer control from the current coroutine to coroutine `to`."));
+    def_proc_doc(symtab, scope, "IOTRANSFER", vec![
         p("from", TY_ADDRESS, true),
         p("to", TY_ADDRESS, true),
         p("vec", TY_CARDINAL, false),
-    ], None);
+    ], None,
+        Some("Transfer control to coroutine `to` and arrange for an interrupt on vector `vec` to transfer back."));
 }
 
 fn register_terminal(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "Read", vec![p("ch", TY_CHAR, true)], None);
-    def_proc(symtab, scope, "Write", vec![p("ch", TY_CHAR, false)], None);
-    def_proc(symtab, scope, "WriteString", vec![p("s", TY_STRING, false)], None);
-    def_proc(symtab, scope, "WriteLn", vec![], None);
-    def_var(symtab, scope, "Done", TY_BOOLEAN);
+    def_proc_doc(symtab, scope, "Read", vec![p("ch", TY_CHAR, true)], None,
+        Some("Read a single character from the terminal."));
+    def_proc_doc(symtab, scope, "Write", vec![p("ch", TY_CHAR, false)], None,
+        Some("Write a single character to the terminal."));
+    def_proc_doc(symtab, scope, "WriteString", vec![p("s", TY_STRING, false)], None,
+        Some("Write a string to the terminal."));
+    def_proc_doc(symtab, scope, "WriteLn", vec![], None,
+        Some("Write a newline to the terminal."));
+    def_var_doc(symtab, scope, "Done", TY_BOOLEAN,
+        Some("TRUE if the last terminal I/O operation succeeded."));
 }
 
 fn register_filesystem(symtab: &mut SymbolTable, types: &mut TypeRegistry, scope: usize) {
@@ -235,64 +309,89 @@ fn register_filesystem(symtab: &mut SymbolTable, types: &mut TypeRegistry, scope
         exported: true,
         module: Some("FileSystem".to_string()),
         loc: SourceLoc::default(),
+        doc: None,
     });
 
-    def_proc(symtab, scope, "Lookup", vec![
+    def_proc_doc(symtab, scope, "Lookup", vec![
         p("f", file_type, true),
         p("name", TY_STRING, false),
         p("new", TY_BOOLEAN, false),
-    ], None);
-    def_proc(symtab, scope, "Close", vec![p("f", file_type, true)], None);
-    def_proc(symtab, scope, "ReadChar", vec![
+    ], None,
+        Some("Open file `name`. If `new` is TRUE, create it if it doesn't exist. Sets `Done`."));
+    def_proc_doc(symtab, scope, "Close", vec![p("f", file_type, true)], None,
+        Some("Close an open file."));
+    def_proc_doc(symtab, scope, "ReadChar", vec![
         p("f", file_type, true),
         p("ch", TY_CHAR, true),
-    ], None);
-    def_proc(symtab, scope, "WriteChar", vec![
+    ], None,
+        Some("Read a single character from file `f`. Sets `Done` to FALSE on EOF."));
+    def_proc_doc(symtab, scope, "WriteChar", vec![
         p("f", file_type, true),
         p("ch", TY_CHAR, false),
-    ], None);
-    def_var(symtab, scope, "Done", TY_BOOLEAN);
+    ], None,
+        Some("Write a single character to file `f`."));
+    def_var_doc(symtab, scope, "Done", TY_BOOLEAN,
+        Some("TRUE if the last file operation succeeded."));
 }
 
 // ── ISO Standard Library Modules ──────────────────────────────────────
 
 fn register_stextio(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "WriteChar", vec![p("ch", TY_CHAR, false)], None);
-    def_proc(symtab, scope, "ReadChar", vec![p("ch", TY_CHAR, true)], None);
-    def_proc(symtab, scope, "WriteString", vec![p("s", TY_STRING, false)], None);
-    def_proc(symtab, scope, "ReadString", vec![p("s", TY_STRING, true)], None);
-    def_proc(symtab, scope, "WriteLn", vec![], None);
-    def_proc(symtab, scope, "SkipLine", vec![], None);
-    def_proc(symtab, scope, "ReadToken", vec![p("s", TY_STRING, true)], None);
+    def_proc_doc(symtab, scope, "WriteChar", vec![p("ch", TY_CHAR, false)], None,
+        Some("Write a single character to the default output channel."));
+    def_proc_doc(symtab, scope, "ReadChar", vec![p("ch", TY_CHAR, true)], None,
+        Some("Read a single character from the default input channel."));
+    def_proc_doc(symtab, scope, "WriteString", vec![p("s", TY_STRING, false)], None,
+        Some("Write a string to the default output channel."));
+    def_proc_doc(symtab, scope, "ReadString", vec![p("s", TY_STRING, true)], None,
+        Some("Read a line of text from the default input channel."));
+    def_proc_doc(symtab, scope, "WriteLn", vec![], None,
+        Some("Write a newline to the default output channel."));
+    def_proc_doc(symtab, scope, "SkipLine", vec![], None,
+        Some("Skip to the end of the current input line."));
+    def_proc_doc(symtab, scope, "ReadToken", vec![p("s", TY_STRING, true)], None,
+        Some("Read a whitespace-delimited token from the default input channel."));
 }
 
 fn register_swholeio(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "WriteInt", vec![p("n", TY_INTEGER, false), p("w", TY_CARDINAL, false)], None);
-    def_proc(symtab, scope, "ReadInt", vec![p("n", TY_INTEGER, true)], None);
-    def_proc(symtab, scope, "WriteCard", vec![p("n", TY_CARDINAL, false), p("w", TY_CARDINAL, false)], None);
-    def_proc(symtab, scope, "ReadCard", vec![p("n", TY_CARDINAL, true)], None);
+    def_proc_doc(symtab, scope, "WriteInt", vec![p("n", TY_INTEGER, false), p("w", TY_CARDINAL, false)], None,
+        Some("Write an INTEGER value right-justified in a field of width `w`."));
+    def_proc_doc(symtab, scope, "ReadInt", vec![p("n", TY_INTEGER, true)], None,
+        Some("Read an INTEGER value from the default input channel."));
+    def_proc_doc(symtab, scope, "WriteCard", vec![p("n", TY_CARDINAL, false), p("w", TY_CARDINAL, false)], None,
+        Some("Write a CARDINAL value right-justified in a field of width `w`."));
+    def_proc_doc(symtab, scope, "ReadCard", vec![p("n", TY_CARDINAL, true)], None,
+        Some("Read a CARDINAL value from the default input channel."));
 }
 
 fn register_srealio(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "WriteFloat", vec![
+    def_proc_doc(symtab, scope, "WriteFloat", vec![
         p("r", TY_REAL, false), p("sigFigs", TY_CARDINAL, false), p("w", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "WriteFixed", vec![
+    ], None,
+        Some("Write a REAL value in scientific notation with `sigFigs` significant digits, in width `w`."));
+    def_proc_doc(symtab, scope, "WriteFixed", vec![
         p("r", TY_REAL, false), p("place", TY_INTEGER, false), p("w", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "WriteReal", vec![p("r", TY_REAL, false), p("w", TY_CARDINAL, false)], None);
-    def_proc(symtab, scope, "ReadReal", vec![p("r", TY_REAL, true)], None);
+    ], None,
+        Some("Write a REAL value in fixed-point notation with `place` decimal places, in width `w`."));
+    def_proc_doc(symtab, scope, "WriteReal", vec![p("r", TY_REAL, false), p("w", TY_CARDINAL, false)], None,
+        Some("Write a REAL value in general format, right-justified in width `w`."));
+    def_proc_doc(symtab, scope, "ReadReal", vec![p("r", TY_REAL, true)], None,
+        Some("Read a REAL value from the default input channel."));
 }
 
 fn register_slongio(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "WriteFloat", vec![
+    def_proc_doc(symtab, scope, "WriteFloat", vec![
         p("r", TY_LONGREAL, false), p("sigFigs", TY_CARDINAL, false), p("w", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "WriteFixed", vec![
+    ], None,
+        Some("Write a LONGREAL value in scientific notation with `sigFigs` significant digits, in width `w`."));
+    def_proc_doc(symtab, scope, "WriteFixed", vec![
         p("r", TY_LONGREAL, false), p("place", TY_INTEGER, false), p("w", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "WriteLongReal", vec![p("r", TY_LONGREAL, false), p("w", TY_CARDINAL, false)], None);
-    def_proc(symtab, scope, "ReadLongReal", vec![p("r", TY_LONGREAL, true)], None);
+    ], None,
+        Some("Write a LONGREAL value in fixed-point notation with `place` decimal places, in width `w`."));
+    def_proc_doc(symtab, scope, "WriteLongReal", vec![p("r", TY_LONGREAL, false), p("w", TY_CARDINAL, false)], None,
+        Some("Write a LONGREAL value in general format, right-justified in width `w`."));
+    def_proc_doc(symtab, scope, "ReadLongReal", vec![p("r", TY_LONGREAL, true)], None,
+        Some("Read a LONGREAL value from the default input channel."));
 }
 
 fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
@@ -304,6 +403,7 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         exported: true,
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
+        doc: None,
     });
     let _ = symtab.define(scope, Symbol {
         name: "allRight".to_string(),
@@ -312,6 +412,7 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         exported: true,
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
+        doc: None,
     });
     let _ = symtab.define(scope, Symbol {
         name: "outOfRange".to_string(),
@@ -320,6 +421,7 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         exported: true,
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
+        doc: None,
     });
     let _ = symtab.define(scope, Symbol {
         name: "wrongFormat".to_string(),
@@ -328,6 +430,7 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         exported: true,
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
+        doc: None,
     });
     let _ = symtab.define(scope, Symbol {
         name: "endOfInput".to_string(),
@@ -336,67 +439,82 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         exported: true,
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
+        doc: None,
     });
 }
 
 // ── Args module ───────────────────────────────────────────────────────
 
 fn register_args(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
-    def_proc(symtab, scope, "ArgCount", vec![], Some(TY_CARDINAL));
-    def_proc(symtab, scope, "GetArg", vec![
+    def_proc_doc(symtab, scope, "ArgCount", vec![], Some(TY_CARDINAL),
+        Some("Return the number of command-line arguments (including the program name)."));
+    def_proc_doc(symtab, scope, "GetArg", vec![
         p("n", TY_CARDINAL, false),
         p("buf", TY_STRING, true),
-    ], None);
+    ], None,
+        Some("Copy the `n`-th command-line argument into `buf` (0 = program name)."));
 }
 
 // ── BinaryIO module ──────────────────────────────────────────────────
 
 fn register_binaryio(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
     // FileHandle is represented as an opaque CARDINAL (actually a FILE* index)
-    def_proc(symtab, scope, "OpenRead", vec![
+    def_proc_doc(symtab, scope, "OpenRead", vec![
         p("name", TY_STRING, false),
         p("fh", TY_CARDINAL, true),
-    ], None);
-    def_proc(symtab, scope, "OpenWrite", vec![
+    ], None,
+        Some("Open file `name` for binary reading. Returns a file handle in `fh`. Sets `Done`."));
+    def_proc_doc(symtab, scope, "OpenWrite", vec![
         p("name", TY_STRING, false),
         p("fh", TY_CARDINAL, true),
-    ], None);
-    def_proc(symtab, scope, "Close", vec![p("fh", TY_CARDINAL, false)], None);
-    def_proc(symtab, scope, "ReadByte", vec![
+    ], None,
+        Some("Open (or create) file `name` for binary writing. Returns a file handle in `fh`. Sets `Done`."));
+    def_proc_doc(symtab, scope, "Close", vec![p("fh", TY_CARDINAL, false)], None,
+        Some("Close a binary file handle."));
+    def_proc_doc(symtab, scope, "ReadByte", vec![
         p("fh", TY_CARDINAL, false),
         p("b", TY_CARDINAL, true),
-    ], None);
-    def_proc(symtab, scope, "WriteByte", vec![
+    ], None,
+        Some("Read a single byte from file `fh` into `b`. Sets `Done` to FALSE on EOF."));
+    def_proc_doc(symtab, scope, "WriteByte", vec![
         p("fh", TY_CARDINAL, false),
         p("b", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "ReadBytes", vec![
+    ], None,
+        Some("Write a single byte `b` to file `fh`."));
+    def_proc_doc(symtab, scope, "ReadBytes", vec![
         p("fh", TY_CARDINAL, false),
         p("buf", TY_STRING, true),
         p("n", TY_CARDINAL, false),
         p("actual", TY_CARDINAL, true),
-    ], None);
-    def_proc(symtab, scope, "WriteBytes", vec![
+    ], None,
+        Some("Read up to `n` bytes from file `fh` into `buf`. `actual` receives the number of bytes read."));
+    def_proc_doc(symtab, scope, "WriteBytes", vec![
         p("fh", TY_CARDINAL, false),
         p("buf", TY_STRING, false),
         p("n", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "FileSize", vec![
+    ], None,
+        Some("Write `n` bytes from `buf` to file `fh`."));
+    def_proc_doc(symtab, scope, "FileSize", vec![
         p("fh", TY_CARDINAL, false),
         p("size", TY_CARDINAL, true),
-    ], None);
-    def_proc(symtab, scope, "Seek", vec![
+    ], None,
+        Some("Get the size of file `fh` in bytes."));
+    def_proc_doc(symtab, scope, "Seek", vec![
         p("fh", TY_CARDINAL, false),
         p("pos", TY_CARDINAL, false),
-    ], None);
-    def_proc(symtab, scope, "Tell", vec![
+    ], None,
+        Some("Set the file position of `fh` to byte offset `pos`."));
+    def_proc_doc(symtab, scope, "Tell", vec![
         p("fh", TY_CARDINAL, false),
         p("pos", TY_CARDINAL, true),
-    ], None);
-    def_proc(symtab, scope, "IsEOF", vec![
+    ], None,
+        Some("Get the current file position of `fh`."));
+    def_proc_doc(symtab, scope, "IsEOF", vec![
         p("fh", TY_CARDINAL, false),
-    ], Some(TY_BOOLEAN));
-    def_var(symtab, scope, "Done", TY_BOOLEAN);
+    ], Some(TY_BOOLEAN),
+        Some("Return TRUE if file `fh` is at end-of-file."));
+    def_var_doc(symtab, scope, "Done", TY_BOOLEAN,
+        Some("TRUE if the last BinaryIO operation succeeded."));
 }
 
 // ── Modula-2+ Concurrency Modules ────────────────────────────────────
@@ -410,17 +528,18 @@ fn register_thread(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         exported: true,
         module: None,
         loc: SourceLoc::default(),
+        doc: Some("Opaque thread handle type.".to_string()),
     });
-    // Fork(p: PROCEDURE): T
-    def_proc(symtab, scope, "Fork", vec![p("p", TY_ADDRESS, false)], Some(TY_ADDRESS));
-    // Join(t: T)
-    def_proc(symtab, scope, "Join", vec![p("t", TY_ADDRESS, false)], None);
-    // Self(): T
-    def_proc(symtab, scope, "Self", vec![], Some(TY_ADDRESS));
-    // Alert(t: T)
-    def_proc(symtab, scope, "Alert", vec![p("t", TY_ADDRESS, false)], None);
-    // TestAlert(): BOOLEAN
-    def_proc(symtab, scope, "TestAlert", vec![], Some(TY_BOOLEAN));
+    def_proc_doc(symtab, scope, "Fork", vec![p("p", TY_ADDRESS, false)], Some(TY_ADDRESS),
+        Some("Create a new thread that executes parameterless procedure `p`. Returns a thread handle."));
+    def_proc_doc(symtab, scope, "Join", vec![p("t", TY_ADDRESS, false)], None,
+        Some("Wait for thread `t` to finish execution."));
+    def_proc_doc(symtab, scope, "Self", vec![], Some(TY_ADDRESS),
+        Some("Return the handle of the currently executing thread."));
+    def_proc_doc(symtab, scope, "Alert", vec![p("t", TY_ADDRESS, false)], None,
+        Some("Set the alert flag on thread `t`. The thread can check this via TestAlert."));
+    def_proc_doc(symtab, scope, "TestAlert", vec![], Some(TY_BOOLEAN),
+        Some("Check and clear the current thread's alert flag. Returns TRUE if it was set."));
 }
 
 fn register_mutex(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
@@ -432,11 +551,16 @@ fn register_mutex(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: us
         exported: true,
         module: None,
         loc: SourceLoc::default(),
+        doc: Some("Opaque mutex handle type.".to_string()),
     });
-    def_proc(symtab, scope, "New", vec![], Some(TY_ADDRESS));
-    def_proc(symtab, scope, "Lock", vec![p("m", TY_ADDRESS, false)], None);
-    def_proc(symtab, scope, "Unlock", vec![p("m", TY_ADDRESS, false)], None);
-    def_proc(symtab, scope, "Free", vec![p("m", TY_ADDRESS, false)], None);
+    def_proc_doc(symtab, scope, "New", vec![], Some(TY_ADDRESS),
+        Some("Create and return a new mutex."));
+    def_proc_doc(symtab, scope, "Lock", vec![p("m", TY_ADDRESS, false)], None,
+        Some("Acquire the mutex `m`. Blocks if already held by another thread."));
+    def_proc_doc(symtab, scope, "Unlock", vec![p("m", TY_ADDRESS, false)], None,
+        Some("Release the mutex `m`."));
+    def_proc_doc(symtab, scope, "Free", vec![p("m", TY_ADDRESS, false)], None,
+        Some("Destroy and free the mutex `m`."));
 }
 
 fn register_condition(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
@@ -448,12 +572,18 @@ fn register_condition(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         exported: true,
         module: None,
         loc: SourceLoc::default(),
+        doc: Some("Opaque condition variable handle type.".to_string()),
     });
-    def_proc(symtab, scope, "New", vec![], Some(TY_ADDRESS));
-    def_proc(symtab, scope, "Wait", vec![p("c", TY_ADDRESS, false), p("m", TY_ADDRESS, false)], None);
-    def_proc(symtab, scope, "Signal", vec![p("c", TY_ADDRESS, false)], None);
-    def_proc(symtab, scope, "Broadcast", vec![p("c", TY_ADDRESS, false)], None);
-    def_proc(symtab, scope, "Free", vec![p("c", TY_ADDRESS, false)], None);
+    def_proc_doc(symtab, scope, "New", vec![], Some(TY_ADDRESS),
+        Some("Create and return a new condition variable."));
+    def_proc_doc(symtab, scope, "Wait", vec![p("c", TY_ADDRESS, false), p("m", TY_ADDRESS, false)], None,
+        Some("Atomically release mutex `m` and wait on condition `c`. Re-acquires `m` on wakeup."));
+    def_proc_doc(symtab, scope, "Signal", vec![p("c", TY_ADDRESS, false)], None,
+        Some("Wake one thread waiting on condition `c`."));
+    def_proc_doc(symtab, scope, "Broadcast", vec![p("c", TY_ADDRESS, false)], None,
+        Some("Wake all threads waiting on condition `c`."));
+    def_proc_doc(symtab, scope, "Free", vec![p("c", TY_ADDRESS, false)], None,
+        Some("Destroy and free the condition variable `c`."));
 }
 
 /// Generate C runtime support code for stdlib modules
@@ -1018,138 +1148,140 @@ static int m2_BinaryIO_IsEOF(uint32_t fh) {
 
 /// Map a stdlib procedure call to its C equivalent
 pub fn map_stdlib_call(module: &str, proc_name: &str) -> Option<String> {
-    match (module, proc_name) {
+    let m = module.to_ascii_uppercase();
+    let p = proc_name.to_ascii_uppercase();
+    match (m.as_str(), p.as_str()) {
         // InOut
-        ("InOut", "WriteString") => Some("m2_WriteString".to_string()),
-        ("InOut", "WriteLn") => Some("m2_WriteLn".to_string()),
-        ("InOut", "WriteInt") => Some("m2_WriteInt".to_string()),
-        ("InOut", "WriteCard") => Some("m2_WriteCard".to_string()),
-        ("InOut", "WriteHex") => Some("m2_WriteHex".to_string()),
-        ("InOut", "WriteOct") => Some("m2_WriteOct".to_string()),
-        ("InOut", "Write") => Some("m2_Write".to_string()),
-        ("InOut", "Read") => Some("m2_Read".to_string()),
-        ("InOut", "ReadString") => Some("m2_ReadString".to_string()),
-        ("InOut", "ReadInt") => Some("m2_ReadInt".to_string()),
-        ("InOut", "ReadCard") => Some("m2_ReadCard".to_string()),
-        ("InOut", "OpenInput") => Some("m2_OpenInput".to_string()),
-        ("InOut", "OpenOutput") => Some("m2_OpenOutput".to_string()),
-        ("InOut", "CloseInput") => Some("m2_CloseInput".to_string()),
-        ("InOut", "CloseOutput") => Some("m2_CloseOutput".to_string()),
-        ("InOut", "Done") => Some("m2_InOut_Done".to_string()),
+        ("INOUT", "WRITESTRING") => Some("m2_WriteString".to_string()),
+        ("INOUT", "WRITELN") => Some("m2_WriteLn".to_string()),
+        ("INOUT", "WRITEINT") => Some("m2_WriteInt".to_string()),
+        ("INOUT", "WRITECARD") => Some("m2_WriteCard".to_string()),
+        ("INOUT", "WRITEHEX") => Some("m2_WriteHex".to_string()),
+        ("INOUT", "WRITEOCT") => Some("m2_WriteOct".to_string()),
+        ("INOUT", "WRITE") | ("INOUT", "WRITECHAR") => Some("m2_Write".to_string()),
+        ("INOUT", "READ") | ("INOUT", "READCHAR") => Some("m2_Read".to_string()),
+        ("INOUT", "READSTRING") => Some("m2_ReadString".to_string()),
+        ("INOUT", "READINT") => Some("m2_ReadInt".to_string()),
+        ("INOUT", "READCARD") => Some("m2_ReadCard".to_string()),
+        ("INOUT", "OPENINPUT") => Some("m2_OpenInput".to_string()),
+        ("INOUT", "OPENOUTPUT") => Some("m2_OpenOutput".to_string()),
+        ("INOUT", "CLOSEINPUT") => Some("m2_CloseInput".to_string()),
+        ("INOUT", "CLOSEOUTPUT") => Some("m2_CloseOutput".to_string()),
+        ("INOUT", "DONE") => Some("m2_InOut_Done".to_string()),
 
         // RealInOut
-        ("RealInOut", "ReadReal") => Some("m2_ReadReal".to_string()),
-        ("RealInOut", "WriteReal") => Some("m2_WriteReal".to_string()),
-        ("RealInOut", "WriteFixPt") => Some("m2_WriteFixPt".to_string()),
-        ("RealInOut", "WriteRealOct") => Some("m2_WriteRealOct".to_string()),
-        ("RealInOut", "Done") => Some("m2_RealInOut_Done".to_string()),
+        ("REALINOUT", "READREAL") => Some("m2_ReadReal".to_string()),
+        ("REALINOUT", "WRITEREAL") => Some("m2_WriteReal".to_string()),
+        ("REALINOUT", "WRITEFIXPT") => Some("m2_WriteFixPt".to_string()),
+        ("REALINOUT", "WRITEREALOCT") => Some("m2_WriteRealOct".to_string()),
+        ("REALINOUT", "DONE") => Some("m2_RealInOut_Done".to_string()),
 
         // Storage
-        ("Storage", "ALLOCATE") => Some("m2_ALLOCATE".to_string()),
-        ("Storage", "DEALLOCATE") => Some("m2_DEALLOCATE".to_string()),
+        ("STORAGE", "ALLOCATE") => Some("m2_ALLOCATE".to_string()),
+        ("STORAGE", "DEALLOCATE") => Some("m2_DEALLOCATE".to_string()),
 
         // MathLib0 / MathLib
-        ("MathLib0", "sqrt") | ("MathLib", "sqrt") => Some("sqrtf".to_string()),
-        ("MathLib0", "sin") | ("MathLib", "sin") => Some("sinf".to_string()),
-        ("MathLib0", "cos") | ("MathLib", "cos") => Some("cosf".to_string()),
-        ("MathLib0", "exp") | ("MathLib", "exp") => Some("expf".to_string()),
-        ("MathLib0", "ln") | ("MathLib", "ln") => Some("logf".to_string()),
-        ("MathLib0", "arctan") | ("MathLib", "arctan") => Some("atanf".to_string()),
-        ("MathLib0", "entier") | ("MathLib", "entier") => Some("(int32_t)floorf".to_string()),
-        ("MathLib0", "real") | ("MathLib", "real") => Some("(float)".to_string()),
+        ("MATHLIB0" | "MATHLIB", "SQRT") => Some("sqrtf".to_string()),
+        ("MATHLIB0" | "MATHLIB", "SIN") => Some("sinf".to_string()),
+        ("MATHLIB0" | "MATHLIB", "COS") => Some("cosf".to_string()),
+        ("MATHLIB0" | "MATHLIB", "EXP") => Some("expf".to_string()),
+        ("MATHLIB0" | "MATHLIB", "LN") => Some("logf".to_string()),
+        ("MATHLIB0" | "MATHLIB", "ARCTAN") => Some("atanf".to_string()),
+        ("MATHLIB0" | "MATHLIB", "ENTIER") => Some("(int32_t)floorf".to_string()),
+        ("MATHLIB0" | "MATHLIB", "REAL") => Some("(float)".to_string()),
 
         // Strings
-        ("Strings", "Assign") => Some("m2_Strings_Assign".to_string()),
-        ("Strings", "Insert") => Some("m2_Strings_Insert".to_string()),
-        ("Strings", "Delete") => Some("m2_Strings_Delete".to_string()),
-        ("Strings", "Pos") => Some("m2_Strings_Pos".to_string()),
-        ("Strings", "Length") => Some("m2_Strings_Length".to_string()),
-        ("Strings", "Copy") => Some("m2_Strings_Copy".to_string()),
-        ("Strings", "Concat") => Some("m2_Strings_Concat".to_string()),
-        ("Strings", "CompareStr") => Some("m2_Strings_CompareStr".to_string()),
+        ("STRINGS", "ASSIGN") => Some("m2_Strings_Assign".to_string()),
+        ("STRINGS", "INSERT") => Some("m2_Strings_Insert".to_string()),
+        ("STRINGS", "DELETE") => Some("m2_Strings_Delete".to_string()),
+        ("STRINGS", "POS") => Some("m2_Strings_Pos".to_string()),
+        ("STRINGS", "LENGTH") => Some("m2_Strings_Length".to_string()),
+        ("STRINGS", "COPY") => Some("m2_Strings_Copy".to_string()),
+        ("STRINGS", "CONCAT") => Some("m2_Strings_Concat".to_string()),
+        ("STRINGS", "COMPARESTR") => Some("m2_Strings_CompareStr".to_string()),
 
         // Terminal
-        ("Terminal", "Read") => Some("m2_Terminal_Read".to_string()),
-        ("Terminal", "Write") => Some("m2_Terminal_Write".to_string()),
-        ("Terminal", "WriteString") => Some("m2_Terminal_WriteString".to_string()),
-        ("Terminal", "WriteLn") => Some("m2_Terminal_WriteLn".to_string()),
-        ("Terminal", "Done") => Some("m2_Terminal_Done".to_string()),
+        ("TERMINAL", "READ") => Some("m2_Terminal_Read".to_string()),
+        ("TERMINAL", "WRITE") => Some("m2_Terminal_Write".to_string()),
+        ("TERMINAL", "WRITESTRING") => Some("m2_Terminal_WriteString".to_string()),
+        ("TERMINAL", "WRITELN") => Some("m2_Terminal_WriteLn".to_string()),
+        ("TERMINAL", "DONE") => Some("m2_Terminal_Done".to_string()),
 
         // FileSystem
-        ("FileSystem", "Lookup") => Some("m2_Lookup".to_string()),
-        ("FileSystem", "Close") => Some("m2_Close".to_string()),
-        ("FileSystem", "ReadChar") => Some("m2_ReadChar".to_string()),
-        ("FileSystem", "WriteChar") => Some("m2_WriteChar".to_string()),
-        ("FileSystem", "Done") => Some("m2_FileSystem_Done".to_string()),
+        ("FILESYSTEM", "LOOKUP") => Some("m2_Lookup".to_string()),
+        ("FILESYSTEM", "CLOSE") => Some("m2_Close".to_string()),
+        ("FILESYSTEM", "READCHAR") => Some("m2_ReadChar".to_string()),
+        ("FILESYSTEM", "WRITECHAR") => Some("m2_WriteChar".to_string()),
+        ("FILESYSTEM", "DONE") => Some("m2_FileSystem_Done".to_string()),
 
         // SYSTEM
         ("SYSTEM", "ADR") => Some("m2_ADR".to_string()),
         ("SYSTEM", "TSIZE") => Some("m2_TSIZE".to_string()),
 
         // ISO STextIO
-        ("STextIO", "WriteChar") => Some("m2_STextIO_WriteChar".to_string()),
-        ("STextIO", "ReadChar") => Some("m2_STextIO_ReadChar".to_string()),
-        ("STextIO", "WriteString") => Some("m2_STextIO_WriteString".to_string()),
-        ("STextIO", "ReadString") => Some("m2_STextIO_ReadString".to_string()),
-        ("STextIO", "WriteLn") => Some("m2_STextIO_WriteLn".to_string()),
-        ("STextIO", "SkipLine") => Some("m2_STextIO_SkipLine".to_string()),
-        ("STextIO", "ReadToken") => Some("m2_STextIO_ReadToken".to_string()),
+        ("STEXTIO", "WRITECHAR") => Some("m2_STextIO_WriteChar".to_string()),
+        ("STEXTIO", "READCHAR") => Some("m2_STextIO_ReadChar".to_string()),
+        ("STEXTIO", "WRITESTRING") => Some("m2_STextIO_WriteString".to_string()),
+        ("STEXTIO", "READSTRING") => Some("m2_STextIO_ReadString".to_string()),
+        ("STEXTIO", "WRITELN") => Some("m2_STextIO_WriteLn".to_string()),
+        ("STEXTIO", "SKIPLINE") => Some("m2_STextIO_SkipLine".to_string()),
+        ("STEXTIO", "READTOKEN") => Some("m2_STextIO_ReadToken".to_string()),
 
         // ISO SWholeIO
-        ("SWholeIO", "WriteInt") => Some("m2_SWholeIO_WriteInt".to_string()),
-        ("SWholeIO", "ReadInt") => Some("m2_SWholeIO_ReadInt".to_string()),
-        ("SWholeIO", "WriteCard") => Some("m2_SWholeIO_WriteCard".to_string()),
-        ("SWholeIO", "ReadCard") => Some("m2_SWholeIO_ReadCard".to_string()),
+        ("SWHOLEIO", "WRITEINT") => Some("m2_SWholeIO_WriteInt".to_string()),
+        ("SWHOLEIO", "READINT") => Some("m2_SWholeIO_ReadInt".to_string()),
+        ("SWHOLEIO", "WRITECARD") => Some("m2_SWholeIO_WriteCard".to_string()),
+        ("SWHOLEIO", "READCARD") => Some("m2_SWholeIO_ReadCard".to_string()),
 
         // ISO SRealIO
-        ("SRealIO", "WriteFloat") => Some("m2_SRealIO_WriteFloat".to_string()),
-        ("SRealIO", "WriteFixed") => Some("m2_SRealIO_WriteFixed".to_string()),
-        ("SRealIO", "WriteReal") => Some("m2_SRealIO_WriteReal".to_string()),
-        ("SRealIO", "ReadReal") => Some("m2_SRealIO_ReadReal".to_string()),
+        ("SREALIO", "WRITEFLOAT") => Some("m2_SRealIO_WriteFloat".to_string()),
+        ("SREALIO", "WRITEFIXED") => Some("m2_SRealIO_WriteFixed".to_string()),
+        ("SREALIO", "WRITEREAL") => Some("m2_SRealIO_WriteReal".to_string()),
+        ("SREALIO", "READREAL") => Some("m2_SRealIO_ReadReal".to_string()),
 
         // ISO SLongIO
-        ("SLongIO", "WriteFloat") => Some("m2_SLongIO_WriteFloat".to_string()),
-        ("SLongIO", "WriteFixed") => Some("m2_SLongIO_WriteFixed".to_string()),
-        ("SLongIO", "WriteLongReal") => Some("m2_SLongIO_WriteLongReal".to_string()),
-        ("SLongIO", "ReadLongReal") => Some("m2_SLongIO_ReadLongReal".to_string()),
+        ("SLONGIO", "WRITEFLOAT") => Some("m2_SLongIO_WriteFloat".to_string()),
+        ("SLONGIO", "WRITEFIXED") => Some("m2_SLongIO_WriteFixed".to_string()),
+        ("SLONGIO", "WRITELONGREAL") => Some("m2_SLongIO_WriteLongReal".to_string()),
+        ("SLONGIO", "READLONGREAL") => Some("m2_SLongIO_ReadLongReal".to_string()),
 
         // Args
-        ("Args", "ArgCount") => Some("m2_Args_ArgCount".to_string()),
-        ("Args", "GetArg") => Some("m2_Args_GetArg".to_string()),
+        ("ARGS", "ARGCOUNT") => Some("m2_Args_ArgCount".to_string()),
+        ("ARGS", "GETARG") => Some("m2_Args_GetArg".to_string()),
 
         // BinaryIO
-        ("BinaryIO", "OpenRead") => Some("m2_BinaryIO_OpenRead".to_string()),
-        ("BinaryIO", "OpenWrite") => Some("m2_BinaryIO_OpenWrite".to_string()),
-        ("BinaryIO", "Close") => Some("m2_BinaryIO_Close".to_string()),
-        ("BinaryIO", "ReadByte") => Some("m2_BinaryIO_ReadByte".to_string()),
-        ("BinaryIO", "WriteByte") => Some("m2_BinaryIO_WriteByte".to_string()),
-        ("BinaryIO", "ReadBytes") => Some("m2_BinaryIO_ReadBytes".to_string()),
-        ("BinaryIO", "WriteBytes") => Some("m2_BinaryIO_WriteBytes".to_string()),
-        ("BinaryIO", "FileSize") => Some("m2_BinaryIO_FileSize".to_string()),
-        ("BinaryIO", "Seek") => Some("m2_BinaryIO_Seek".to_string()),
-        ("BinaryIO", "Tell") => Some("m2_BinaryIO_Tell".to_string()),
-        ("BinaryIO", "IsEOF") => Some("m2_BinaryIO_IsEOF".to_string()),
-        ("BinaryIO", "Done") => Some("m2_BinaryIO_Done".to_string()),
+        ("BINARYIO", "OPENREAD") => Some("m2_BinaryIO_OpenRead".to_string()),
+        ("BINARYIO", "OPENWRITE") => Some("m2_BinaryIO_OpenWrite".to_string()),
+        ("BINARYIO", "CLOSE") => Some("m2_BinaryIO_Close".to_string()),
+        ("BINARYIO", "READBYTE") => Some("m2_BinaryIO_ReadByte".to_string()),
+        ("BINARYIO", "WRITEBYTE") => Some("m2_BinaryIO_WriteByte".to_string()),
+        ("BINARYIO", "READBYTES") => Some("m2_BinaryIO_ReadBytes".to_string()),
+        ("BINARYIO", "WRITEBYTES") => Some("m2_BinaryIO_WriteBytes".to_string()),
+        ("BINARYIO", "FILESIZE") => Some("m2_BinaryIO_FileSize".to_string()),
+        ("BINARYIO", "SEEK") => Some("m2_BinaryIO_Seek".to_string()),
+        ("BINARYIO", "TELL") => Some("m2_BinaryIO_Tell".to_string()),
+        ("BINARYIO", "ISEOF") => Some("m2_BinaryIO_IsEOF".to_string()),
+        ("BINARYIO", "DONE") => Some("m2_BinaryIO_Done".to_string()),
 
         // Thread module
-        ("Thread", "Fork") => Some("m2_Thread_Fork".to_string()),
-        ("Thread", "Join") => Some("m2_Thread_Join".to_string()),
-        ("Thread", "Self") => Some("m2_Thread_Self".to_string()),
-        ("Thread", "Alert") => Some("m2_Thread_Alert".to_string()),
-        ("Thread", "TestAlert") => Some("m2_Thread_TestAlert".to_string()),
+        ("THREAD", "FORK") => Some("m2_Thread_Fork".to_string()),
+        ("THREAD", "JOIN") => Some("m2_Thread_Join".to_string()),
+        ("THREAD", "SELF") => Some("m2_Thread_Self".to_string()),
+        ("THREAD", "ALERT") => Some("m2_Thread_Alert".to_string()),
+        ("THREAD", "TESTALERT") => Some("m2_Thread_TestAlert".to_string()),
 
         // Mutex module
-        ("Mutex", "New") => Some("m2_Mutex_New".to_string()),
-        ("Mutex", "Lock") => Some("m2_Mutex_Lock".to_string()),
-        ("Mutex", "Unlock") => Some("m2_Mutex_Unlock".to_string()),
-        ("Mutex", "Free") => Some("m2_Mutex_Free".to_string()),
+        ("MUTEX", "NEW") => Some("m2_Mutex_New".to_string()),
+        ("MUTEX", "LOCK") => Some("m2_Mutex_Lock".to_string()),
+        ("MUTEX", "UNLOCK") => Some("m2_Mutex_Unlock".to_string()),
+        ("MUTEX", "FREE") => Some("m2_Mutex_Free".to_string()),
 
         // Condition module
-        ("Condition", "New") => Some("m2_Condition_New".to_string()),
-        ("Condition", "Wait") => Some("m2_Condition_Wait".to_string()),
-        ("Condition", "Signal") => Some("m2_Condition_Signal".to_string()),
-        ("Condition", "Broadcast") => Some("m2_Condition_Broadcast".to_string()),
-        ("Condition", "Free") => Some("m2_Condition_Free".to_string()),
+        ("CONDITION", "NEW") => Some("m2_Condition_New".to_string()),
+        ("CONDITION", "WAIT") => Some("m2_Condition_Wait".to_string()),
+        ("CONDITION", "SIGNAL") => Some("m2_Condition_Signal".to_string()),
+        ("CONDITION", "BROADCAST") => Some("m2_Condition_Broadcast".to_string()),
+        ("CONDITION", "FREE") => Some("m2_Condition_Free".to_string()),
 
         _ => None,
     }
@@ -1157,27 +1289,28 @@ pub fn map_stdlib_call(module: &str, proc_name: &str) -> Option<String> {
 
 /// Check if a module name is a standard library module (handled by runtime header)
 pub fn is_stdlib_module(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
     matches!(
-        name,
-        "InOut"
-            | "RealInOut"
-            | "Storage"
-            | "MathLib0"
-            | "MathLib"
-            | "Strings"
-            | "Terminal"
-            | "FileSystem"
+        upper.as_str(),
+        "INOUT"
+            | "REALINOUT"
+            | "STORAGE"
+            | "MATHLIB0"
+            | "MATHLIB"
+            | "STRINGS"
+            | "TERMINAL"
+            | "FILESYSTEM"
             | "SYSTEM"
-            | "STextIO"
-            | "SWholeIO"
-            | "SRealIO"
-            | "SLongIO"
-            | "SIOResult"
-            | "Args"
-            | "BinaryIO"
-            | "Thread"
-            | "Mutex"
-            | "Condition"
+            | "STEXTIO"
+            | "SWHOLEIO"
+            | "SREALIO"
+            | "SLONGIO"
+            | "SIORESULT"
+            | "ARGS"
+            | "BINARYIO"
+            | "THREAD"
+            | "MUTEX"
+            | "CONDITION"
     )
 }
 
@@ -1190,6 +1323,53 @@ pub fn stdlib_module_names() -> Vec<&'static str> {
     ]
 }
 
+/// Return all stdlib procedure/variable documentation as (module, name, signature, doc) tuples.
+/// Used by the docs panel to expose individual procedure entries.
+pub fn stdlib_all_proc_docs() -> Vec<(String, String, String, String)> {
+    let mut symtab = SymbolTable::new();
+    let mut types = TypeRegistry::new();
+    let mut results = Vec::new();
+
+    for module_name in stdlib_module_names() {
+        let scope = symtab.push_scope(module_name);
+        register_module(&mut symtab, &mut types, scope, module_name);
+        symtab.pop_scope();
+        for sym in symtab.symbols_in_scope(scope) {
+            let doc = match &sym.doc {
+                Some(d) => d.clone(),
+                None => continue,
+            };
+            let sig = match &sym.kind {
+                SymbolKind::Procedure { params, return_type, .. } => {
+                    let mut s = format!("PROCEDURE {}(", sym.name);
+                    for (i, p) in params.iter().enumerate() {
+                        if i > 0 { s.push_str("; "); }
+                        if p.is_var { s.push_str("VAR "); }
+                        s.push_str(&p.name);
+                        s.push_str(": ");
+                        s.push_str(&crate::analyze::type_to_string(&types, p.typ));
+                    }
+                    s.push(')');
+                    if let Some(rt) = return_type {
+                        s.push_str(": ");
+                        s.push_str(&crate::analyze::type_to_string(&types, *rt));
+                    }
+                    s
+                }
+                SymbolKind::Variable => {
+                    format!("VAR {}: {}", sym.name, crate::analyze::type_to_string(&types, sym.typ))
+                }
+                SymbolKind::Type => {
+                    format!("TYPE {}", sym.name)
+                }
+                _ => continue,
+            };
+            results.push((module_name.to_string(), sym.name.clone(), sig, doc));
+        }
+    }
+    results
+}
+
 /// Parameter descriptor for stdlib procedure codegen: (name, is_var, is_char, is_open_array)
 pub type StdlibParam = (String, bool, bool, bool);
 
@@ -1199,87 +1379,89 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
     let sp = |name: &str, is_var: bool, is_char: bool| -> StdlibParam {
         (name.to_string(), is_var, is_char, false)
     };
-    match (module, proc_name) {
+    let m = module.to_ascii_uppercase();
+    let p = proc_name.to_ascii_uppercase();
+    match (m.as_str(), p.as_str()) {
         // InOut
-        ("InOut", "Read") => Some(vec![sp("ch", true, true)]),
-        ("InOut", "ReadString") => Some(vec![sp("s", true, false)]),
-        ("InOut", "ReadInt") => Some(vec![sp("n", true, false)]),
-        ("InOut", "ReadCard") => Some(vec![sp("n", true, false)]),
-        ("InOut", "Write") => Some(vec![sp("ch", false, true)]),
-        ("InOut", "WriteString") => Some(vec![sp("s", false, false)]),
-        ("InOut", "WriteInt") => Some(vec![sp("n", false, false), sp("w", false, false)]),
-        ("InOut", "WriteCard") => Some(vec![sp("n", false, false), sp("w", false, false)]),
-        ("InOut", "WriteHex") => Some(vec![sp("n", false, false), sp("w", false, false)]),
-        ("InOut", "WriteOct") => Some(vec![sp("n", false, false), sp("w", false, false)]),
-        ("InOut", "WriteLn") => Some(vec![]),
-        ("InOut", "OpenInput") => Some(vec![sp("ext", false, false)]),
-        ("InOut", "OpenOutput") => Some(vec![sp("ext", false, false)]),
-        ("InOut", "CloseInput") => Some(vec![]),
-        ("InOut", "CloseOutput") => Some(vec![]),
+        ("INOUT", "READ") | ("INOUT", "READCHAR") => Some(vec![sp("ch", true, true)]),
+        ("INOUT", "READSTRING") => Some(vec![sp("s", true, false)]),
+        ("INOUT", "READINT") => Some(vec![sp("n", true, false)]),
+        ("INOUT", "READCARD") => Some(vec![sp("n", true, false)]),
+        ("INOUT", "WRITE") | ("INOUT", "WRITECHAR") => Some(vec![sp("ch", false, true)]),
+        ("INOUT", "WRITESTRING") => Some(vec![sp("s", false, false)]),
+        ("INOUT", "WRITEINT") => Some(vec![sp("n", false, false), sp("w", false, false)]),
+        ("INOUT", "WRITECARD") => Some(vec![sp("n", false, false), sp("w", false, false)]),
+        ("INOUT", "WRITEHEX") => Some(vec![sp("n", false, false), sp("w", false, false)]),
+        ("INOUT", "WRITEOCT") => Some(vec![sp("n", false, false), sp("w", false, false)]),
+        ("INOUT", "WRITELN") => Some(vec![]),
+        ("INOUT", "OPENINPUT") => Some(vec![sp("ext", false, false)]),
+        ("INOUT", "OPENOUTPUT") => Some(vec![sp("ext", false, false)]),
+        ("INOUT", "CLOSEINPUT") => Some(vec![]),
+        ("INOUT", "CLOSEOUTPUT") => Some(vec![]),
 
         // Terminal
-        ("Terminal", "Read") => Some(vec![sp("ch", true, true)]),
-        ("Terminal", "Write") => Some(vec![sp("ch", false, true)]),
-        ("Terminal", "WriteString") => Some(vec![sp("s", false, false)]),
-        ("Terminal", "WriteLn") => Some(vec![]),
+        ("TERMINAL", "READ") => Some(vec![sp("ch", true, true)]),
+        ("TERMINAL", "WRITE") => Some(vec![sp("ch", false, true)]),
+        ("TERMINAL", "WRITESTRING") => Some(vec![sp("s", false, false)]),
+        ("TERMINAL", "WRITELN") => Some(vec![]),
 
         // STextIO
-        ("STextIO", "WriteChar") => Some(vec![sp("ch", false, true)]),
-        ("STextIO", "ReadChar") => Some(vec![sp("ch", true, true)]),
-        ("STextIO", "WriteString") => Some(vec![sp("s", false, false)]),
-        ("STextIO", "ReadString") => Some(vec![sp("s", true, false)]),
-        ("STextIO", "WriteLn") => Some(vec![]),
-        ("STextIO", "SkipLine") => Some(vec![]),
-        ("STextIO", "ReadToken") => Some(vec![sp("s", true, false)]),
+        ("STEXTIO", "WRITECHAR") => Some(vec![sp("ch", false, true)]),
+        ("STEXTIO", "READCHAR") => Some(vec![sp("ch", true, true)]),
+        ("STEXTIO", "WRITESTRING") => Some(vec![sp("s", false, false)]),
+        ("STEXTIO", "READSTRING") => Some(vec![sp("s", true, false)]),
+        ("STEXTIO", "WRITELN") => Some(vec![]),
+        ("STEXTIO", "SKIPLINE") => Some(vec![]),
+        ("STEXTIO", "READTOKEN") => Some(vec![sp("s", true, false)]),
 
         // SWholeIO
-        ("SWholeIO", "WriteInt") => Some(vec![sp("n", false, false), sp("w", false, false)]),
-        ("SWholeIO", "ReadInt") => Some(vec![sp("n", true, false)]),
-        ("SWholeIO", "WriteCard") => Some(vec![sp("n", false, false), sp("w", false, false)]),
-        ("SWholeIO", "ReadCard") => Some(vec![sp("n", true, false)]),
+        ("SWHOLEIO", "WRITEINT") => Some(vec![sp("n", false, false), sp("w", false, false)]),
+        ("SWHOLEIO", "READINT") => Some(vec![sp("n", true, false)]),
+        ("SWHOLEIO", "WRITECARD") => Some(vec![sp("n", false, false), sp("w", false, false)]),
+        ("SWHOLEIO", "READCARD") => Some(vec![sp("n", true, false)]),
 
         // SRealIO
-        ("SRealIO", "WriteFloat") => Some(vec![sp("r", false, false), sp("sigFigs", false, false), sp("w", false, false)]),
-        ("SRealIO", "WriteFixed") => Some(vec![sp("r", false, false), sp("place", false, false), sp("w", false, false)]),
-        ("SRealIO", "WriteReal") => Some(vec![sp("r", false, false), sp("w", false, false)]),
-        ("SRealIO", "ReadReal") => Some(vec![sp("r", true, false)]),
+        ("SREALIO", "WRITEFLOAT") => Some(vec![sp("r", false, false), sp("sigFigs", false, false), sp("w", false, false)]),
+        ("SREALIO", "WRITEFIXED") => Some(vec![sp("r", false, false), sp("place", false, false), sp("w", false, false)]),
+        ("SREALIO", "WRITEREAL") => Some(vec![sp("r", false, false), sp("w", false, false)]),
+        ("SREALIO", "READREAL") => Some(vec![sp("r", true, false)]),
 
         // SLongIO
-        ("SLongIO", "WriteLongFloat") => Some(vec![sp("r", false, false), sp("sigFigs", false, false), sp("w", false, false)]),
-        ("SLongIO", "WriteLongFixed") => Some(vec![sp("r", false, false), sp("place", false, false), sp("w", false, false)]),
-        ("SLongIO", "WriteLongReal") => Some(vec![sp("r", false, false), sp("w", false, false)]),
-        ("SLongIO", "ReadLongReal") => Some(vec![sp("r", true, false)]),
+        ("SLONGIO", "WRITELONGFLOAT") => Some(vec![sp("r", false, false), sp("sigFigs", false, false), sp("w", false, false)]),
+        ("SLONGIO", "WRITELONGFIXED") => Some(vec![sp("r", false, false), sp("place", false, false), sp("w", false, false)]),
+        ("SLONGIO", "WRITELONGREAL") => Some(vec![sp("r", false, false), sp("w", false, false)]),
+        ("SLONGIO", "READLONGREAL") => Some(vec![sp("r", true, false)]),
 
         // RealInOut
-        ("RealInOut", "ReadReal") => Some(vec![sp("r", true, false)]),
-        ("RealInOut", "WriteReal") => Some(vec![sp("r", false, false), sp("w", false, false)]),
-        ("RealInOut", "WriteFixPt") => Some(vec![sp("r", false, false), sp("w", false, false), sp("d", false, false)]),
-        ("RealInOut", "WriteRealOct") => Some(vec![sp("r", false, false)]),
+        ("REALINOUT", "READREAL") => Some(vec![sp("r", true, false)]),
+        ("REALINOUT", "WRITEREAL") => Some(vec![sp("r", false, false), sp("w", false, false)]),
+        ("REALINOUT", "WRITEFIXPT") => Some(vec![sp("r", false, false), sp("w", false, false), sp("d", false, false)]),
+        ("REALINOUT", "WRITEREALOCT") => Some(vec![sp("r", false, false)]),
 
         // Storage
-        ("Storage", "ALLOCATE") => Some(vec![sp("p", true, false), sp("size", false, false)]),
-        ("Storage", "DEALLOCATE") => Some(vec![sp("p", true, false), sp("size", false, false)]),
+        ("STORAGE", "ALLOCATE") => Some(vec![sp("p", true, false), sp("size", false, false)]),
+        ("STORAGE", "DEALLOCATE") => Some(vec![sp("p", true, false), sp("size", false, false)]),
 
         // MathLib0/MathLib - all single param returning real
-        ("MathLib0" | "MathLib", "sqrt" | "sin" | "cos" | "arctan" | "exp" | "ln") => Some(vec![sp("x", false, false)]),
-        ("MathLib0" | "MathLib", "entier") => Some(vec![sp("x", false, false)]),
-        ("MathLib0" | "MathLib", "real") => Some(vec![sp("x", false, false)]),
+        ("MATHLIB0" | "MATHLIB", "SQRT" | "SIN" | "COS" | "ARCTAN" | "EXP" | "LN") => Some(vec![sp("x", false, false)]),
+        ("MATHLIB0" | "MATHLIB", "ENTIER") => Some(vec![sp("x", false, false)]),
+        ("MATHLIB0" | "MATHLIB", "REAL") => Some(vec![sp("x", false, false)]),
 
         // Strings — destination params are is_open_array so codegen emits HIGH bound
-        ("Strings", "Assign") => Some(vec![sp("src", false, false), ("dst".to_string(), false, false, true)]),
-        ("Strings", "Insert") => Some(vec![sp("sub", false, false), ("dst".to_string(), false, false, true), sp("pos", false, false)]),
-        ("Strings", "Delete") => Some(vec![("s".to_string(), false, false, true), sp("pos", false, false), sp("len", false, false)]),
-        ("Strings", "Pos") => Some(vec![sp("sub", false, false), sp("s", false, false)]),
-        ("Strings", "Length") => Some(vec![sp("s", false, false)]),
-        ("Strings", "Copy") => Some(vec![sp("src", false, false), sp("pos", false, false), sp("len", false, false), ("dst".to_string(), false, false, true)]),
-        ("Strings", "Concat") => Some(vec![sp("s1", false, false), sp("s2", false, false), ("dst".to_string(), false, false, true)]),
-        ("Strings", "CompareStr") => Some(vec![sp("s1", false, false), sp("s2", false, false)]),
+        ("STRINGS", "ASSIGN") => Some(vec![sp("src", false, false), ("dst".to_string(), false, false, true)]),
+        ("STRINGS", "INSERT") => Some(vec![sp("sub", false, false), ("dst".to_string(), false, false, true), sp("pos", false, false)]),
+        ("STRINGS", "DELETE") => Some(vec![("s".to_string(), false, false, true), sp("pos", false, false), sp("len", false, false)]),
+        ("STRINGS", "POS") => Some(vec![sp("sub", false, false), sp("s", false, false)]),
+        ("STRINGS", "LENGTH") => Some(vec![sp("s", false, false)]),
+        ("STRINGS", "COPY") => Some(vec![sp("src", false, false), sp("pos", false, false), sp("len", false, false), ("dst".to_string(), false, false, true)]),
+        ("STRINGS", "CONCAT") => Some(vec![sp("s1", false, false), sp("s2", false, false), ("dst".to_string(), false, false, true)]),
+        ("STRINGS", "COMPARESTR") => Some(vec![sp("s1", false, false), sp("s2", false, false)]),
 
         // FileSystem
-        ("FileSystem", "Lookup") => Some(vec![sp("f", true, false), sp("name", false, false), sp("new", false, false)]),
-        ("FileSystem", "Close") => Some(vec![sp("f", true, false)]),
-        ("FileSystem", "ReadChar") => Some(vec![sp("f", true, false), sp("ch", true, true)]),
-        ("FileSystem", "WriteChar") => Some(vec![sp("f", true, false), sp("ch", false, true)]),
+        ("FILESYSTEM", "LOOKUP") => Some(vec![sp("f", true, false), sp("name", false, false), sp("new", false, false)]),
+        ("FILESYSTEM", "CLOSE") => Some(vec![sp("f", true, false)]),
+        ("FILESYSTEM", "READCHAR") => Some(vec![sp("f", true, false), sp("ch", true, true)]),
+        ("FILESYSTEM", "WRITECHAR") => Some(vec![sp("f", true, false), sp("ch", false, true)]),
 
         // SYSTEM
         ("SYSTEM", "ADR") => Some(vec![sp("x", false, false)]),
@@ -1289,41 +1471,41 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         ("SYSTEM", "IOTRANSFER") => Some(vec![sp("from", true, false), sp("to", true, false), sp("vec", false, false)]),
 
         // Args
-        ("Args", "ArgCount") => Some(vec![]),
-        ("Args", "GetArg") => Some(vec![sp("n", false, false), sp("buf", true, false)]),
+        ("ARGS", "ARGCOUNT") => Some(vec![]),
+        ("ARGS", "GETARG") => Some(vec![sp("n", false, false), sp("buf", true, false)]),
 
         // BinaryIO
-        ("BinaryIO", "OpenRead") => Some(vec![sp("name", false, false), sp("fh", true, false)]),
-        ("BinaryIO", "OpenWrite") => Some(vec![sp("name", false, false), sp("fh", true, false)]),
-        ("BinaryIO", "Close") => Some(vec![sp("fh", false, false)]),
-        ("BinaryIO", "ReadByte") => Some(vec![sp("fh", false, false), sp("b", true, false)]),
-        ("BinaryIO", "WriteByte") => Some(vec![sp("fh", false, false), sp("b", false, false)]),
-        ("BinaryIO", "ReadBytes") => Some(vec![sp("fh", false, false), sp("buf", true, false), sp("n", false, false), sp("actual", true, false)]),
-        ("BinaryIO", "WriteBytes") => Some(vec![sp("fh", false, false), sp("buf", false, false), sp("n", false, false)]),
-        ("BinaryIO", "FileSize") => Some(vec![sp("fh", false, false), sp("size", true, false)]),
-        ("BinaryIO", "Seek") => Some(vec![sp("fh", false, false), sp("pos", false, false)]),
-        ("BinaryIO", "Tell") => Some(vec![sp("fh", false, false), sp("pos", true, false)]),
-        ("BinaryIO", "IsEOF") => Some(vec![sp("fh", false, false)]),
+        ("BINARYIO", "OPENREAD") => Some(vec![sp("name", false, false), sp("fh", true, false)]),
+        ("BINARYIO", "OPENWRITE") => Some(vec![sp("name", false, false), sp("fh", true, false)]),
+        ("BINARYIO", "CLOSE") => Some(vec![sp("fh", false, false)]),
+        ("BINARYIO", "READBYTE") => Some(vec![sp("fh", false, false), sp("b", true, false)]),
+        ("BINARYIO", "WRITEBYTE") => Some(vec![sp("fh", false, false), sp("b", false, false)]),
+        ("BINARYIO", "READBYTES") => Some(vec![sp("fh", false, false), sp("buf", true, false), sp("n", false, false), sp("actual", true, false)]),
+        ("BINARYIO", "WRITEBYTES") => Some(vec![sp("fh", false, false), sp("buf", false, false), sp("n", false, false)]),
+        ("BINARYIO", "FILESIZE") => Some(vec![sp("fh", false, false), sp("size", true, false)]),
+        ("BINARYIO", "SEEK") => Some(vec![sp("fh", false, false), sp("pos", false, false)]),
+        ("BINARYIO", "TELL") => Some(vec![sp("fh", false, false), sp("pos", true, false)]),
+        ("BINARYIO", "ISEOF") => Some(vec![sp("fh", false, false)]),
 
         // Thread module
-        ("Thread", "Fork") => Some(vec![sp("p", false, false)]),
-        ("Thread", "Join") => Some(vec![sp("t", false, false)]),
-        ("Thread", "Self") => Some(vec![]),
-        ("Thread", "Alert") => Some(vec![sp("t", false, false)]),
-        ("Thread", "TestAlert") => Some(vec![]),
+        ("THREAD", "FORK") => Some(vec![sp("p", false, false)]),
+        ("THREAD", "JOIN") => Some(vec![sp("t", false, false)]),
+        ("THREAD", "SELF") => Some(vec![]),
+        ("THREAD", "ALERT") => Some(vec![sp("t", false, false)]),
+        ("THREAD", "TESTALERT") => Some(vec![]),
 
         // Mutex module
-        ("Mutex", "New") => Some(vec![]),
-        ("Mutex", "Lock") => Some(vec![sp("m", false, false)]),
-        ("Mutex", "Unlock") => Some(vec![sp("m", false, false)]),
-        ("Mutex", "Free") => Some(vec![sp("m", false, false)]),
+        ("MUTEX", "NEW") => Some(vec![]),
+        ("MUTEX", "LOCK") => Some(vec![sp("m", false, false)]),
+        ("MUTEX", "UNLOCK") => Some(vec![sp("m", false, false)]),
+        ("MUTEX", "FREE") => Some(vec![sp("m", false, false)]),
 
         // Condition module
-        ("Condition", "New") => Some(vec![]),
-        ("Condition", "Wait") => Some(vec![sp("c", false, false), sp("m", false, false)]),
-        ("Condition", "Signal") => Some(vec![sp("c", false, false)]),
-        ("Condition", "Broadcast") => Some(vec![sp("c", false, false)]),
-        ("Condition", "Free") => Some(vec![sp("c", false, false)]),
+        ("CONDITION", "NEW") => Some(vec![]),
+        ("CONDITION", "WAIT") => Some(vec![sp("c", false, false), sp("m", false, false)]),
+        ("CONDITION", "SIGNAL") => Some(vec![sp("c", false, false)]),
+        ("CONDITION", "BROADCAST") => Some(vec![sp("c", false, false)]),
+        ("CONDITION", "FREE") => Some(vec![sp("c", false, false)]),
 
         _ => None,
     }

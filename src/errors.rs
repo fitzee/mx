@@ -52,11 +52,11 @@ pub enum ErrorKind {
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let kind = match self.kind {
-            ErrorKind::Lexer => "lexer error",
-            ErrorKind::Parser => "syntax error",
-            ErrorKind::Semantic => "error",
-            ErrorKind::CodeGen => "codegen error",
-            ErrorKind::Driver => "error",
+            ErrorKind::Lexer
+            | ErrorKind::Parser
+            | ErrorKind::Semantic
+            | ErrorKind::CodeGen
+            | ErrorKind::Driver => "error",
         };
         write!(f, "{}: {}: {}", self.loc, kind, self.message)
     }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::ast::*;
 use crate::errors::{CompileError, CompileResult, SourceLoc};
 use crate::token::{Token, TokenKind};
@@ -7,16 +8,41 @@ pub struct Parser {
     pos: usize,
     errors: Vec<CompileError>,
     panic_mode: bool,
+    /// Maps token position → doc comment text (from preceding (** or (*! comment)
+    doc_map: HashMap<usize, String>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
+        // Filter out DocComment tokens, building a map from the following
+        // token's position to the doc comment text.
+        let mut filtered = Vec::new();
+        let mut doc_map: HashMap<usize, String> = HashMap::new();
+        let mut pending_doc: Option<String> = None;
+
+        for tok in tokens {
+            if let TokenKind::DocComment(text) = tok.kind {
+                pending_doc = Some(text);
+            } else {
+                if let Some(doc) = pending_doc.take() {
+                    doc_map.insert(filtered.len(), doc);
+                }
+                filtered.push(tok);
+            }
+        }
+
         Self {
-            tokens,
+            tokens: filtered,
             pos: 0,
             errors: Vec::new(),
             panic_mode: false,
+            doc_map,
         }
+    }
+
+    /// Take the doc comment associated with the current token position, if any.
+    fn take_doc(&mut self) -> Option<String> {
+        self.doc_map.remove(&self.pos)
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
@@ -119,38 +145,43 @@ impl Parser {
     // ── Top-level ───────────────────────────────────────────────────
 
     pub fn parse_compilation_unit(&mut self) -> CompileResult<CompilationUnit> {
+        let doc = self.take_doc();
         let result = match self.peek() {
             TokenKind::Definition => {
-                self.parse_definition_module().map(CompilationUnit::DefinitionModule)
+                self.parse_definition_module().map(|mut m| { m.doc = m.doc.or(doc.clone()); CompilationUnit::DefinitionModule(m) })
             }
             TokenKind::Implementation => {
-                self.parse_implementation_module().map(CompilationUnit::ImplementationModule)
+                self.parse_implementation_module().map(|mut m| { m.doc = m.doc.or(doc.clone()); CompilationUnit::ImplementationModule(m) })
             }
             TokenKind::Module => {
-                self.parse_program_module().map(CompilationUnit::ProgramModule)
+                self.parse_program_module().map(|mut m| { m.doc = m.doc.or(doc.clone()); CompilationUnit::ProgramModule(m) })
             }
             TokenKind::Safe | TokenKind::Unsafe => {
                 // SAFE/UNSAFE prefix — peek ahead to determine module kind
                 let is_safe = self.at(&TokenKind::Safe);
                 let is_unsafe = self.at(&TokenKind::Unsafe);
                 self.advance(); // consume SAFE/UNSAFE
+                let doc2 = self.take_doc().or(doc.clone());
                 match self.peek() {
                     TokenKind::Module => {
                         let mut m = self.parse_program_module()?;
                         m.is_safe = is_safe;
                         m.is_unsafe = is_unsafe;
+                        m.doc = m.doc.or(doc2);
                         Ok(CompilationUnit::ProgramModule(m))
                     }
                     TokenKind::Definition => {
                         let mut m = self.parse_definition_module()?;
                         m.is_safe = is_safe;
                         m.is_unsafe = is_unsafe;
+                        m.doc = m.doc.or(doc2);
                         Ok(CompilationUnit::DefinitionModule(m))
                     }
                     TokenKind::Implementation => {
                         let mut m = self.parse_implementation_module()?;
                         m.is_safe = is_safe;
                         m.is_unsafe = is_unsafe;
+                        m.doc = m.doc.or(doc2);
                         Ok(CompilationUnit::ImplementationModule(m))
                     }
                     _ => Err(CompileError::parser(
@@ -203,7 +234,7 @@ impl Parser {
             ));
         }
         self.expect(&TokenKind::Dot)?;
-        Ok(ProgramModule { name, priority, imports, block, is_safe: false, is_unsafe: false, loc })
+        Ok(ProgramModule { name, priority, imports, block, is_safe: false, is_unsafe: false, loc, doc: None })
     }
 
     fn parse_definition_module(&mut self) -> CompileResult<DefinitionModule> {
@@ -234,38 +265,58 @@ impl Parser {
         };
         let mut definitions = Vec::new();
         loop {
+            let section_doc = self.take_doc();
             match self.peek() {
                 TokenKind::Const => {
                     self.advance();
+                    let mut first = true;
                     while let TokenKind::Ident(_) = self.peek() {
-                        definitions.push(Definition::Const(self.parse_const_decl()?));
+                        let doc = self.take_doc().or_else(|| if first { section_doc.clone() } else { None });
+                        first = false;
+                        let mut c = self.parse_const_decl()?;
+                        c.doc = doc;
+                        definitions.push(Definition::Const(c));
                     }
                 }
                 TokenKind::Type => {
                     self.advance();
+                    let mut first = true;
                     while let TokenKind::Ident(_) = self.peek() {
-                        definitions.push(Definition::Type(self.parse_type_decl_def()?));
+                        let doc = self.take_doc().or_else(|| if first { section_doc.clone() } else { None });
+                        first = false;
+                        let mut t = self.parse_type_decl_def()?;
+                        t.doc = doc;
+                        definitions.push(Definition::Type(t));
                     }
                 }
                 TokenKind::Var => {
                     self.advance();
+                    let mut first = true;
                     while let TokenKind::Ident(_) = self.peek() {
-                        definitions.push(Definition::Var(self.parse_var_decl()?));
+                        let doc = self.take_doc().or_else(|| if first { section_doc.clone() } else { None });
+                        first = false;
+                        let mut v = self.parse_var_decl()?;
+                        v.doc = doc;
+                        definitions.push(Definition::Var(v));
                     }
                 }
                 TokenKind::Pragma(_, _) | TokenKind::Procedure => {
+                    let doc = section_doc.or_else(|| self.take_doc());
                     let ec_name = self.try_consume_exportc_pragma();
+                    let doc = doc.or_else(|| self.take_doc());
                     let mut heading = self.parse_proc_heading()?;
                     heading.export_c_name = ec_name;
+                    heading.doc = doc;
                     self.expect(&TokenKind::Semi)?;
                     definitions.push(Definition::Procedure(heading));
                 }
                 TokenKind::Exception => {
+                    let doc = section_doc;
                     self.advance();
-                    let loc = self.loc();
-                    let name = self.expect_ident()?;
+                    let eloc = self.loc();
+                    let ename = self.expect_ident()?;
                     self.expect(&TokenKind::Semi)?;
-                    definitions.push(Definition::Exception(ExceptionDecl { name, loc }));
+                    definitions.push(Definition::Exception(ExceptionDecl { name: ename, loc: eloc, doc }));
                 }
                 _ => break,
             }
@@ -279,7 +330,7 @@ impl Parser {
             ));
         }
         self.expect(&TokenKind::Dot)?;
-        Ok(DefinitionModule { name, imports, export, definitions, is_safe: false, is_unsafe: false, foreign_lang, loc })
+        Ok(DefinitionModule { name, imports, export, definitions, is_safe: false, is_unsafe: false, foreign_lang, loc, doc: None })
     }
 
     fn parse_implementation_module(&mut self) -> CompileResult<ImplementationModule> {
@@ -305,7 +356,7 @@ impl Parser {
             ));
         }
         self.expect(&TokenKind::Dot)?;
-        Ok(ImplementationModule { name, priority, imports, block, is_safe: false, is_unsafe: false, loc })
+        Ok(ImplementationModule { name, priority, imports, block, is_safe: false, is_unsafe: false, loc, doc: None })
     }
 
     // ── Imports / Exports ───────────────────────────────────────────
@@ -381,12 +432,16 @@ impl Parser {
     fn parse_declarations(&mut self) -> CompileResult<Vec<Declaration>> {
         let mut decls = Vec::new();
         loop {
+            let section_doc = self.take_doc();
             match self.peek() {
                 TokenKind::Const => {
                     self.advance();
+                    let mut first = true;
                     while let TokenKind::Ident(_) = self.peek() {
+                        let doc = self.take_doc().or_else(|| if first { section_doc.clone() } else { None });
+                        first = false;
                         match self.parse_const_decl() {
-                            Ok(c) => decls.push(Declaration::Const(c)),
+                            Ok(mut c) => { c.doc = doc; decls.push(Declaration::Const(c)); }
                             Err(e) => {
                                 self.record_error(e);
                                 self.synchronize();
@@ -396,9 +451,12 @@ impl Parser {
                 }
                 TokenKind::Type => {
                     self.advance();
+                    let mut first = true;
                     while let TokenKind::Ident(_) = self.peek() {
+                        let doc = self.take_doc().or_else(|| if first { section_doc.clone() } else { None });
+                        first = false;
                         match self.parse_type_decl() {
-                            Ok(t) => decls.push(Declaration::Type(t)),
+                            Ok(mut t) => { t.doc = doc; decls.push(Declaration::Type(t)); }
                             Err(e) => {
                                 self.record_error(e);
                                 self.synchronize();
@@ -408,9 +466,12 @@ impl Parser {
                 }
                 TokenKind::Var => {
                     self.advance();
+                    let mut first = true;
                     while let TokenKind::Ident(_) = self.peek() {
+                        let doc = self.take_doc().or_else(|| if first { section_doc.clone() } else { None });
+                        first = false;
                         match self.parse_var_decl() {
-                            Ok(v) => decls.push(Declaration::Var(v)),
+                            Ok(mut v) => { v.doc = doc; decls.push(Declaration::Var(v)); }
                             Err(e) => {
                                 self.record_error(e);
                                 self.synchronize();
@@ -419,10 +480,13 @@ impl Parser {
                     }
                 }
                 TokenKind::Pragma(_, _) | TokenKind::Procedure => {
+                    let doc = section_doc.or_else(|| self.take_doc());
                     let ec_name = self.try_consume_exportc_pragma();
+                    let doc = doc.or_else(|| self.take_doc());
                     match self.parse_proc_decl() {
                         Ok(mut p) => {
                             p.heading.export_c_name = ec_name;
+                            p.doc = doc;
                             decls.push(Declaration::Procedure(p));
                         }
                         Err(e) => {
@@ -432,8 +496,9 @@ impl Parser {
                     }
                 }
                 TokenKind::Module => {
+                    let doc = section_doc;
                     match self.parse_program_module() {
-                        Ok(m) => decls.push(Declaration::Module(m)),
+                        Ok(mut m) => { m.doc = doc; decls.push(Declaration::Module(m)); }
                         Err(e) => {
                             self.record_error(e);
                             self.synchronize();
@@ -442,11 +507,12 @@ impl Parser {
                 }
                 // Modula-2+ EXCEPTION declaration
                 TokenKind::Exception => {
+                    let doc = section_doc;
                     self.advance();
-                    let loc = self.loc();
-                    let name = self.expect_ident()?;
+                    let eloc = self.loc();
+                    let ename = self.expect_ident()?;
                     self.expect(&TokenKind::Semi)?;
-                    decls.push(Declaration::Exception(ExceptionDecl { name, loc }));
+                    decls.push(Declaration::Exception(ExceptionDecl { name: ename, loc: eloc, doc }));
                 }
                 _ => break,
             }
@@ -460,7 +526,7 @@ impl Parser {
         self.expect(&TokenKind::Eq)?;
         let expr = self.parse_expression()?;
         self.expect(&TokenKind::Semi)?;
-        Ok(ConstDecl { name, expr, loc })
+        Ok(ConstDecl { name, expr, loc, doc: None })
     }
 
     fn parse_type_decl(&mut self) -> CompileResult<TypeDecl> {
@@ -469,7 +535,7 @@ impl Parser {
         self.expect(&TokenKind::Eq)?;
         let typ = Some(self.parse_type()?);
         self.expect(&TokenKind::Semi)?;
-        Ok(TypeDecl { name, typ, loc })
+        Ok(TypeDecl { name, typ, loc, doc: None })
     }
 
     fn parse_type_decl_def(&mut self) -> CompileResult<TypeDecl> {
@@ -483,7 +549,7 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::Semi)?;
-        Ok(TypeDecl { name, typ, loc })
+        Ok(TypeDecl { name, typ, loc, doc: None })
     }
 
     fn parse_var_decl(&mut self) -> CompileResult<VarDecl> {
@@ -495,7 +561,7 @@ impl Parser {
         self.expect(&TokenKind::Colon)?;
         let typ = self.parse_type()?;
         self.expect(&TokenKind::Semi)?;
-        Ok(VarDecl { names, typ, loc })
+        Ok(VarDecl { names, typ, loc, doc: None })
     }
 
     fn parse_proc_decl(&mut self) -> CompileResult<ProcDecl> {
@@ -514,7 +580,7 @@ impl Parser {
             ));
         }
         self.expect(&TokenKind::Semi)?;
-        Ok(ProcDecl { heading, block, loc })
+        Ok(ProcDecl { heading, block, loc, doc: None })
     }
 
     fn try_consume_exportc_pragma(&mut self) -> Option<String> {
@@ -567,7 +633,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(ProcHeading { name, params, return_type, raises, export_c_name: None, loc })
+        Ok(ProcHeading { name, params, return_type, raises, export_c_name: None, loc, doc: None })
     }
 
     fn parse_formal_params(&mut self) -> CompileResult<Vec<FormalParam>> {

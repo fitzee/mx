@@ -49,14 +49,14 @@ BEGIN
           WriteString(dpath); WriteLn;
           RETURN 1
         END;
-        (* Check that dep has a m2.mod *)
+        (* Check that dep has a m2.toml *)
         Assign(dpath, mpath);
-        Concat(mpath, "/m2.mod", tmp);
+        Concat(mpath, "/m2.toml", tmp);
         Assign(tmp, mpath);
         IF m2sys_file_exists(ADR(mpath)) = 0 THEN
           WriteString("m2pkg: dependency '");
           WriteString(dname);
-          WriteString("' has no m2.mod at ");
+          WriteString("' has no m2.toml at ");
           WriteString(mpath); WriteLn;
           RETURN 1
         END;

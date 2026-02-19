@@ -89,6 +89,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
                 exported: true,
                 module: None,
                 loc: SourceLoc::default(),
+                doc: None,
             },
         );
     }
@@ -103,6 +104,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
             exported: true,
             module: None,
             loc: SourceLoc::default(),
+            doc: None,
         },
     );
     let _ = symtab.define(
@@ -114,6 +116,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
             exported: true,
             module: None,
             loc: SourceLoc::default(),
+            doc: None,
         },
     );
     let _ = symtab.define(
@@ -125,6 +128,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
             exported: true,
             module: None,
             loc: SourceLoc::default(),
+            doc: None,
         },
     );
 }
@@ -181,6 +185,7 @@ pub fn register_builtin_procs(symtab: &mut SymbolTable, _types: &TypeRegistry, s
                 exported: true,
                 module: None,
                 loc: SourceLoc::default(),
+                doc: None,
             },
         );
     }

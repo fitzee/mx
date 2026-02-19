@@ -30,6 +30,12 @@ pub struct CompileOptions {
     pub diagnostics_json: bool,
     /// Enabled feature names for conditional compilation (*$IF name*)
     pub features: Vec<String>,
+    /// Raw extra flags passed to cc (from manifest [cc] cflags)
+    pub extra_cflags: Vec<String>,
+    /// macOS -framework flags
+    pub frameworks: Vec<String>,
+    /// Case-sensitive mode (default: false, Modula-2 is case-insensitive)
+    pub case_sensitive: bool,
 }
 
 impl Default for CompileOptions {
@@ -49,12 +55,15 @@ impl Default for CompileOptions {
             link_paths: Vec::new(),
             diagnostics_json: false,
             features: Vec::new(),
+            extra_cflags: Vec::new(),
+            frameworks: Vec::new(),
+            case_sensitive: true,
         }
     }
 }
 
 /// Search for a definition module (.def) file for a given module name
-fn find_def_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]) -> Option<PathBuf> {
+pub(crate) fn find_def_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]) -> Option<PathBuf> {
     // Check in the same directory as the input file
     let dir = input_path.parent().unwrap_or(Path::new("."));
     let candidates = vec![
@@ -84,7 +93,7 @@ fn find_def_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]
 }
 
 /// Search for an implementation module (.mod) file for a given module name
-fn find_mod_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]) -> Option<PathBuf> {
+pub(crate) fn find_mod_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]) -> Option<PathBuf> {
     let dir = input_path.parent().unwrap_or(Path::new("."));
     let candidates = vec![
         dir.join(format!("{}.mod", module_name)),
@@ -111,13 +120,28 @@ fn find_mod_file(module_name: &str, input_path: &Path, include_paths: &[PathBuf]
     None
 }
 
+/// Build a driver error from C compiler failure, suppressing raw C errors
+/// unless M2C_SHOW_C_ERRORS=1 is set.
+fn cc_failure_error(stderr: &[u8]) -> CompileError {
+    let show_c = std::env::var("M2C_SHOW_C_ERRORS").map_or(false, |v| v == "1");
+    if show_c {
+        let msg = String::from_utf8_lossy(stderr);
+        CompileError::driver(format!("C backend failed:\n{}", msg.trim()))
+    } else {
+        CompileError::driver(
+            "C backend failed (internal error). Re-run with M2C_SHOW_C_ERRORS=1 for details."
+        )
+    }
+}
+
 /// Parse a source file and return the compilation unit
-fn parse_file(path: &Path) -> CompileResult<CompilationUnit> {
+fn parse_file(path: &Path, case_sensitive: bool) -> CompileResult<CompilationUnit> {
     let source = fs::read_to_string(path).map_err(|e| {
         CompileError::driver(format!("cannot read '{}': {}", path.display(), e))
     })?;
     let filename = path.to_string_lossy().to_string();
     let mut lexer = Lexer::new(&source, &filename);
+    lexer.set_case_sensitive(case_sensitive);
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
     parser.parse_compilation_unit()
@@ -147,6 +171,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
     // Lex
     let mut lexer = Lexer::new(&source, &filename);
+    lexer.set_case_sensitive(opts.case_sensitive);
     if !opts.features.is_empty() {
         lexer.set_features(&opts.features);
     }
@@ -191,7 +216,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("m2c: found definition module: {}", def_path.display());
             }
-            let _def_unit = parse_file(&def_path)?;
+            let _def_unit = parse_file(&def_path, opts.case_sensitive)?;
         }
     }
 
@@ -230,7 +255,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("m2c: found definition module for {}: {}", mod_name, def_path.display());
             }
-            let def_unit = parse_file(&def_path)?;
+            let def_unit = parse_file(&def_path, opts.case_sensitive)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
                 // Transitively discover imports of this def module's corresponding impl
                 for imp in &def_mod.imports {
@@ -272,7 +297,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("m2c: found implementation module for {}: {}", mod_name, mod_path.display());
             }
-            let mod_unit = parse_file(&mod_path)?;
+            let mod_unit = parse_file(&mod_path, opts.case_sensitive)?;
             if let CompilationUnit::ImplementationModule(imp_mod) = mod_unit {
                 // Transitively discover dependencies of this implementation module
                 for imp in &imp_mod.imports {
@@ -284,7 +309,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                                     if opts.verbose {
                                         eprintln!("m2c: found definition module for {}: {}", from_mod, dep_def_path.display());
                                     }
-                                    let dep_def_unit = parse_file(&dep_def_path)?;
+                                    let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive)?;
                                     if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
                                         codegen.register_def_module(&dep_def);
                                         registered_defs.insert(from_mod.clone());
@@ -369,6 +394,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             .arg(&obj_file)
             .arg(&c_file);
 
+        for flag in &opts.extra_cflags {
+            cmd.arg(flag);
+        }
+
         if opts.opt_level > 0 {
             cmd.arg(format!("-O{}", opts.opt_level));
         }
@@ -378,12 +407,12 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             eprintln!("m2c: {:?}", cmd);
         }
 
-        let status = cmd.status().map_err(|e| {
+        let output = cmd.output().map_err(|e| {
             CompileError::driver(format!("failed to run C compiler: {}", e))
         })?;
 
-        if !status.success() {
-            return Err(CompileError::driver("C compilation failed"));
+        if !output.status.success() {
+            return Err(cc_failure_error(&output.stderr));
         }
 
         // Clean up
@@ -419,6 +448,13 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         for lib in &opts.link_libs {
             cmd.arg(format!("-l{}", lib));
         }
+        for flag in &opts.extra_cflags {
+            cmd.arg(flag);
+        }
+        for fw in &opts.frameworks {
+            cmd.arg("-framework");
+            cmd.arg(fw);
+        }
 
         // Modula-2+ extensions: conditionally link pthreads and Boehm GC
         if opts.m2plus {
@@ -443,12 +479,12 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             eprintln!("m2c: {:?}", cmd);
         }
 
-        let status = cmd.status().map_err(|e| {
+        let output = cmd.output().map_err(|e| {
             CompileError::driver(format!("failed to run C compiler: {}", e))
         })?;
 
-        if !status.success() {
-            return Err(CompileError::driver("C compilation/linking failed"));
+        if !output.status.success() {
+            return Err(cc_failure_error(&output.stderr));
         }
 
         // Clean up

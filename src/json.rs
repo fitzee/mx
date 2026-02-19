@@ -125,6 +125,10 @@ impl Json {
         if let Json::Array(ref a) = self { Some(a) } else { None }
     }
 
+    pub fn as_object(&self) -> Option<&[(String, Json)]> {
+        if let Json::Object(ref entries) = self { Some(entries) } else { None }
+    }
+
     pub fn as_str_or(&self, key: &str, default: &str) -> String {
         self.get(key).and_then(|v| v.as_str()).unwrap_or(default).to_string()
     }

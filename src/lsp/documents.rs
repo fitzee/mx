@@ -1,8 +1,14 @@
 use std::collections::HashMap;
 
-/// In-memory store of open document text buffers.
+/// Document entry with text and version counter.
+struct DocEntry {
+    text: String,
+    version: u64,
+}
+
+/// In-memory store of open document text buffers with version tracking.
 pub struct DocumentStore {
-    docs: HashMap<String, String>,
+    docs: HashMap<String, DocEntry>,
 }
 
 impl DocumentStore {
@@ -13,11 +19,12 @@ impl DocumentStore {
     }
 
     pub fn open(&mut self, uri: &str, text: String) {
-        self.docs.insert(uri.to_string(), text);
+        self.docs.insert(uri.to_string(), DocEntry { text, version: 1 });
     }
 
     pub fn change(&mut self, uri: &str, text: String) {
-        self.docs.insert(uri.to_string(), text);
+        let version = self.docs.get(uri).map_or(1, |e| e.version + 1);
+        self.docs.insert(uri.to_string(), DocEntry { text, version });
     }
 
     pub fn close(&mut self, uri: &str) {
@@ -25,11 +32,19 @@ impl DocumentStore {
     }
 
     pub fn get(&self, uri: &str) -> Option<&str> {
-        self.docs.get(uri).map(|s| s.as_str())
+        self.docs.get(uri).map(|e| e.text.as_str())
+    }
+
+    pub fn version(&self, uri: &str) -> u64 {
+        self.docs.get(uri).map_or(0, |e| e.version)
     }
 
     pub fn uris(&self) -> impl Iterator<Item = &String> {
         self.docs.keys()
+    }
+
+    pub fn is_open(&self, uri: &str) -> bool {
+        self.docs.contains_key(uri)
     }
 }
 

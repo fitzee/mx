@@ -161,7 +161,7 @@ BEGIN
   m2sys_join_path(ADR(idxDir), ADR(name), ADR(idxPkgDir), 1024);
   rc := m2sys_mkdir_p(ADR(idxPkgDir));
 
-  (* Write index file: copy of m2.mod + [registry] section *)
+  (* Write index file: copy of m2.toml + [registry] section *)
   Assign(ver, idxFile);
   Concat(idxFile, ".toml", tmp1); Assign(tmp1, idxFile);
   m2sys_join_path(ADR(idxPkgDir), ADR(idxFile), ADR(tmp2), 1024);
@@ -178,7 +178,7 @@ BEGIN
 
   (* Copy manifest content *)
   Assign("r", rmode);
-  Assign("m2.mod", mfPath);
+  Assign("m2.toml", mfPath);
   lockfh := m2sys_fopen(ADR(mfPath), ADR(rmode));
   IF lockfh >= 0 THEN
     LOOP
