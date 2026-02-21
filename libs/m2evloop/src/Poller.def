@@ -1,0 +1,58 @@
+DEFINITION MODULE Poller;
+
+  (* Cross-platform fd-readiness poller.
+     Wraps kqueue (macOS/BSD), epoll (Linux), or poll (fallback).
+
+     Error model: every procedure returns Status.
+       OK       -- success
+       SysError -- OS error
+       Invalid  -- bad argument (programmer error) *)
+
+  CONST
+    EvRead  = 1;
+    EvWrite = 2;
+    EvError = 4;
+    EvHup   = 8;
+
+    MaxEvents = 64;
+
+  TYPE
+    Poller = INTEGER;
+
+    PollEvent = RECORD
+      fd     : INTEGER;
+      events : INTEGER;    (* bitmask of Ev* constants *)
+    END;
+
+    EventBuf = ARRAY [0..MaxEvents-1] OF PollEvent;
+
+    Status = (OK, SysError, Invalid);
+
+  (* Create a new poller instance.
+     Post: out contains a valid handle on OK. *)
+  PROCEDURE Create(VAR out: Poller): Status;
+
+  (* Destroy a poller instance and release resources. *)
+  PROCEDURE Destroy(VAR p: Poller): Status;
+
+  (* Register fd for the given event interest set (EvRead, EvWrite). *)
+  PROCEDURE Add(p: Poller; fd, events: INTEGER): Status;
+
+  (* Modify interest set for an already-registered fd. *)
+  PROCEDURE Modify(p: Poller; fd, events: INTEGER): Status;
+
+  (* Remove fd from the poller. *)
+  PROCEDURE Remove(p: Poller; fd: INTEGER): Status;
+
+  (* Wait up to timeoutMs milliseconds for events.
+     timeoutMs = -1 blocks indefinitely, 0 = non-blocking poll.
+     Post: count = number of ready events in buf. *)
+  PROCEDURE Wait(p: Poller; timeoutMs: INTEGER;
+                 VAR buf: EventBuf;
+                 VAR count: INTEGER): Status;
+
+  (* Return current monotonic time in milliseconds.
+     Wraps at ~24.8 days.  Use signed difference for comparisons. *)
+  PROCEDURE NowMs(): INTEGER;
+
+END Poller.

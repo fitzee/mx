@@ -1,5 +1,7 @@
 DEFINITION MODULE Resolver;
 
-PROCEDURE Resolve(): INTEGER;
+EXCEPTION ResolveError;
+
+PROCEDURE Resolve;
 
 END Resolver.

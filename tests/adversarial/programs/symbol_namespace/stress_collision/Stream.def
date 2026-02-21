@@ -1,0 +1,4 @@
+DEFINITION MODULE Stream;
+  TYPE Status = (OK, Invalid);
+  PROCEDURE Check(): INTEGER;
+END Stream.

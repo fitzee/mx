@@ -1,0 +1,22 @@
+DEFINITION MODULE FOR "C" PollerBridge;
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  (* Lifecycle *)
+  PROCEDURE m2_poller_create(): INTEGER;
+  PROCEDURE m2_poller_destroy(handle: INTEGER);
+
+  (* Registration *)
+  PROCEDURE m2_poller_add(handle, fd, events: INTEGER): INTEGER;
+  PROCEDURE m2_poller_mod(handle, fd, events: INTEGER): INTEGER;
+  PROCEDURE m2_poller_del(handle, fd: INTEGER): INTEGER;
+
+  (* Polling *)
+  PROCEDURE m2_poller_wait(handle, timeoutMs: INTEGER;
+                           out: ADDRESS;
+                           maxEvents: INTEGER): INTEGER;
+
+  (* Clock *)
+  PROCEDURE m2_now_ms(): INTEGER;
+
+END PollerBridge.

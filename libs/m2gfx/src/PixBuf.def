@@ -1,0 +1,161 @@
+DEFINITION MODULE PixBuf;
+
+  (* Indexed pixel buffer — 8-bit palette, up to 256 colors.
+     All drawing primitives operate on palette indices.
+     Call Render to push the buffer to an SDL texture for display. *)
+
+  FROM Gfx IMPORT Renderer;
+  FROM Font IMPORT FontHandle;
+
+  TYPE
+    PBuf   = ADDRESS;   (* opaque pixel buffer handle *)
+    Region = ADDRESS;   (* saved region for undo      *)
+
+  (* Management *)
+  PROCEDURE Create(w, h: INTEGER): PBuf;
+  PROCEDURE Free(pb: PBuf);
+  PROCEDURE Clear(pb: PBuf; idx: INTEGER);
+  PROCEDURE Width(pb: PBuf): INTEGER;
+  PROCEDURE Height(pb: PBuf): INTEGER;
+
+  (* Palette *)
+  PROCEDURE SetPal(pb: PBuf; idx, r, g, b: INTEGER);
+  PROCEDURE PalR(pb: PBuf; idx: INTEGER): INTEGER;
+  PROCEDURE PalG(pb: PBuf; idx: INTEGER): INTEGER;
+  PROCEDURE PalB(pb: PBuf; idx: INTEGER): INTEGER;
+  PROCEDURE PalPacked(pb: PBuf; idx: INTEGER): CARDINAL;
+
+  (* Pixel access *)
+  PROCEDURE SetPix(pb: PBuf; x, y, idx: INTEGER);
+  PROCEDURE GetPix(pb: PBuf; x, y: INTEGER): INTEGER;
+
+  (* Drawing primitives *)
+  PROCEDURE Line(pb: PBuf; x1, y1, x2, y2, idx: INTEGER);
+  PROCEDURE ThickLine(pb: PBuf; x1, y1, x2, y2, idx, thick: INTEGER);
+  PROCEDURE Rect(pb: PBuf; x, y, w, h, idx: INTEGER);
+  PROCEDURE FillRect(pb: PBuf; x, y, w, h, idx: INTEGER);
+  PROCEDURE Circle(pb: PBuf; cx, cy, radius, idx: INTEGER);
+  PROCEDURE FillCircle(pb: PBuf; cx, cy, radius, idx: INTEGER);
+  PROCEDURE Ellipse(pb: PBuf; cx, cy, rx, ry, idx: INTEGER);
+  PROCEDURE FillEllipse(pb: PBuf; cx, cy, rx, ry, idx: INTEGER);
+  PROCEDURE Triangle(pb: PBuf; x1, y1, x2, y2, x3, y3, idx: INTEGER);
+  PROCEDURE FillTriangle(pb: PBuf; x1, y1, x2, y2, x3, y3, idx: INTEGER);
+  PROCEDURE FloodFill(pb: PBuf; x, y, idx: INTEGER);
+
+  (* Gradient fill — interpolates RGB between palette entries c1 and c2,
+     finds nearest palette match.  horiz=1 for horizontal, 0 for vertical. *)
+  PROCEDURE Gradient(pb: PBuf; x, y, w, h, c1, c2: INTEGER;
+                     horiz: BOOLEAN; ncolors: INTEGER);
+
+  (* Pattern fill — uses 4x4 Bayer dither matrix, threshold 0..16 *)
+  PROCEDURE PatternFill(pb: PBuf; x, y, w, h, fg, bg, pattern: INTEGER);
+
+  (* Text stamp — renders text string onto pixel buffer using font *)
+  PROCEDURE StampText(pb: PBuf; ren: Renderer; font: FontHandle;
+                      text: ARRAY OF CHAR; x, y, idx: INTEGER);
+
+  (* Render pixel buffer to SDL texture *)
+  PROCEDURE Render(ren: Renderer; tex: ADDRESS; pb: PBuf);
+
+  (* Region save/restore — for delta-based undo *)
+  PROCEDURE Save(pb: PBuf; x, y, w, h: INTEGER): Region;
+  PROCEDURE Restore(pb: PBuf; region: Region; x, y: INTEGER);
+  PROCEDURE SaveW(region: Region): INTEGER;
+  PROCEDURE SaveH(region: Region): INTEGER;
+  PROCEDURE FreeSave(region: Region);
+
+  (* Flip and copy *)
+  PROCEDURE FlipH(pb: PBuf; x, y, w, h: INTEGER);
+  PROCEDURE FlipV(pb: PBuf; x, y, w, h: INTEGER);
+  PROCEDURE CopyRegion(pb: PBuf; sx, sy, w, h, dx, dy: INTEGER);
+
+  (* Polygon — vertices stored C-side *)
+  PROCEDURE PolyReset;
+  PROCEDURE PolyAdd(x, y: INTEGER);
+  PROCEDURE PolyCount(): INTEGER;
+  PROCEDURE PolyX(i: INTEGER): INTEGER;
+  PROCEDURE PolyY(i: INTEGER): INTEGER;
+  PROCEDURE PolyDraw(pb: PBuf; idx: INTEGER);
+  PROCEDURE PolyFill(pb: PBuf; idx: INTEGER);
+
+  (* File I/O *)
+  PROCEDURE SaveBMP(pb: PBuf; path: ARRAY OF CHAR): BOOLEAN;
+
+  (* Color utilities *)
+  PROCEDURE NearestColor(pb: PBuf; r, g, b, ncolors: INTEGER): INTEGER;
+  PROCEDURE ReplaceColor(pb: PBuf; oldIdx, newIdx: INTEGER);
+
+  (* Bezier curve *)
+  PROCEDURE Bezier(pb: PBuf; x1, y1, cx1, cy1, cx2, cy2,
+                   x2, y2, idx, steps: INTEGER);
+
+  (* Rotation *)
+  PROCEDURE Rotate90(pb: PBuf; x, y, w, h: INTEGER);
+  PROCEDURE Rotate180(pb: PBuf; x, y, w, h: INTEGER);
+  PROCEDURE Rotate270(pb: PBuf; x, y, w, h: INTEGER);
+
+  (* Angled gradient *)
+  PROCEDURE GradientAngle(pb: PBuf; x, y, w, h, c1, c2,
+                          angleDeg, ncolors: INTEGER);
+
+  (* Dither fill *)
+  PROCEDURE DitherFill(pb: PBuf; x, y, w, h, fg, bg,
+                       matrixType, threshold: INTEGER);
+
+  (* Pixel-perfect line *)
+  PROCEDURE LinePerfect(pb: PBuf; x0, y0, x1, y1, idx: INTEGER);
+
+  (* Anti-alias region *)
+  PROCEDURE AntiAlias(pb: PBuf; x, y, w, h, ncolors: INTEGER);
+
+  (* Layer system *)
+  PROCEDURE LayerInit(pb: PBuf);
+  PROCEDURE LayerCount(): INTEGER;
+  PROCEDURE LayerActive(): INTEGER;
+  PROCEDURE LayerSetActive(idx: INTEGER);
+  PROCEDURE LayerGet(idx: INTEGER): PBuf;
+  PROCEDURE LayerGetActive(): PBuf;
+  PROCEDURE LayerAdd(w, h: INTEGER): INTEGER;
+  PROCEDURE LayerRemove(idx: INTEGER);
+  PROCEDURE LayerVisible(idx: INTEGER): BOOLEAN;
+  PROCEDURE LayerSetVisible(idx: INTEGER; vis: BOOLEAN);
+  PROCEDURE LayerMoveUp(idx: INTEGER);
+  PROCEDURE LayerMoveDown(idx: INTEGER);
+  PROCEDURE LayerFlatten(dst: PBuf; transparentIdx: INTEGER);
+
+  (* File I/O — PNG, .dp2, palette *)
+  PROCEDURE SavePNG(pb: PBuf; path: ARRAY OF CHAR): BOOLEAN;
+  PROCEDURE LoadPNG(path: ARRAY OF CHAR; ncolors: INTEGER): PBuf;
+  PROCEDURE SaveDP2(path: ARRAY OF CHAR): BOOLEAN;
+  PROCEDURE LoadDP2(path: ARRAY OF CHAR): BOOLEAN;
+  PROCEDURE SavePal(pb: PBuf; path: ARRAY OF CHAR): BOOLEAN;
+  PROCEDURE LoadPal(pb: PBuf; path: ARRAY OF CHAR): BOOLEAN;
+
+  (* Animation frame system *)
+  PROCEDURE FrameInit(pb: PBuf);
+  PROCEDURE FrameCount(): INTEGER;
+  PROCEDURE FrameCurrent(): INTEGER;
+  PROCEDURE FrameNew(w, h: INTEGER): INTEGER;
+  PROCEDURE FrameDelete(idx: INTEGER);
+  PROCEDURE FrameSet(idx: INTEGER);
+  PROCEDURE FrameGet(idx: INTEGER): PBuf;
+  PROCEDURE FrameGetCurrent(): PBuf;
+  PROCEDURE FrameTiming(idx: INTEGER): INTEGER;
+  PROCEDURE FrameSetTiming(idx, ms: INTEGER);
+  PROCEDURE FrameDuplicate(idx: INTEGER): PBuf;
+  PROCEDURE RenderAlpha(ren: ADDRESS; tex: ADDRESS; pb: PBuf; alpha: INTEGER);
+  PROCEDURE FramesToSheet(cols: INTEGER): PBuf;
+
+  (* Advanced rendering *)
+  PROCEDURE RenderHAM(ren: ADDRESS; tex: ADDRESS; pb: PBuf; mode: INTEGER);
+  PROCEDURE CopperGradient(ren: ADDRESS; tex: ADDRESS; pb: PBuf;
+                           startLine, endLine, c1, c2: INTEGER);
+
+  (* Configuration persistence *)
+  PROCEDURE ConfigSave(path: ARRAY OF CHAR; VAR keys, vals: ARRAY OF INTEGER;
+                       count: INTEGER): BOOLEAN;
+  PROCEDURE ConfigLoad(path: ARRAY OF CHAR; VAR keys, vals: ARRAY OF INTEGER;
+                       maxCount: INTEGER): INTEGER;
+  PROCEDURE Log(path, msg: ARRAY OF CHAR);
+
+END PixBuf.

@@ -26,7 +26,7 @@ BEGIN
   RETURN m2sys_file_exists(ADR(path))
 END Exists;
 
-PROCEDURE Read(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE Read(path: ARRAY OF CHAR);
 VAR fh, n, eqPos, vlen, curDep: INTEGER;
     rmode: ARRAY [0..1] OF CHAR;
     line: ARRAY [0..511] OF CHAR;
@@ -38,72 +38,77 @@ BEGIN
   curDep := -1;
   Assign("r", rmode);
   fh := m2sys_fopen(ADR(path), ADR(rmode));
-  IF fh < 0 THEN RETURN -1 END;
-  Assign("", section);
-  LOOP
-    n := m2sys_fread_line(fh, ADR(line), 512);
-    IF n < 0 THEN EXIT END;
-    IF Length(line) = 0 THEN
-      (* skip blank *)
-    ELSIF line[0] = '#' THEN
-      (* skip comment *)
-    ELSIF line[0] = '[' THEN
-      IF Pos("dep.", line) < Length(line) THEN
-        (* Extract dep name from [dep.NAME] *)
-        Assign("dep", section);
-        IF lDepCount < MaxLockDeps THEN
-          curDep := lDepCount;
-          INC(lDepCount);
-          (* Parse name from [dep.NAME] *)
-          n := Pos(".", line);
-          IF n < Length(line) THEN
-            vlen := Length(line) - n - 2; (* skip ']' *)
-            IF vlen > 0 THEN
-              Copy(line, n + 1, vlen, lDepNames[curDep])
-            END
-          END;
-          lDepVersions[curDep][0] := 0C;
-          lDepSources[curDep][0] := 0C;
-          lDepShas[curDep][0] := 0C;
-          lDepPaths[curDep][0] := 0C
-        END
-      ELSIF Pos("package", line) < Length(line) THEN
-        Assign("pkg", section);
-        curDep := -1
-      ELSIF Pos("toolchain", line) < Length(line) THEN
-        Assign("tc", section);
-        curDep := -1
-      ELSE
-        Assign("other", section);
-        curDep := -1
-      END
-    ELSE
-      (* Parse key=value *)
-      eqPos := Pos("=", line);
-      IF eqPos < Length(line) THEN
-        Copy(line, 0, eqPos, key);
-        vlen := Length(line) - eqPos - 1;
-        IF vlen > 0 THEN
-          Copy(line, eqPos + 1, vlen, value)
+  IF fh < 0 THEN
+    WriteString("m2pkg: cannot open "); WriteString(path); WriteLn;
+    RAISE LockfileError
+  END;
+  TRY
+    Assign("", section);
+    LOOP
+      n := m2sys_fread_line(fh, ADR(line), 512);
+      IF n < 0 THEN EXIT END;
+      IF Length(line) = 0 THEN
+        (* skip blank *)
+      ELSIF line[0] = '#' THEN
+        (* skip comment *)
+      ELSIF line[0] = '[' THEN
+        IF Pos("dep.", line) < Length(line) THEN
+          (* Extract dep name from [dep.NAME] *)
+          Assign("dep", section);
+          IF lDepCount < MaxLockDeps THEN
+            curDep := lDepCount;
+            INC(lDepCount);
+            (* Parse name from [dep.NAME] *)
+            n := Pos(".", line);
+            IF n < Length(line) THEN
+              vlen := Length(line) - n - 2; (* skip ']' *)
+              IF vlen > 0 THEN
+                Copy(line, n + 1, vlen, lDepNames[curDep])
+              END
+            END;
+            lDepVersions[curDep][0] := 0C;
+            lDepSources[curDep][0] := 0C;
+            lDepShas[curDep][0] := 0C;
+            lDepPaths[curDep][0] := 0C
+          END
+        ELSIF Pos("package", line) < Length(line) THEN
+          Assign("pkg", section);
+          curDep := -1
+        ELSIF Pos("toolchain", line) < Length(line) THEN
+          Assign("tc", section);
+          curDep := -1
         ELSE
-          value[0] := 0C
-        END;
-        IF (curDep >= 0) AND (CompareStr(section, "dep") = 0) THEN
-          IF CompareStr(key, "version") = 0 THEN
-            Assign(value, lDepVersions[curDep])
-          ELSIF CompareStr(key, "source") = 0 THEN
-            Assign(value, lDepSources[curDep])
-          ELSIF CompareStr(key, "sha256") = 0 THEN
-            Assign(value, lDepShas[curDep])
-          ELSIF CompareStr(key, "path") = 0 THEN
-            Assign(value, lDepPaths[curDep])
+          Assign("other", section);
+          curDep := -1
+        END
+      ELSE
+        (* Parse key=value *)
+        eqPos := Pos("=", line);
+        IF eqPos < Length(line) THEN
+          Copy(line, 0, eqPos, key);
+          vlen := Length(line) - eqPos - 1;
+          IF vlen > 0 THEN
+            Copy(line, eqPos + 1, vlen, value)
+          ELSE
+            value[0] := 0C
+          END;
+          IF (curDep >= 0) AND (CompareStr(section, "dep") = 0) THEN
+            IF CompareStr(key, "version") = 0 THEN
+              Assign(value, lDepVersions[curDep])
+            ELSIF CompareStr(key, "source") = 0 THEN
+              Assign(value, lDepSources[curDep])
+            ELSIF CompareStr(key, "sha256") = 0 THEN
+              Assign(value, lDepShas[curDep])
+            ELSIF CompareStr(key, "path") = 0 THEN
+              Assign(value, lDepPaths[curDep])
+            END
           END
         END
       END
     END
-  END;
-  n := m2sys_fclose(fh);
-  RETURN 0
+  FINALLY
+    n := m2sys_fclose(fh)
+  END
 END Read;
 
 PROCEDURE WrLine(fh: INTEGER; s: ARRAY OF CHAR);
@@ -115,7 +120,7 @@ BEGIN
   rc := m2sys_fwrite_str(fh, ADR(nl))
 END WrLine;
 
-PROCEDURE Write(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE Write(path: ARRAY OF CHAR);
 VAR
   fh, rc, i, nd: INTEGER;
   wmode: ARRAY [0..1] OF CHAR;
@@ -128,43 +133,46 @@ VAR
 BEGIN
   Assign("w", wmode);
   fh := m2sys_fopen(ADR(path), ADR(wmode));
-  IF fh < 0 THEN RETURN -1 END;
-
-  WrLine(fh, "# m2.lock - generated by m2pkg resolve");
-  WrLine(fh, "");
-  WrLine(fh, "[package]");
-
-  GetName(name);
-  Assign("name=", ln); Concat(ln, name, t); Assign(t, ln);
-  WrLine(fh, ln);
-
-  GetVersion(ver);
-  Assign("version=", ln); Concat(ln, ver, t); Assign(t, ln);
-  WrLine(fh, ln);
-
-  nd := DepCount();
-  IF nd > 0 THEN
-    WrLine(fh, "");
-    i := 0;
-    WHILE i < nd DO
-      GetDepName(i, dname);
-      GetDepPath(i, dpath);
-      Assign("[dep.", ln);
-      Concat(ln, dname, t); Assign(t, ln);
-      Concat(ln, "]", t); Assign(t, ln);
-      WrLine(fh, ln);
-      Assign("path=", ln);
-      Concat(ln, dpath, t); Assign(t, ln);
-      WrLine(fh, ln);
-      INC(i)
-    END
+  IF fh < 0 THEN
+    WriteString("m2pkg: cannot create "); WriteString(path); WriteLn;
+    RAISE LockfileError
   END;
+  TRY
+    WrLine(fh, "# m2.lock - generated by m2pkg resolve");
+    WrLine(fh, "");
+    WrLine(fh, "[package]");
 
-  rc := m2sys_fclose(fh);
-  RETURN 0
+    GetName(name);
+    Assign("name=", ln); Concat(ln, name, t); Assign(t, ln);
+    WrLine(fh, ln);
+
+    GetVersion(ver);
+    Assign("version=", ln); Concat(ln, ver, t); Assign(t, ln);
+    WrLine(fh, ln);
+
+    nd := DepCount();
+    IF nd > 0 THEN
+      WrLine(fh, "");
+      i := 0;
+      WHILE i < nd DO
+        GetDepName(i, dname);
+        GetDepPath(i, dpath);
+        Assign("[dep.", ln);
+        Concat(ln, dname, t); Assign(t, ln);
+        Concat(ln, "]", t); Assign(t, ln);
+        WrLine(fh, ln);
+        Assign("path=", ln);
+        Concat(ln, dpath, t); Assign(t, ln);
+        WrLine(fh, ln);
+        INC(i)
+      END
+    END
+  FINALLY
+    rc := m2sys_fclose(fh)
+  END
 END Write;
 
-PROCEDURE WriteEnhanced(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE WriteEnhanced(path: ARRAY OF CHAR);
 VAR
   fh, rc, i: INTEGER;
   wmode: ARRAY [0..1] OF CHAR;
@@ -175,59 +183,62 @@ VAR
 BEGIN
   Assign("w", wmode);
   fh := m2sys_fopen(ADR(path), ADR(wmode));
-  IF fh < 0 THEN RETURN -1 END;
-
-  WrLine(fh, "# m2.lock - generated by m2pkg resolve");
-  WrLine(fh, "");
-  WrLine(fh, "[package]");
-
-  GetName(name);
-  Assign("name=", ln); Concat(ln, name, t); Assign(t, ln);
-  WrLine(fh, ln);
-
-  GetVersion(ver);
-  Assign("version=", ln); Concat(ln, ver, t); Assign(t, ln);
-  WrLine(fh, ln);
-
-  IF lDepCount > 0 THEN
-    i := 0;
-    WHILE i < lDepCount DO
-      WrLine(fh, "");
-      Assign("[dep.", ln);
-      Concat(ln, lDepNames[i], t); Assign(t, ln);
-      Concat(ln, "]", t); Assign(t, ln);
-      WrLine(fh, ln);
-
-      IF Length(lDepVersions[i]) > 0 THEN
-        Assign("version=", ln);
-        Concat(ln, lDepVersions[i], t); Assign(t, ln);
-        WrLine(fh, ln)
-      END;
-
-      IF Length(lDepSources[i]) > 0 THEN
-        Assign("source=", ln);
-        Concat(ln, lDepSources[i], t); Assign(t, ln);
-        WrLine(fh, ln)
-      END;
-
-      IF Length(lDepShas[i]) > 0 THEN
-        Assign("sha256=", ln);
-        Concat(ln, lDepShas[i], t); Assign(t, ln);
-        WrLine(fh, ln)
-      END;
-
-      IF Length(lDepPaths[i]) > 0 THEN
-        Assign("path=", ln);
-        Concat(ln, lDepPaths[i], t); Assign(t, ln);
-        WrLine(fh, ln)
-      END;
-
-      INC(i)
-    END
+  IF fh < 0 THEN
+    WriteString("m2pkg: cannot create "); WriteString(path); WriteLn;
+    RAISE LockfileError
   END;
+  TRY
+    WrLine(fh, "# m2.lock - generated by m2pkg resolve");
+    WrLine(fh, "");
+    WrLine(fh, "[package]");
 
-  rc := m2sys_fclose(fh);
-  RETURN 0
+    GetName(name);
+    Assign("name=", ln); Concat(ln, name, t); Assign(t, ln);
+    WrLine(fh, ln);
+
+    GetVersion(ver);
+    Assign("version=", ln); Concat(ln, ver, t); Assign(t, ln);
+    WrLine(fh, ln);
+
+    IF lDepCount > 0 THEN
+      i := 0;
+      WHILE i < lDepCount DO
+        WrLine(fh, "");
+        Assign("[dep.", ln);
+        Concat(ln, lDepNames[i], t); Assign(t, ln);
+        Concat(ln, "]", t); Assign(t, ln);
+        WrLine(fh, ln);
+
+        IF Length(lDepVersions[i]) > 0 THEN
+          Assign("version=", ln);
+          Concat(ln, lDepVersions[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
+        IF Length(lDepSources[i]) > 0 THEN
+          Assign("source=", ln);
+          Concat(ln, lDepSources[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
+        IF Length(lDepShas[i]) > 0 THEN
+          Assign("sha256=", ln);
+          Concat(ln, lDepShas[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
+        IF Length(lDepPaths[i]) > 0 THEN
+          Assign("path=", ln);
+          Concat(ln, lDepPaths[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
+        INC(i)
+      END
+    END
+  FINALLY
+    rc := m2sys_fclose(fh)
+  END
 END WriteEnhanced;
 
 PROCEDURE LockDepCount(): INTEGER;
@@ -396,7 +407,7 @@ BEGIN
   END
 END ComputeTreeHash;
 
-PROCEDURE WriteBoot(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE WriteBoot(path: ARRAY OF CHAR);
 VAR
   fh, rc, i: INTEGER;
   wmode: ARRAY [0..1] OF CHAR;
@@ -413,115 +424,118 @@ VAR
 BEGIN
   Assign("w", wmode);
   fh := m2sys_fopen(ADR(path), ADR(wmode));
-  IF fh < 0 THEN RETURN -1 END;
-
-  WrLine(fh, "# bootstrap.lock - generated by m2pkg lock");
-  WrLine(fh, "");
-
-  (* [toolchain] *)
-  WrLine(fh, "[toolchain]");
-  (* Get m2c version via --version-json *)
-  Assign("m2c --version-json", ln);
-  rc := m2sys_exec_output(ADR(ln), ADR(vjson), 1024);
-  (* Parse version from JSON - simple extraction *)
-  m2cVer[0] := 0C;
-  m2cTarget[0] := 0C;
-  IF rc = 0 THEN
-    (* Extract version: find "version":" *)
-    i := Pos("version", vjson);
-    IF i < Length(vjson) THEN
-      (* Skip to value *)
-      i := i + 10; (* past version":" *)
-      rc := 0;
-      WHILE (i < Length(vjson)) AND (vjson[i] # '"') DO
-        m2cVer[rc] := vjson[i];
-        INC(rc); INC(i)
-      END;
-      m2cVer[rc] := 0C
-    END;
-    (* Extract target *)
-    i := Pos("target", vjson);
-    IF i < Length(vjson) THEN
-      i := i + 9; (* past target":" *)
-      rc := 0;
-      WHILE (i < Length(vjson)) AND (vjson[i] # '"') DO
-        m2cTarget[rc] := vjson[i];
-        INC(rc); INC(i)
-      END;
-      m2cTarget[rc] := 0C
-    END
+  IF fh < 0 THEN
+    WriteString("m2pkg: cannot create "); WriteString(path); WriteLn;
+    RAISE LockfileError
   END;
-  Assign("m2c_version=", ln); Concat(ln, m2cVer, t); Assign(t, ln);
-  WrLine(fh, ln);
-  Assign("m2c_target=", ln); Concat(ln, m2cTarget, t); Assign(t, ln);
-  WrLine(fh, ln);
+  TRY
+    WrLine(fh, "# bootstrap.lock - generated by m2pkg lock");
+    WrLine(fh, "");
 
-  WrLine(fh, "");
-
-  (* [package] *)
-  WrLine(fh, "[package]");
-  GetName(name);
-  Assign("name=", ln); Concat(ln, name, t); Assign(t, ln);
-  WrLine(fh, ln);
-
-  GetVersion(ver);
-  Assign("version=", ln); Concat(ln, ver, t); Assign(t, ln);
-  WrLine(fh, ln);
-
-  (* Entry sha256 *)
-  GetEntry(entry);
-  IF Length(entry) > 0 THEN
-    rc := m2sys_sha256_file(ADR(entry), ADR(entrySha));
+    (* [toolchain] *)
+    WrLine(fh, "[toolchain]");
+    (* Get m2c version via --version-json *)
+    Assign("m2c --version-json", ln);
+    rc := m2sys_exec_output(ADR(ln), ADR(vjson), 1024);
+    (* Parse version from JSON - simple extraction *)
+    m2cVer[0] := 0C;
+    m2cTarget[0] := 0C;
     IF rc = 0 THEN
-      Assign("entry_sha256=", ln); Concat(ln, entrySha, t); Assign(t, ln);
+      (* Extract version: find "version":" *)
+      i := Pos("version", vjson);
+      IF i < Length(vjson) THEN
+        (* Skip to value *)
+        i := i + 10; (* past version":" *)
+        rc := 0;
+        WHILE (i < Length(vjson)) AND (vjson[i] # '"') DO
+          m2cVer[rc] := vjson[i];
+          INC(rc); INC(i)
+        END;
+        m2cVer[rc] := 0C
+      END;
+      (* Extract target *)
+      i := Pos("target", vjson);
+      IF i < Length(vjson) THEN
+        i := i + 9; (* past target":" *)
+        rc := 0;
+        WHILE (i < Length(vjson)) AND (vjson[i] # '"') DO
+          m2cTarget[rc] := vjson[i];
+          INC(rc); INC(i)
+        END;
+        m2cTarget[rc] := 0C
+      END
+    END;
+    Assign("m2c_version=", ln); Concat(ln, m2cVer, t); Assign(t, ln);
+    WrLine(fh, ln);
+    Assign("m2c_target=", ln); Concat(ln, m2cTarget, t); Assign(t, ln);
+    WrLine(fh, ln);
+
+    WrLine(fh, "");
+
+    (* [package] *)
+    WrLine(fh, "[package]");
+    GetName(name);
+    Assign("name=", ln); Concat(ln, name, t); Assign(t, ln);
+    WrLine(fh, ln);
+
+    GetVersion(ver);
+    Assign("version=", ln); Concat(ln, ver, t); Assign(t, ln);
+    WrLine(fh, ln);
+
+    (* Entry sha256 *)
+    GetEntry(entry);
+    IF Length(entry) > 0 THEN
+      rc := m2sys_sha256_file(ADR(entry), ADR(entrySha));
+      IF rc = 0 THEN
+        Assign("entry_sha256=", ln); Concat(ln, entrySha, t); Assign(t, ln);
+        WrLine(fh, ln)
+      END
+    END;
+
+    (* Tree sha256 *)
+    ComputeTreeHash(treeSha);
+    IF Length(treeSha) > 0 THEN
+      Assign("tree_sha256=", ln); Concat(ln, treeSha, t); Assign(t, ln);
       WrLine(fh, ln)
+    END;
+
+    (* Dep entries from current lockfile state *)
+    IF lDepCount > 0 THEN
+      i := 0;
+      WHILE i < lDepCount DO
+        WrLine(fh, "");
+        Assign("[dep.", ln);
+        Concat(ln, lDepNames[i], t); Assign(t, ln);
+        Concat(ln, "]", t); Assign(t, ln);
+        WrLine(fh, ln);
+
+        IF Length(lDepVersions[i]) > 0 THEN
+          Assign("version=", ln);
+          Concat(ln, lDepVersions[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
+        IF Length(lDepShas[i]) > 0 THEN
+          Assign("sha256=", ln);
+          Concat(ln, lDepShas[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
+        IF Length(lDepSources[i]) > 0 THEN
+          Assign("source=", ln);
+          Concat(ln, lDepSources[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
+        INC(i)
+      END
     END
-  END;
-
-  (* Tree sha256 *)
-  ComputeTreeHash(treeSha);
-  IF Length(treeSha) > 0 THEN
-    Assign("tree_sha256=", ln); Concat(ln, treeSha, t); Assign(t, ln);
-    WrLine(fh, ln)
-  END;
-
-  (* Dep entries from current lockfile state *)
-  IF lDepCount > 0 THEN
-    i := 0;
-    WHILE i < lDepCount DO
-      WrLine(fh, "");
-      Assign("[dep.", ln);
-      Concat(ln, lDepNames[i], t); Assign(t, ln);
-      Concat(ln, "]", t); Assign(t, ln);
-      WrLine(fh, ln);
-
-      IF Length(lDepVersions[i]) > 0 THEN
-        Assign("version=", ln);
-        Concat(ln, lDepVersions[i], t); Assign(t, ln);
-        WrLine(fh, ln)
-      END;
-
-      IF Length(lDepShas[i]) > 0 THEN
-        Assign("sha256=", ln);
-        Concat(ln, lDepShas[i], t); Assign(t, ln);
-        WrLine(fh, ln)
-      END;
-
-      IF Length(lDepSources[i]) > 0 THEN
-        Assign("source=", ln);
-        Concat(ln, lDepSources[i], t); Assign(t, ln);
-        WrLine(fh, ln)
-      END;
-
-      INC(i)
-    END
-  END;
-
-  rc := m2sys_fclose(fh);
-  RETURN 0
+  FINALLY
+    rc := m2sys_fclose(fh)
+  END
 END WriteBoot;
 
-PROCEDURE VerifyBoot(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE VerifyBoot(path: ARRAY OF CHAR);
 VAR
   fh, n, eqPos, vlen, errors: INTEGER;
   rmode: ARRAY [0..1] OF CHAR;
@@ -543,29 +557,31 @@ BEGIN
   fh := m2sys_fopen(ADR(path), ADR(rmode));
   IF fh < 0 THEN
     WriteString("m2pkg: cannot read "); WriteString(path); WriteLn;
-    RETURN -1
+    RAISE LockfileError
   END;
-
-  LOOP
-    n := m2sys_fread_line(fh, ADR(line), 512);
-    IF n < 0 THEN EXIT END;
-    eqPos := Pos("=", line);
-    IF eqPos < Length(line) THEN
-      Copy(line, 0, eqPos, key);
-      vlen := Length(line) - eqPos - 1;
-      IF vlen > 0 THEN
-        Copy(line, eqPos + 1, vlen, value)
-      ELSE
-        value[0] := 0C
-      END;
-      IF CompareStr(key, "entry_sha256") = 0 THEN
-        Assign(value, storedEntry)
-      ELSIF CompareStr(key, "tree_sha256") = 0 THEN
-        Assign(value, storedTree)
+  TRY
+    LOOP
+      n := m2sys_fread_line(fh, ADR(line), 512);
+      IF n < 0 THEN EXIT END;
+      eqPos := Pos("=", line);
+      IF eqPos < Length(line) THEN
+        Copy(line, 0, eqPos, key);
+        vlen := Length(line) - eqPos - 1;
+        IF vlen > 0 THEN
+          Copy(line, eqPos + 1, vlen, value)
+        ELSE
+          value[0] := 0C
+        END;
+        IF CompareStr(key, "entry_sha256") = 0 THEN
+          Assign(value, storedEntry)
+        ELSIF CompareStr(key, "tree_sha256") = 0 THEN
+          Assign(value, storedTree)
+        END
       END
     END
+  FINALLY
+    n := m2sys_fclose(fh)
   END;
-  n := m2sys_fclose(fh);
 
   (* Verify entry hash *)
   GetEntry(entry);
@@ -598,11 +614,10 @@ BEGIN
   END;
 
   IF errors = 0 THEN
-    WriteString("m2pkg verify: OK"); WriteLn;
-    RETURN 0
+    WriteString("m2pkg verify: OK"); WriteLn
   ELSE
-    WriteString("m2pkg verify: "); (* errors already printed *)
-    RETURN -1
+    WriteString("m2pkg verify: FAILED"); WriteLn;
+    RAISE LockfileError
   END
 END VerifyBoot;
 

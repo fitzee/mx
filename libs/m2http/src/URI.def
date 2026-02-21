@@ -1,0 +1,59 @@
+DEFINITION MODULE URI;
+
+  (* URI parser.  Decomposes a URI string into components.
+     No heap allocation; all fields use fixed-size arrays
+     with explicit length tracking.
+
+     Supported form:
+       scheme://host[:port][/path][?query][#fragment]
+
+     Default port inference: http=80, https=443.  *)
+
+  CONST
+    MaxScheme   = 16;
+    MaxHost     = 256;
+    MaxPath     = 2048;
+    MaxQuery    = 2048;
+    MaxFragment = 256;
+
+  TYPE
+    URIRec = RECORD
+      scheme   : ARRAY [0..MaxScheme-1] OF CHAR;
+      host     : ARRAY [0..MaxHost-1] OF CHAR;
+      port     : INTEGER;
+      path     : ARRAY [0..MaxPath-1] OF CHAR;
+      query    : ARRAY [0..MaxQuery-1] OF CHAR;
+      fragment : ARRAY [0..MaxFragment-1] OF CHAR;
+      schemeLen   : INTEGER;
+      hostLen     : INTEGER;
+      pathLen     : INTEGER;
+      queryLen    : INTEGER;
+      fragmentLen : INTEGER;
+    END;
+
+    Status = (OK, Invalid, TooLong, BadScheme, BadHost, BadPort);
+
+  (* Parse a URI string into components.
+     Pre:  s is a NUL-terminated URI.
+     Post: uri fields are filled; lengths set.
+     Default port is inferred if none specified. *)
+  PROCEDURE Parse(VAR s: ARRAY OF CHAR; VAR uri: URIRec): Status;
+
+  (* Decode percent-encoded sequences in src.
+     Post: dst contains decoded bytes; dstLen set. *)
+  PROCEDURE PercentDecode(VAR src: ARRAY OF CHAR; srcLen: INTEGER;
+                          VAR dst: ARRAY OF CHAR;
+                          VAR dstLen: INTEGER): Status;
+
+  (* Return default port for a scheme (http=80, https=443).
+     Returns 0 for unknown schemes. *)
+  PROCEDURE DefaultPort(VAR scheme: ARRAY OF CHAR;
+                        schemeLen: INTEGER): INTEGER;
+
+  (* Build the request path for an HTTP request.
+     Produces "/path[?query]" or "/" if path is empty. *)
+  PROCEDURE RequestPath(VAR uri: URIRec;
+                        VAR out: ARRAY OF CHAR;
+                        VAR outLen: INTEGER): Status;
+
+END URI.

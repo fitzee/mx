@@ -1,0 +1,9 @@
+IMPLEMENTATION MODULE InitA;
+FROM InOut IMPORT WriteString, WriteLn;
+
+PROCEDURE GetA(): INTEGER;
+BEGIN RETURN 1 END GetA;
+
+BEGIN
+  WriteString("InitA"); WriteLn
+END InitA.

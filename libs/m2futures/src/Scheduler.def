@@ -1,0 +1,46 @@
+DEFINITION MODULE Scheduler;
+(* Microtask queue for single-threaded promise execution.
+   All callbacks are dispatched via SchedulerPump -- never inline.
+   The caller owns the Scheduler instance; there is no hidden global. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  (* Operation status shared by Scheduler and Promise modules. *)
+  Status = (OK, Invalid, OutOfMemory, AlreadySettled);
+
+  (* Callback procedure type for enqueued tasks. *)
+  TaskProc = PROCEDURE(ADDRESS);
+
+  (* Opaque scheduler handle. *)
+  Scheduler = ADDRESS;
+
+(* Create a scheduler with room for up to capacity queued tasks.
+   Pre:  capacity > 0
+   Post: out is a valid scheduler handle
+   Returns OutOfMemory if allocation fails, Invalid if capacity = 0. *)
+PROCEDURE SchedulerCreate(capacity: CARDINAL;
+                          VAR out: Scheduler): Status;
+
+(* Destroy a scheduler and free its resources.
+   Pre:  s was created by SchedulerCreate
+   Post: s is no longer valid *)
+PROCEDURE SchedulerDestroy(VAR s: Scheduler): Status;
+
+(* Enqueue a callback for execution on the next pump cycle.
+   Pre:  s is valid, cb # NIL
+   Post: cb(user) will execute during a future SchedulerPump call
+   Returns OutOfMemory if the queue is full. *)
+PROCEDURE SchedulerEnqueue(s: Scheduler;
+                           cb: TaskProc;
+                           user: ADDRESS): Status;
+
+(* Run up to maxSteps queued callbacks.
+   Callbacks may enqueue further work during execution.
+   Pre:  s is valid
+   Post: didWork = TRUE if at least one callback ran *)
+PROCEDURE SchedulerPump(s: Scheduler;
+                        maxSteps: CARDINAL;
+                        VAR didWork: BOOLEAN): Status;
+
+END Scheduler.

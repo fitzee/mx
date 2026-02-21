@@ -1,0 +1,67 @@
+DEFINITION MODULE Timers;
+
+  (* Min-heap timer queue for single-threaded event loops.
+     Timers are pool-allocated -- no heap allocation in the hot path.
+
+     Time values are 32-bit INTEGER milliseconds.  Wraps at ~24.8 days.
+     All comparisons use signed difference for correct wrap handling.
+
+     The Timers module is pure Modula-2; the caller passes the current
+     time from Poller.NowMs(). Timer callbacks are enqueued via a
+     Scheduler rather than called inline. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM Scheduler IMPORT Scheduler, TaskProc;
+
+  CONST
+    MaxTimers = 256;
+
+  TYPE
+    TimerId = INTEGER;
+
+    Status = (OK, Invalid, PoolExhausted);
+
+    TimerQueue = ADDRESS;    (* opaque handle *)
+
+  (* Create a timer queue.
+     Pre:  sched is a valid Scheduler handle.
+     Post: out contains a valid TimerQueue on OK. *)
+  PROCEDURE Create(sched: Scheduler;
+                   VAR out: TimerQueue): Status;
+
+  (* Destroy a timer queue and free resources. *)
+  PROCEDURE Destroy(VAR q: TimerQueue): Status;
+
+  (* Schedule a one-shot timer.
+     Fires at now + delayMs.  When fired, cb(user) is enqueued on
+     the scheduler.
+     Post: id receives a handle for cancellation. *)
+  PROCEDURE SetTimeout(q: TimerQueue; now, delayMs: INTEGER;
+                       cb: TaskProc; user: ADDRESS;
+                       VAR id: TimerId): Status;
+
+  (* Schedule a repeating timer.
+     First fires at now + intervalMs, then repeats every intervalMs.
+     Post: id receives a handle for cancellation. *)
+  PROCEDURE SetInterval(q: TimerQueue; now, intervalMs: INTEGER;
+                        cb: TaskProc; user: ADDRESS;
+                        VAR id: TimerId): Status;
+
+  (* Cancel a pending timer.
+     Idempotent: cancelling an already-fired or cancelled timer
+     returns OK. *)
+  PROCEDURE Cancel(q: TimerQueue; id: TimerId): Status;
+
+  (* Return the number of active timers. *)
+  PROCEDURE ActiveCount(q: TimerQueue): INTEGER;
+
+  (* Time in ms until the next timer fires, or -1 if no timers.
+     Used by the event loop to set poll timeout. *)
+  PROCEDURE NextDeadline(q: TimerQueue; now: INTEGER): INTEGER;
+
+  (* Fire all timers whose deadline <= now.
+     Enqueues their callbacks on the scheduler.
+     Repeating timers are automatically rescheduled. *)
+  PROCEDURE Tick(q: TimerQueue; now: INTEGER): Status;
+
+END Timers.

@@ -1,0 +1,33 @@
+DEFINITION MODULE FOR "C" SocketsBridge;
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  (* Lifecycle *)
+  PROCEDURE m2_socket(family, socktype: INTEGER): INTEGER;
+  PROCEDURE m2_close(fd: INTEGER): INTEGER;
+  PROCEDURE m2_shutdown(fd, how: INTEGER): INTEGER;
+
+  (* Server *)
+  PROCEDURE m2_bind_any(fd, port: INTEGER): INTEGER;
+  PROCEDURE m2_listen(fd, backlog: INTEGER): INTEGER;
+  PROCEDURE m2_accept(fd: INTEGER;
+                      VAR outFd, outFamily, outPort: INTEGER;
+                      outAddr4: ADDRESS): INTEGER;
+
+  (* Client *)
+  PROCEDURE m2_connect_host_port(fd: INTEGER; host: ADDRESS;
+                                 port: INTEGER): INTEGER;
+
+  (* I/O *)
+  PROCEDURE m2_send(fd: INTEGER; buf: ADDRESS; len: INTEGER): INTEGER;
+  PROCEDURE m2_recv(fd: INTEGER; buf: ADDRESS; max: INTEGER): INTEGER;
+
+  (* Options *)
+  PROCEDURE m2_set_nonblocking(fd, enable: INTEGER): INTEGER;
+  PROCEDURE m2_set_reuseaddr(fd, enable: INTEGER): INTEGER;
+
+  (* Error *)
+  PROCEDURE m2_errno(): INTEGER;
+  PROCEDURE m2_strerror(errnum: INTEGER; buf: ADDRESS; buflen: INTEGER);
+
+END SocketsBridge.

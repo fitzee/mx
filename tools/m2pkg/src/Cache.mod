@@ -50,7 +50,7 @@ BEGIN
   RETURN m2sys_file_exists(ADR(artifact))
 END IsCached;
 
-PROCEDURE StoreResult(key: ARRAY OF CHAR; artifactPath: ARRAY OF CHAR): INTEGER;
+PROCEDURE StoreResult(key: ARRAY OF CHAR; artifactPath: ARRAY OF CHAR);
 VAR
   dir: ARRAY [0..511] OF CHAR;
   dest: ARRAY [0..511] OF CHAR;
@@ -58,9 +58,16 @@ VAR
 BEGIN
   CacheDirForKey(key, dir);
   rc := m2sys_mkdir_p(ADR(dir));
-  IF rc # 0 THEN RETURN -1 END;
+  IF rc # 0 THEN
+    WriteString("m2pkg: failed to create cache directory"); WriteLn;
+    RAISE CacheError
+  END;
   m2sys_join_path(ADR(dir), ADR("artifact"), ADR(dest), 512);
-  RETURN m2sys_copy_file(ADR(artifactPath), ADR(dest))
+  rc := m2sys_copy_file(ADR(artifactPath), ADR(dest));
+  IF rc # 0 THEN
+    WriteString("m2pkg: failed to store cache artifact"); WriteLn;
+    RAISE CacheError
+  END
 END StoreResult;
 
 PROCEDURE LookupResult(key: ARRAY OF CHAR; destPath: ARRAY OF CHAR): INTEGER;

@@ -1,6 +1,8 @@
 DEFINITION MODULE Builder;
 
-PROCEDURE Build(release: INTEGER; target: ARRAY OF CHAR): INTEGER;
-PROCEDURE BuildAndRun(release: INTEGER; target: ARRAY OF CHAR): INTEGER;
+EXCEPTION BuildError;
+
+PROCEDURE Build(release: INTEGER; target: ARRAY OF CHAR);
+PROCEDURE BuildAndRun(release: INTEGER; target: ARRAY OF CHAR);
 
 END Builder.

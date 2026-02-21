@@ -1,0 +1,206 @@
+DEFINITION MODULE FOR "C" GfxBridge;
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  (* Init/Quit *)
+  PROCEDURE gfx_init(): INTEGER;
+  PROCEDURE gfx_quit;
+  PROCEDURE gfx_ttf_init(): INTEGER;
+  PROCEDURE gfx_ttf_quit;
+
+  (* Window *)
+  PROCEDURE gfx_create_window(title: ADDRESS; w, h, flags: INTEGER): ADDRESS;
+  PROCEDURE gfx_destroy_window(win: ADDRESS);
+  PROCEDURE gfx_set_title(win, title: ADDRESS);
+  PROCEDURE gfx_set_win_size(win: ADDRESS; w, h: INTEGER);
+  PROCEDURE gfx_get_win_width(win: ADDRESS): INTEGER;
+  PROCEDURE gfx_get_win_height(win: ADDRESS): INTEGER;
+  PROCEDURE gfx_set_win_pos(win: ADDRESS; x, y: INTEGER);
+  PROCEDURE gfx_set_fullscreen(win: ADDRESS; mode: INTEGER);
+  PROCEDURE gfx_show_win(win: ADDRESS);
+  PROCEDURE gfx_hide_win(win: ADDRESS);
+  PROCEDURE gfx_raise_win(win: ADDRESS);
+  PROCEDURE gfx_minimize_win(win: ADDRESS);
+  PROCEDURE gfx_maximize_win(win: ADDRESS);
+  PROCEDURE gfx_restore_win(win: ADDRESS);
+  PROCEDURE gfx_get_win_id(win: ADDRESS): INTEGER;
+  PROCEDURE gfx_set_win_min_size(win: ADDRESS; w, h: INTEGER);
+  PROCEDURE gfx_set_win_max_size(win: ADDRESS; w, h: INTEGER);
+
+  (* Renderer *)
+  PROCEDURE gfx_create_renderer(win: ADDRESS; flags: INTEGER): ADDRESS;
+  PROCEDURE gfx_destroy_renderer(ren: ADDRESS);
+  PROCEDURE gfx_present(ren: ADDRESS);
+  PROCEDURE gfx_output_width(ren: ADDRESS): INTEGER;
+  PROCEDURE gfx_output_height(ren: ADDRESS): INTEGER;
+
+  (* Color and Clear *)
+  PROCEDURE gfx_set_color(ren: ADDRESS; r, g, b, a: INTEGER);
+  PROCEDURE gfx_get_color(ren: ADDRESS; VAR r, g, b, a: INTEGER);
+  PROCEDURE gfx_clear(ren: ADDRESS);
+
+  (* Drawing — primitives (SDL wrappers) *)
+  PROCEDURE gfx_draw_point(ren: ADDRESS; x, y: INTEGER);
+  PROCEDURE gfx_draw_line(ren: ADDRESS; x1, y1, x2, y2: INTEGER);
+  PROCEDURE gfx_draw_rect(ren: ADDRESS; x, y, w, h: INTEGER);
+  PROCEDURE gfx_fill_rect(ren: ADDRESS; x, y, w, h: INTEGER);
+
+  (* Clipping *)
+  PROCEDURE gfx_set_clip(ren: ADDRESS; x, y, w, h: INTEGER);
+  PROCEDURE gfx_clear_clip(ren: ADDRESS);
+  PROCEDURE gfx_get_clip_x(ren: ADDRESS): INTEGER;
+  PROCEDURE gfx_get_clip_y(ren: ADDRESS): INTEGER;
+  PROCEDURE gfx_get_clip_w(ren: ADDRESS): INTEGER;
+  PROCEDURE gfx_get_clip_h(ren: ADDRESS): INTEGER;
+
+  (* Blend *)
+  PROCEDURE gfx_set_blend(ren: ADDRESS; mode: INTEGER);
+
+  (* Viewport *)
+  PROCEDURE gfx_set_viewport(ren: ADDRESS; x, y, w, h: INTEGER);
+  PROCEDURE gfx_reset_viewport(ren: ADDRESS);
+
+  (* Events *)
+  PROCEDURE gfx_poll_event(): INTEGER;
+  PROCEDURE gfx_wait_event(): INTEGER;
+  PROCEDURE gfx_wait_event_timeout(ms: INTEGER): INTEGER;
+  PROCEDURE gfx_event_key(): INTEGER;
+  PROCEDURE gfx_event_scancode(): INTEGER;
+  PROCEDURE gfx_event_mod(): INTEGER;
+  PROCEDURE gfx_event_mouse_x(): INTEGER;
+  PROCEDURE gfx_event_mouse_y(): INTEGER;
+  PROCEDURE gfx_event_mouse_btn(): INTEGER;
+  PROCEDURE gfx_event_wheel_x(): INTEGER;
+  PROCEDURE gfx_event_wheel_y(): INTEGER;
+  PROCEDURE gfx_event_win_id(): INTEGER;
+  PROCEDURE gfx_event_win_event(): INTEGER;
+  PROCEDURE gfx_event_text(buf: ADDRESS; buflen: INTEGER);
+  PROCEDURE gfx_event_text_len(): INTEGER;
+  PROCEDURE gfx_start_text;
+  PROCEDURE gfx_stop_text;
+  PROCEDURE gfx_is_text_active(): INTEGER;
+  PROCEDURE gfx_key_state(scancode: INTEGER): INTEGER;
+  PROCEDURE gfx_mouse_state(VAR x, y: INTEGER): INTEGER;
+  PROCEDURE gfx_mouse_global(VAR x, y: INTEGER): INTEGER;
+  PROCEDURE gfx_warp_mouse(win: ADDRESS; x, y: INTEGER);
+
+  (* Font *)
+  PROCEDURE gfx_open_font(path: ADDRESS; size: INTEGER): ADDRESS;
+  PROCEDURE gfx_close_font(font: ADDRESS);
+  PROCEDURE gfx_font_style(font: ADDRESS; style: INTEGER);
+  PROCEDURE gfx_font_get_style(font: ADDRESS): INTEGER;
+  PROCEDURE gfx_draw_text(ren, font: ADDRESS;
+                           text: ADDRESS;
+                           x, y, r, g, b, a: INTEGER);
+  PROCEDURE gfx_draw_text_wrapped(ren, font: ADDRESS;
+                                   text: ADDRESS;
+                                   x, y, wrapWidth, r, g, b, a: INTEGER);
+  PROCEDURE gfx_text_width(font: ADDRESS; text: ADDRESS): INTEGER;
+  PROCEDURE gfx_text_height(font: ADDRESS; text: ADDRESS): INTEGER;
+  PROCEDURE gfx_font_height(font: ADDRESS): INTEGER;
+  PROCEDURE gfx_font_ascent(font: ADDRESS): INTEGER;
+  PROCEDURE gfx_font_descent(font: ADDRESS): INTEGER;
+  PROCEDURE gfx_font_line_skip(font: ADDRESS): INTEGER;
+  PROCEDURE gfx_font_set_hinting(font: ADDRESS; hint: INTEGER);
+
+  (* Texture *)
+  PROCEDURE gfx_load_bmp(ren: ADDRESS; path: ADDRESS): ADDRESS;
+  PROCEDURE gfx_create_texture(ren: ADDRESS; w, h: INTEGER): ADDRESS;
+  PROCEDURE gfx_text_texture(ren, font: ADDRESS;
+                              text: ADDRESS;
+                              r, g, b, a: INTEGER): ADDRESS;
+  PROCEDURE gfx_destroy_texture(tex: ADDRESS);
+  PROCEDURE gfx_draw_texture(ren, tex: ADDRESS; x, y: INTEGER);
+  PROCEDURE gfx_draw_texture_ex(ren, tex: ADDRESS;
+                                 sx, sy, sw, sh,
+                                 dx, dy, dw, dh: INTEGER);
+  PROCEDURE gfx_draw_texture_rot(ren, tex: ADDRESS;
+                                  dx, dy, dw, dh,
+                                  angleDeg, flip: INTEGER);
+  PROCEDURE gfx_tex_width(tex: ADDRESS): INTEGER;
+  PROCEDURE gfx_tex_height(tex: ADDRESS): INTEGER;
+  PROCEDURE gfx_set_tex_alpha(tex: ADDRESS; alpha: INTEGER);
+  PROCEDURE gfx_set_tex_blend(tex: ADDRESS; mode: INTEGER);
+  PROCEDURE gfx_set_tex_color(tex: ADDRESS; r, g, b: INTEGER);
+  PROCEDURE gfx_set_target(ren, tex: ADDRESS);
+  PROCEDURE gfx_reset_target(ren: ADDRESS);
+
+  (* Screen *)
+  PROCEDURE gfx_screen_width(): INTEGER;
+  PROCEDURE gfx_screen_height(): INTEGER;
+  PROCEDURE gfx_display_count(): INTEGER;
+
+  (* Clipboard *)
+  PROCEDURE gfx_set_clipboard(text: ADDRESS);
+  PROCEDURE gfx_get_clipboard(buf: ADDRESS; buflen: INTEGER);
+  PROCEDURE gfx_has_clipboard(): INTEGER;
+
+  (* Timer *)
+  PROCEDURE gfx_ticks(): INTEGER;
+  PROCEDURE gfx_delay(ms: INTEGER);
+
+  (* Cursor *)
+  PROCEDURE gfx_set_cursor(cursorType: INTEGER);
+  PROCEDURE gfx_show_cursor(show: INTEGER);
+
+  (* Pixel Buffer — Management *)
+  PROCEDURE gfx_pb_create(w, h: INTEGER): ADDRESS;
+  PROCEDURE gfx_pb_free(pb: ADDRESS);
+  PROCEDURE gfx_pb_clear(pb: ADDRESS; idx: INTEGER);
+  PROCEDURE gfx_pb_width(pb: ADDRESS): INTEGER;
+  PROCEDURE gfx_pb_height(pb: ADDRESS): INTEGER;
+
+  (* Pixel Buffer — Palette *)
+  PROCEDURE gfx_pb_set_pal(pb: ADDRESS; idx, r, g, b: INTEGER);
+  PROCEDURE gfx_pb_pal_packed(pb: ADDRESS; idx: INTEGER): INTEGER;
+
+  (* Pixel Buffer — Pixel Access *)
+  PROCEDURE gfx_pb_set(pb: ADDRESS; x, y, idx: INTEGER);
+  PROCEDURE gfx_pb_get(pb: ADDRESS; x, y: INTEGER): INTEGER;
+
+  (* Pixel Buffer — Infrastructure Helpers for M2 Algorithms *)
+  PROCEDURE gfx_pb_fill_row(pb: ADDRESS; x, y, w, idx: INTEGER);
+  PROCEDURE gfx_pb_mark_dirty(pb: ADDRESS; x, y, w, h: INTEGER);
+  PROCEDURE gfx_pb_total(pb: ADDRESS): INTEGER;
+  PROCEDURE gfx_alloc(bytes: INTEGER): ADDRESS;
+  PROCEDURE gfx_dealloc(ptr: ADDRESS);
+  PROCEDURE gfx_buf_get(buf: ADDRESS; offset: INTEGER): INTEGER;
+  PROCEDURE gfx_buf_set(buf: ADDRESS; offset: INTEGER; val: INTEGER);
+  PROCEDURE gfx_pb_pixel_ptr(pb: ADDRESS): ADDRESS;
+  PROCEDURE gfx_pb_composite(dst, src: ADDRESS; transparentIdx: INTEGER);
+  PROCEDURE gfx_pb_copy_pixels(src, dst: ADDRESS);
+
+  (* Pixel Buffer — Text Stamp *)
+  PROCEDURE gfx_pb_stamp_text(pb, ren, font: ADDRESS;
+                               text: ADDRESS; x, y, idx: INTEGER);
+
+  (* Pixel Buffer — Render to Texture *)
+  PROCEDURE gfx_pb_render(ren, tex, pb: ADDRESS);
+
+  (* Pixel Buffer — Region Save/Restore *)
+  PROCEDURE gfx_pb_save(pb: ADDRESS; x, y, w, h: INTEGER): ADDRESS;
+  PROCEDURE gfx_pb_restore(pb: ADDRESS; region: ADDRESS; x, y: INTEGER);
+  PROCEDURE gfx_pb_save_w(region: ADDRESS): INTEGER;
+  PROCEDURE gfx_pb_save_h(region: ADDRESS): INTEGER;
+  PROCEDURE gfx_pb_free_save(region: ADDRESS);
+
+  (* Pixel Buffer — File I/O (PNG stays in C — stb_image) *)
+  PROCEDURE gfx_pb_save_png(pb: ADDRESS; path: ADDRESS): INTEGER;
+  PROCEDURE gfx_pb_load_png(path: ADDRESS; ncolors: INTEGER): ADDRESS;
+
+  (* Pixel Buffer — Render Alpha (stays in C — SDL) *)
+  PROCEDURE gfx_pb_render_alpha(ren, tex, pb: ADDRESS; alpha: INTEGER);
+
+  (* Pixel Buffer — RGBA Buffer Helpers *)
+  PROCEDURE gfx_pb_pal_to_screen(pb: ADDRESS);
+  PROCEDURE gfx_pb_rgba_get32(pb: ADDRESS; offset: INTEGER): INTEGER;
+  PROCEDURE gfx_pb_rgba_set32(pb: ADDRESS; offset, val: INTEGER);
+  PROCEDURE gfx_pb_flush_tex(tex, pb: ADDRESS);
+
+  (* Advanced rendering *)
+  PROCEDURE gfx_pb_render_ham(ren, tex, pb: ADDRESS; mode: INTEGER);
+
+  (* Log — stays in C (needs append mode) *)
+  PROCEDURE gfx_log(path, msg: ADDRESS);
+
+END GfxBridge.

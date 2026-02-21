@@ -67,23 +67,9 @@ BEGIN
     WriteString("m2pkg: m2.toml already exists"); WriteLn;
     RETURN
   END;
-  rc := WriteTemplate("m2.toml");
-  IF rc = 0 THEN
-    WriteString("m2pkg: created m2.toml"); WriteLn
-  ELSE
-    WriteString("m2pkg: failed to create m2.toml"); WriteLn
-  END
+  WriteTemplate("m2.toml");
+  WriteString("m2pkg: created m2.toml"); WriteLn
 END DoInit;
-
-PROCEDURE LoadManifest(): INTEGER;
-BEGIN
-  rc := Read("m2.toml");
-  IF rc < 0 THEN
-    WriteString("m2pkg: cannot read m2.toml (are you in a package directory?)"); WriteLn;
-    RETURN 1
-  END;
-  RETURN 0
-END LoadManifest;
 
 PROCEDURE ParseBuildArgs;
 BEGIN
@@ -272,77 +258,78 @@ BEGIN
     ShowVersion
 
   ELSIF CompareStr(cmd, "init") = 0 THEN
-    DoInit
+    TRY
+      DoInit
+    EXCEPT
+      m2sys_exit(1)
+    END
 
   ELSIF CompareStr(cmd, "build") = 0 THEN
-    IF LoadManifest() = 0 THEN
+    TRY
+      Read("m2.toml");
       ParseBuildArgs;
-      rc := Build(release, target);
-      IF rc # 0 THEN m2sys_exit(1) END
-    ELSE
+      Build(release, target)
+    EXCEPT
       m2sys_exit(1)
     END
 
   ELSIF CompareStr(cmd, "run") = 0 THEN
-    IF LoadManifest() = 0 THEN
+    TRY
+      Read("m2.toml");
       ParseBuildArgs;
-      rc := BuildAndRun(release, target);
-      IF rc # 0 THEN m2sys_exit(1) END
-    ELSE
+      BuildAndRun(release, target)
+    EXCEPT
       m2sys_exit(1)
     END
 
   ELSIF CompareStr(cmd, "resolve") = 0 THEN
-    IF LoadManifest() = 0 THEN
+    TRY
+      Read("m2.toml");
       ParseRegistryArg;
-      rc := Resolve();
-      IF rc # 0 THEN m2sys_exit(1) END
-    ELSE
+      Resolve
+    EXCEPT
       m2sys_exit(1)
     END
 
   ELSIF CompareStr(cmd, "check") = 0 THEN
-    IF LoadManifest() = 0 THEN
+    TRY
+      Read("m2.toml");
       DoCheck
-    ELSE
+    EXCEPT
       m2sys_exit(1)
     END
 
   ELSIF CompareStr(cmd, "publish") = 0 THEN
-    IF LoadManifest() = 0 THEN
-      rc := Publish();
-      IF rc # 0 THEN m2sys_exit(1) END
-    ELSE
+    TRY
+      Read("m2.toml");
+      Publish
+    EXCEPT
       m2sys_exit(1)
     END
 
   ELSIF CompareStr(cmd, "fetch") = 0 THEN
-    IF LoadManifest() = 0 THEN
+    TRY
+      Read("m2.toml");
       ParseRegistryArg;
-      rc := Resolve();
-      IF rc # 0 THEN m2sys_exit(1) END
-    ELSE
+      Resolve
+    EXCEPT
       m2sys_exit(1)
     END
 
   ELSIF CompareStr(cmd, "lock") = 0 THEN
-    IF LoadManifest() = 0 THEN
-      rc := WriteBoot("bootstrap.lock");
-      IF rc = 0 THEN
-        WriteString("m2pkg: wrote bootstrap.lock"); WriteLn
-      ELSE
-        WriteString("m2pkg: failed to write bootstrap.lock"); WriteLn;
-        m2sys_exit(1)
-      END
-    ELSE
+    TRY
+      Read("m2.toml");
+      WriteBoot("bootstrap.lock");
+      WriteString("m2pkg: wrote bootstrap.lock"); WriteLn
+    EXCEPT
       m2sys_exit(1)
     END
 
   ELSIF CompareStr(cmd, "verify") = 0 THEN
-    IF LoadManifest() = 0 THEN
-      rc := VerifyBoot("bootstrap.lock");
-      IF rc # 0 THEN m2sys_exit(1) END
-    ELSE
+    TRY
+      Read("m2.toml");
+      VerifyBoot("bootstrap.lock")
+    EXCEPT
       m2sys_exit(1)
     END
 

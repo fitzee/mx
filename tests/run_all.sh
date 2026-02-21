@@ -8,7 +8,7 @@ FAIL=0
 SKIP=0
 
 # Modules that are libraries (not standalone programs)
-SKIP_MODULES="MathUtils Stack ffitest exportc_test ExportCTest"
+SKIP_MODULES="MathUtils Stack ffitest exportc_test ExportCTest stream_e2e"
 
 # FFI test: requires linking with external C file
 FFI_SKIP="ffitest"

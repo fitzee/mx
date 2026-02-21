@@ -1,0 +1,42 @@
+DEFINITION MODULE Font;
+
+  FROM Gfx IMPORT Renderer;
+
+  CONST
+    STYLE_NORMAL        = 0;
+    STYLE_BOLD          = 1;
+    STYLE_ITALIC        = 2;
+    STYLE_UNDERLINE     = 4;
+    STYLE_STRIKETHROUGH = 8;
+
+    HINT_NORMAL = 0;
+    HINT_LIGHT  = 1;
+    HINT_MONO   = 2;
+    HINT_NONE   = 3;
+
+  TYPE
+    FontHandle = ADDRESS;
+
+  PROCEDURE Open(path: ARRAY OF CHAR; size: INTEGER): FontHandle;
+  PROCEDURE Close(font: FontHandle);
+
+  PROCEDURE SetStyle(font: FontHandle; style: INTEGER);
+  PROCEDURE GetStyle(font: FontHandle): INTEGER;
+  PROCEDURE SetHinting(font: FontHandle; hint: INTEGER);
+
+  PROCEDURE DrawText(ren: Renderer; font: FontHandle;
+                     text: ARRAY OF CHAR; x, y: INTEGER;
+                     r, g, b, a: INTEGER);
+  PROCEDURE DrawTextWrapped(ren: Renderer; font: FontHandle;
+                            text: ARRAY OF CHAR;
+                            x, y, wrapWidth: INTEGER;
+                            r, g, b, a: INTEGER);
+
+  PROCEDURE TextWidth(font: FontHandle; text: ARRAY OF CHAR): INTEGER;
+  PROCEDURE TextHeight(font: FontHandle; text: ARRAY OF CHAR): INTEGER;
+  PROCEDURE Height(font: FontHandle): INTEGER;
+  PROCEDURE Ascent(font: FontHandle): INTEGER;
+  PROCEDURE Descent(font: FontHandle): INTEGER;
+  PROCEDURE LineSkip(font: FontHandle): INTEGER;
+
+END Font.

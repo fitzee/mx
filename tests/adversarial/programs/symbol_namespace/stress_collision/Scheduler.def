@@ -1,0 +1,4 @@
+DEFINITION MODULE Scheduler;
+  TYPE Status = (OK, Invalid);
+  PROCEDURE Check(): INTEGER;
+END Scheduler.

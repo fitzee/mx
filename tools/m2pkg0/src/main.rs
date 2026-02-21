@@ -64,6 +64,7 @@ fn build_m2pkg(root: &Path, m2c: &Path) -> Result<PathBuf, String> {
     let mut entry = String::from("src/Main.mod");
     let mut includes = Vec::new();
     let mut extra_c = Vec::new();
+    let mut m2plus = false;
 
     for line in manifest.lines() {
         let line = line.trim();
@@ -79,12 +80,25 @@ fn build_m2pkg(root: &Path, m2c: &Path) -> Result<PathBuf, String> {
                     }
                 }
                 "extra-c" => extra_c.push(val.trim().to_string()),
+                "edition" => {
+                    if val.trim() == "m2plus" {
+                        m2plus = true;
+                    }
+                }
+                "m2plus" => {
+                    if val.trim() == "true" || val.trim() == "1" {
+                        m2plus = true;
+                    }
+                }
                 _ => {}
             }
         }
     }
 
     let mut cmd = Command::new(m2c);
+    if m2plus {
+        cmd.arg("--m2plus");
+    }
     for inc in &includes {
         cmd.arg("-I").arg(inc);
     }

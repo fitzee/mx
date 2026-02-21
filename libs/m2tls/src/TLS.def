@@ -1,0 +1,186 @@
+DEFINITION MODULE TLS;
+
+  (* TLS transport layer for Modula-2+ async networking.
+
+     Wraps OpenSSL/LibreSSL behind a stable Modula-2+ interface.
+     Designed for integration with EventLoop, Scheduler, and Futures.
+
+     Two usage modes:
+       1. Sync (try-once):  Handshake / Read / Write return immediately.
+          Caller drives retries from its own EventLoop watcher.
+          Used by HTTPClient for HTTPS support.
+
+       2. Async (Future-returning):  HandshakeAsync / ReadAsync / WriteAsync
+          register their own EventLoop watcher and return a Future.
+          For standalone TLS use without HTTPClient.
+
+     Backend: OpenSSL (compatible with LibreSSL >= 2.7).
+     No threads.  No hidden globals.  Single-threaded event-loop model. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM EventLoop IMPORT Loop;
+  FROM Scheduler IMPORT Scheduler;
+  FROM Promise IMPORT Future;
+
+  CONST
+    MaxSummaryLen = 512;
+
+  TYPE
+    TLSContext = ADDRESS;    (* opaque: wraps SSL_CTX* *)
+    TLSSession = ADDRESS;   (* opaque: wraps internal SessRec *)
+
+    Status = (OK, WantRead, WantWrite, Closed,
+              SysError, Invalid, OutOfMemory, VerifyFailed);
+
+    VerifyMode = (VerifyPeer, NoVerify);
+
+    TLSVersion = (TLS10, TLS11, TLS12, TLS13);
+
+  (* ── Context lifecycle ──────────────────────────────── *)
+
+  (* Create a TLS client context.
+     Defaults: VerifyPeer, TLS 1.2 minimum.
+     Post: out is a valid context handle on OK. *)
+  PROCEDURE ContextCreate(VAR out: TLSContext): Status;
+
+  (* Destroy a context.  Sets ctx to NIL. *)
+  PROCEDURE ContextDestroy(VAR ctx: TLSContext): Status;
+
+  (* ── Context configuration ─────────────────────────── *)
+
+  (* Set peer certificate verification mode.
+     Default is VerifyPeer.  NoVerify disables ALL verification —
+     use only for debugging.  NEVER use NoVerify in production. *)
+  PROCEDURE SetVerifyMode(ctx: TLSContext;
+                          mode: VerifyMode): Status;
+
+  (* Set minimum acceptable TLS protocol version.
+     Default is TLS12.  TLS10 and TLS11 are deprecated. *)
+  PROCEDURE SetMinVersion(ctx: TLSContext;
+                          v: TLSVersion): Status;
+
+  (* Load the system default CA root store.
+     On Linux: /etc/ssl/certs/ or SSL_CERT_DIR.
+     On macOS with Homebrew OpenSSL: bundled CA certificates.
+     Returns SysError if the root store cannot be loaded. *)
+  PROCEDURE LoadSystemRoots(ctx: TLSContext): Status;
+
+  (* Load a CA bundle from a PEM file. *)
+  PROCEDURE LoadCAFile(ctx: TLSContext;
+                       VAR path: ARRAY OF CHAR): Status;
+
+  (* Load client certificate and private key from PEM files.
+     API required; implementation uses OpenSSL's PEM loader.
+     Returns SysError on cert or key error. *)
+  PROCEDURE SetClientCert(ctx: TLSContext;
+                          VAR certPath, keyPath: ARRAY OF CHAR): Status;
+
+  (* ── Session lifecycle ─────────────────────────────── *)
+
+  (* Create a TLS session over a connected, non-blocking socket.
+     The fd must already be connected (TCP handshake complete).
+     loop and sched are stored for async operations.
+     Pre:  ctx is a configured TLS context; fd is a valid socket.
+     Post: out is a valid session handle on OK. *)
+  PROCEDURE SessionCreate(lp: Loop; sched: Scheduler;
+                          ctx: TLSContext; fd: INTEGER;
+                          VAR out: TLSSession): Status;
+
+  (* Destroy a session.  Does NOT close the underlying fd.
+     Caller must close the socket separately.
+     Sets s to NIL. *)
+  PROCEDURE SessionDestroy(VAR s: TLSSession): Status;
+
+  (* Set SNI (Server Name Indication) hostname.
+     Must be called before Handshake.
+     SNI is per-session: different hosts require different sessions. *)
+  PROCEDURE SetSNI(s: TLSSession;
+                   VAR host: ARRAY OF CHAR): Status;
+
+  (* ── Sync operations (try-once, non-blocking) ──────── *)
+
+  (* Attempt one step of the TLS handshake.
+     Returns:
+       OK          — handshake complete
+       WantRead    — retry after fd becomes readable
+       WantWrite   — retry after fd becomes writable
+       VerifyFailed — peer certificate failed verification
+       SysError    — TLS engine error *)
+  PROCEDURE Handshake(s: TLSSession): Status;
+
+  (* Attempt to read up to max bytes.
+     On OK, got contains the number of bytes read (1..max).
+     Returns:
+       OK        — data read; got > 0
+       Closed    — peer performed clean shutdown
+       WantRead  — retry after fd readable
+       WantWrite — retry after fd writable (renegotiation)
+       SysError  — fatal error *)
+  PROCEDURE Read(s: TLSSession; buf: ADDRESS; max: INTEGER;
+                 VAR got: INTEGER): Status;
+
+  (* Attempt to write up to len bytes.
+     On OK, sent contains the number of bytes written (1..len).
+     Returns:
+       OK        — data written; sent > 0
+       WantRead  — retry after fd readable (renegotiation)
+       WantWrite — retry after fd writable
+       SysError  — fatal error *)
+  PROCEDURE Write(s: TLSSession; buf: ADDRESS; len: INTEGER;
+                  VAR sent: INTEGER): Status;
+
+  (* Initiate TLS shutdown (send close_notify).
+     Returns OK, WantRead, WantWrite, or SysError.
+     For non-blocking cleanup, calling once and ignoring the
+     result is acceptable. *)
+  PROCEDURE Shutdown(s: TLSSession): Status;
+
+  (* ── Async operations (EventLoop + Futures) ────────── *)
+
+  (* Complete the TLS handshake asynchronously.
+     Registers an EventLoop watcher on the session fd.
+     Future resolves: Value.tag=0, Value.ptr=NIL.
+     Future rejects:  Error.code=1 (SysError) or 2 (VerifyFailed).
+     Pre: no other async op is pending on this session.
+     Pre: no other watcher is registered on this fd. *)
+  PROCEDURE HandshakeAsync(s: TLSSession;
+                           VAR out: Future): Status;
+
+  (* Read up to max bytes asynchronously.
+     buf must remain valid until the future settles.
+     Future resolves: Value.tag = bytes read, Value.ptr = NIL.
+     Future rejects:  Error.code=1 (SysError) or 3 (Closed). *)
+  PROCEDURE ReadAsync(s: TLSSession; buf: ADDRESS; max: INTEGER;
+                      VAR out: Future): Status;
+
+  (* Write up to len bytes asynchronously.
+     buf must remain valid until the future settles.
+     Future resolves: Value.tag = bytes written, Value.ptr = NIL.
+     Future rejects:  Error.code=1 (SysError). *)
+  PROCEDURE WriteAsync(s: TLSSession; buf: ADDRESS; len: INTEGER;
+                       VAR out: Future): Status;
+
+  (* Write all len bytes asynchronously (loops until complete).
+     buf must remain valid until the future settles.
+     Future resolves: Value.tag = total bytes written, Value.ptr = NIL.
+     Future rejects:  Error.code=1 (SysError). *)
+  PROCEDURE WriteAllAsync(s: TLSSession; buf: ADDRESS; len: INTEGER;
+                          VAR out: Future): Status;
+
+  (* ── Diagnostics ───────────────────────────────────── *)
+
+  (* Copy the peer certificate subject into out (one-line format).
+     Must be called after a successful handshake.
+     Returns Invalid if no peer certificate is available. *)
+  PROCEDURE GetPeerSummary(s: TLSSession;
+                           VAR out: ARRAY OF CHAR): Status;
+
+  (* Return the X509 verification result code.
+     0 = X509_V_OK (success).
+     Other values: see OpenSSL X509_V_ERR_* constants. *)
+  PROCEDURE GetVerifyResult(s: TLSSession): INTEGER;
+
+  (* Copy the last TLS engine error string into out. *)
+  PROCEDURE GetLastError(VAR out: ARRAY OF CHAR);
+
+END TLS.

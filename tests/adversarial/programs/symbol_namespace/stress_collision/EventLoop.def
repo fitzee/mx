@@ -1,0 +1,4 @@
+DEFINITION MODULE EventLoop;
+  TYPE Status = (OK, Invalid);
+  PROCEDURE Check(): INTEGER;
+END EventLoop.

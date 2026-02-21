@@ -1,0 +1,4 @@
+DEFINITION MODULE QB;
+  TYPE Status = (OK, Error, Timeout);
+  PROCEDURE MakeTimeout(): INTEGER;
+END QB.

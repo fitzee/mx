@@ -1,0 +1,6 @@
+IMPLEMENTATION MODULE Promise;
+  PROCEDURE Check(): INTEGER;
+  VAR s: Status;
+  BEGIN s := OK; IF s = OK THEN RETURN 40 ELSE RETURN 0 END
+  END Check;
+END Promise.

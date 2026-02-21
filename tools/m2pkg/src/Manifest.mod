@@ -220,7 +220,7 @@ BEGIN
   END
 END ProcessLine;
 
-PROCEDURE Read(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE Read(path: ARRAY OF CHAR);
 VAR
   fh, n: INTEGER;
   line: ARRAY [0..511] OF CHAR;
@@ -231,59 +231,58 @@ BEGIN
   Assign("r", rmode);
   fh := m2sys_fopen(ADR(path), ADR(rmode));
   IF fh < 0 THEN
-    RETURN -1
+    WriteString("m2pkg: cannot open "); WriteString(path); WriteLn;
+    RAISE ManifestError
   END;
-  Assign("package", section);
-  LOOP
-    n := m2sys_fread_line(fh, ADR(line), 512);
-    IF n < 0 THEN EXIT END;
-    IF Length(line) = 0 THEN
-      (* skip blank *)
-    ELSIF line[0] = '#' THEN
-      (* skip comment *)
-    ELSIF line[0] = '[' THEN
-      IF Pos("deps", line) < Length(line) THEN
-        Assign("deps", section)
-      ELSIF Pos("features", line) < Length(line) THEN
-        Assign("features", section)
-      ELSIF Pos("registry", line) < Length(line) THEN
-        Assign("registry", section)
-      ELSIF Pos("cc", line) < Length(line) THEN
-        Assign("cc", section)
+  TRY
+    Assign("package", section);
+    LOOP
+      n := m2sys_fread_line(fh, ADR(line), 512);
+      IF n < 0 THEN EXIT END;
+      IF Length(line) = 0 THEN
+        (* skip blank *)
+      ELSIF line[0] = '#' THEN
+        (* skip comment *)
+      ELSIF line[0] = '[' THEN
+        IF Pos("deps", line) < Length(line) THEN
+          Assign("deps", section)
+        ELSIF Pos("features", line) < Length(line) THEN
+          Assign("features", section)
+        ELSIF Pos("registry", line) < Length(line) THEN
+          Assign("registry", section)
+        ELSIF Pos("cc", line) < Length(line) THEN
+          Assign("cc", section)
+        ELSE
+          Assign("other", section)
+        END
       ELSE
-        Assign("other", section)
+        ProcessLine(line, section)
       END
-    ELSE
-      ProcessLine(line, section)
+    END;
+
+    (* Warn if manifest_version is missing *)
+    IF mManifestVersion = 0 THEN
+      WriteString("m2pkg: warning: manifest_version not set in m2.toml (assuming v1)"); WriteLn;
+      mManifestVersion := 1
+    END;
+
+    (* Error if manifest_version > 1 *)
+    IF mManifestVersion > 1 THEN
+      WriteString("m2pkg: error: unsupported manifest_version"); WriteLn;
+      RAISE ManifestError
+    END;
+
+    (* If edition was set, it overrides m2plus *)
+    IF mEditionSet = 1 THEN
+      IF CompareStr(mEdition, "m2plus") = 0 THEN
+        mM2plus := 1
+      ELSIF CompareStr(mEdition, "pim4") = 0 THEN
+        (* edition=pim4 doesn't force m2plus off if m2plus= was also set *)
+      END
     END
-  END;
-  n := m2sys_fclose(fh);
-
-  (* Warn if manifest_version is missing *)
-  IF mManifestVersion = 0 THEN
-    WriteString("m2pkg: warning: manifest_version not set in m2.toml (assuming v1)"); WriteLn;
-    mManifestVersion := 1
-  END;
-
-  (* Error if manifest_version > 1 *)
-  IF mManifestVersion > 1 THEN
-    WriteString("m2pkg: error: manifest_version=");
-    (* Simple digit output *)
-    WriteString("N");
-    WriteString(" is not supported (max 1)"); WriteLn;
-    RETURN -1
-  END;
-
-  (* If edition was set, it overrides m2plus *)
-  IF mEditionSet = 1 THEN
-    IF CompareStr(mEdition, "m2plus") = 0 THEN
-      mM2plus := 1
-    ELSIF CompareStr(mEdition, "pim4") = 0 THEN
-      (* edition=pim4 doesn't force m2plus off if m2plus= was also set *)
-    END
-  END;
-
-  RETURN 0
+  FINALLY
+    n := m2sys_fclose(fh)
+  END
 END Read;
 
 PROCEDURE WrLn(fh: INTEGER);
@@ -294,33 +293,38 @@ BEGIN
   rc := m2sys_fwrite_str(fh, ADR(nl))
 END WrLn;
 
-PROCEDURE WriteTemplate(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE WriteTemplate(path: ARRAY OF CHAR);
 VAR fh, n: INTEGER;
     wmode: ARRAY [0..1] OF CHAR;
     ln: ARRAY [0..255] OF CHAR;
 BEGIN
   Assign("w", wmode);
   fh := m2sys_fopen(ADR(path), ADR(wmode));
-  IF fh < 0 THEN RETURN -1 END;
-  Assign("# m2.toml - package manifest", ln);
-  n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("manifest_version=1", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("name=mypackage", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("version=0.1.0", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("edition=pim4", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("entry=src/Main.mod", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("includes=src", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  WrLn(fh);
-  Assign("[deps]", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  WrLn(fh);
-  Assign("# [cc]", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("# cflags=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("# ldflags=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("# libs=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("# extra-c=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  Assign("# frameworks=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
-  n := m2sys_fclose(fh);
-  RETURN 0
+  IF fh < 0 THEN
+    WriteString("m2pkg: cannot create "); WriteString(path); WriteLn;
+    RAISE ManifestError
+  END;
+  TRY
+    Assign("# m2.toml - package manifest", ln);
+    n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("manifest_version=1", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("name=mypackage", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("version=0.1.0", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("edition=pim4", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("entry=src/Main.mod", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("includes=src", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    WrLn(fh);
+    Assign("[deps]", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    WrLn(fh);
+    Assign("# [cc]", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("# cflags=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("# ldflags=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("# libs=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("# extra-c=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh);
+    Assign("# frameworks=", ln); n := m2sys_fwrite_str(fh, ADR(ln)); WrLn(fh)
+  FINALLY
+    n := m2sys_fclose(fh)
+  END
 END WriteTemplate;
 
 PROCEDURE GetName(VAR buf: ARRAY OF CHAR);

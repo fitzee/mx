@@ -1,0 +1,7 @@
+out/
+fuzz_corpus/
+__pycache__/
+*.pyc
+assets/certs/*.crt
+assets/certs/*.key
+assets/certs/*.srl

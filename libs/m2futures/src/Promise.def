@@ -1,0 +1,139 @@
+DEFINITION MODULE Promise;
+(* Composable Futures/Promises for single-threaded Modula-2+.
+   Promise is the write handle (resolve/reject).
+   Future is the read handle (inspect/chain/combine).
+   Both share internal state; created together via PromiseCreate.
+   All continuations dispatch through a Scheduler -- never inline. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM Scheduler IMPORT Scheduler, Status;
+
+TYPE
+  (* Settlement state of a shared promise/future. *)
+  Fate = (Pending, Fulfilled, Rejected);
+
+  (* Success payload: user-defined tag + pointer. *)
+  Value = RECORD
+    tag: INTEGER;
+    ptr: ADDRESS;
+  END;
+
+  (* Failure payload: user-defined error code + optional pointer. *)
+  Error = RECORD
+    code: INTEGER;
+    ptr:  ADDRESS;
+  END;
+
+  (* Discriminated result: success or failure. *)
+  Result = RECORD
+    isOk: BOOLEAN;
+    v:    Value;
+    e:    Error;
+  END;
+
+  (* Callback: transform a result into a new result.
+     First Result is the input (by value).
+     Second VAR Result is the output to fill. *)
+  ThenFn  = PROCEDURE(Result, ADDRESS, VAR Result);
+
+  (* Callback: handle an error, producing a recovery result.
+     Error is the input error (by value).
+     VAR Result is the output to fill. *)
+  CatchFn = PROCEDURE(Error, ADDRESS, VAR Result);
+
+  (* Callback: observe a result without affecting the chain.
+     Result is the input (by value). *)
+  VoidFn  = PROCEDURE(Result, ADDRESS);
+
+  (* Opaque handles. *)
+  Promise = ADDRESS;
+  Future  = ADDRESS;
+
+CONST
+  (* Maximum number of futures in an All() group. *)
+  MAX_ALL_SIZE = 32;
+
+TYPE
+  (* Array of Results returned by a successful All().
+     Value.ptr from All's output can be cast to AllResultPtr.
+     Value.tag holds the element count. *)
+  AllResultArray = ARRAY [0..MAX_ALL_SIZE-1] OF Result;
+  AllResultPtr   = POINTER TO AllResultArray;
+
+(* ---- Creation ---- *)
+
+(* Create a linked promise/future pair on scheduler s.
+   Pre:  s is a valid Scheduler
+   Post: p is the write handle, f is the read handle, both Pending *)
+PROCEDURE PromiseCreate(s: Scheduler;
+                        VAR p: Promise;
+                        VAR f: Future): Status;
+
+(* ---- Settlement ---- *)
+
+(* Fulfill the promise with value v.
+   Pre:  p is Pending
+   Post: fate = Fulfilled; all attached continuations enqueued
+   Returns AlreadySettled if already resolved or rejected. *)
+PROCEDURE Resolve(p: Promise; v: Value): Status;
+
+(* Reject the promise with error e.
+   Pre:  p is Pending
+   Post: fate = Rejected; all attached continuations enqueued
+   Returns AlreadySettled if already resolved or rejected. *)
+PROCEDURE Reject(p: Promise; e: Error): Status;
+
+(* ---- Inspection ---- *)
+
+(* Query the current fate of a future. *)
+PROCEDURE GetFate(f: Future; VAR fate: Fate): Status;
+
+(* Query the result if settled. settled=FALSE if still Pending. *)
+PROCEDURE GetResultIfSettled(f: Future;
+                             VAR settled: BOOLEAN;
+                             VAR res: Result): Status;
+
+(* ---- Chaining ---- *)
+
+(* Attach a transformation. fn receives the result when f settles;
+   fn's output becomes the settlement of the returned future.
+   If f is already settled the continuation is enqueued immediately. *)
+PROCEDURE Map(s: Scheduler; f: Future;
+              fn: ThenFn; user: ADDRESS;
+              VAR out: Future): Status;
+
+(* Attach an error handler. fn is called only on rejection;
+   on fulfillment the value passes through unchanged. *)
+PROCEDURE OnReject(s: Scheduler; f: Future;
+                   fn: CatchFn; user: ADDRESS;
+                   VAR out: Future): Status;
+
+(* Attach a side-effect observer. fn is called on settlement but
+   does not alter the chain; the original result passes through. *)
+PROCEDURE OnSettle(s: Scheduler; f: Future;
+                   fn: VoidFn; user: ADDRESS;
+                   VAR out: Future): Status;
+
+(* ---- Combinators ---- *)
+
+(* Join: fulfills when every future in fs fulfills.
+   Rejects immediately on the first rejection.
+   On success Value.tag = element count, Value.ptr = AllResultPtr
+   pointing to a heap array of Results (caller should eventually
+   DEALLOCATE the AllResultPtr). *)
+PROCEDURE All(s: Scheduler; fs: ARRAY OF Future;
+              VAR out: Future): Status;
+
+(* Race: settles as soon as the first future in fs settles.
+   The winning result (fulfill or reject) becomes the output. *)
+PROCEDURE Race(s: Scheduler; fs: ARRAY OF Future;
+               VAR out: Future): Status;
+
+(* ---- Helpers ---- *)
+
+PROCEDURE MakeValue(tag: INTEGER; ptr: ADDRESS; VAR v: Value);
+PROCEDURE MakeError(code: INTEGER; ptr: ADDRESS; VAR e: Error);
+PROCEDURE Ok(v: Value; VAR r: Result);
+PROCEDURE Fail(e: Error; VAR r: Result);
+
+END Promise.

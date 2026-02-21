@@ -1,0 +1,74 @@
+DEFINITION MODULE HTTPClient;
+
+  (* HTTP/1.1 client using non-blocking sockets and Futures.
+
+     Sends Connection: close, reads full response, resolves Future.
+     No keep-alive pooling.  No HTTP/2.  No threads.
+     No hidden globals.
+
+     Supports both HTTP and HTTPS (via m2tls).
+     HTTPS: peer verification ON by default, TLS 1.2 minimum, SNI.
+
+     Supports Content-Length and chunked transfer encoding.
+     Responses up to 64 KB body (Buffers.MaxCap). *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM EventLoop IMPORT Loop;
+  FROM Scheduler IMPORT Scheduler;
+  FROM Promise IMPORT Future;
+  FROM URI IMPORT URIRec;
+  FROM Buffers IMPORT Buffer;
+
+  CONST
+    MaxHeaders    = 32;
+    MaxHeaderName = 64;
+    MaxHeaderVal  = 1024;
+
+  TYPE
+    Header = RECORD
+      name     : ARRAY [0..MaxHeaderName-1] OF CHAR;
+      value    : ARRAY [0..MaxHeaderVal-1] OF CHAR;
+      nameLen  : INTEGER;
+      valueLen : INTEGER;
+    END;
+
+    Response = RECORD
+      statusCode    : INTEGER;
+      headers       : ARRAY [0..MaxHeaders-1] OF Header;
+      headerCount   : INTEGER;
+      body          : Buffer;
+      contentLength : INTEGER;   (* -1 if not specified *)
+    END;
+
+    ResponsePtr = POINTER TO Response;
+
+    Status = (OK, Invalid, ConnectFailed, DNSFailed,
+              OutOfMemory, ParseError, Timeout, TLSFailed);
+
+  (* ── Requests ──────────────────────────────────────────── *)
+
+  (* Issue an HTTP GET request.
+     Future resolves with Value.ptr -> heap ResponsePtr.
+     Caller must call FreeResponse when done. *)
+  PROCEDURE Get(lp: Loop; sched: Scheduler;
+                VAR uri: URIRec;
+                VAR outFuture: Future): Status;
+
+  (* Issue an HTTP HEAD request.
+     Same as Get but server returns no body. *)
+  PROCEDURE Head(lp: Loop; sched: Scheduler;
+                 VAR uri: URIRec;
+                 VAR outFuture: Future): Status;
+
+  (* ── Response helpers ──────────────────────────────────── *)
+
+  (* Case-insensitive header lookup.
+     Returns TRUE if found, copies value into out. *)
+  PROCEDURE FindHeader(resp: ResponsePtr;
+                       VAR name: ARRAY OF CHAR;
+                       VAR out: ARRAY OF CHAR): BOOLEAN;
+
+  (* Free a Response and its body buffer. *)
+  PROCEDURE FreeResponse(VAR resp: ResponsePtr);
+
+END HTTPClient.

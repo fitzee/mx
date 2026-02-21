@@ -1,0 +1,6 @@
+IMPLEMENTATION MODULE Sockets;
+  PROCEDURE Check(): INTEGER;
+  VAR s: Status;
+  BEGIN s := OK; IF s = OK THEN RETURN 20 ELSE RETURN 0 END
+  END Check;
+END Sockets.

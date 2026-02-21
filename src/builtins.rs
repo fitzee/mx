@@ -39,6 +39,8 @@ pub fn is_builtin_proc(name: &str) -> bool {
             | "BOR"
             | "BXOR"
             | "BNOT"
+            | "SHIFT"
+            | "ROTATE"
     )
 }
 
@@ -60,7 +62,7 @@ pub fn builtin_return_type(name: &str) -> TypeId {
         "RE" => TY_REAL,
         "IM" => TY_REAL,
         "CMPLX" => TY_COMPLEX,
-        "SHL" | "SHR" | "BAND" | "BOR" | "BXOR" | "BNOT" => TY_CARDINAL,
+        "SHL" | "SHR" | "BAND" | "BOR" | "BXOR" | "BNOT" | "SHIFT" | "ROTATE" => TY_CARDINAL,
         _ => TY_VOID,          // procedures with no return
     }
 }
@@ -169,6 +171,9 @@ pub fn register_builtin_procs(symtab: &mut SymbolTable, _types: &TypeRegistry, s
         ("BOR", vec![param("a", TY_CARDINAL, false), param("b", TY_CARDINAL, false)], Some(TY_CARDINAL)),
         ("BXOR", vec![param("a", TY_CARDINAL, false), param("b", TY_CARDINAL, false)], Some(TY_CARDINAL)),
         ("BNOT", vec![param("x", TY_CARDINAL, false)], Some(TY_CARDINAL)),
+        // ISO SYSTEM.SHIFT / SYSTEM.ROTATE — n is signed (sign = direction)
+        ("SHIFT", vec![param("val", TY_CARDINAL, false), param("n", TY_INTEGER, false)], Some(TY_CARDINAL)),
+        ("ROTATE", vec![param("val", TY_CARDINAL, false), param("n", TY_INTEGER, false)], Some(TY_CARDINAL)),
     ];
 
     for (name, params, ret) in procs {
@@ -267,6 +272,7 @@ pub fn codegen_builtin(name: &str, args: &[String]) -> String {
                     "BITSET" => "uint32_t",
                     "LONGINT" => "int64_t",
                     "LONGCARD" => "uint64_t",
+                    "ADDRESS" => "void *",
                     other => other,
                 };
                 format!("(({})({}))", c_type, args[1])
@@ -313,6 +319,8 @@ pub fn codegen_builtin(name: &str, args: &[String]) -> String {
         "BOR" => format!("((uint32_t)({}) | (uint32_t)({}))", args[0], args[1]),
         "BXOR" => format!("((uint32_t)({}) ^ (uint32_t)({}))", args[0], args[1]),
         "BNOT" => format!("(~(uint32_t)({}))", args[0]),
+        "SHIFT" => format!("m2_shift((uint32_t)({}), ({}))", args[0], args[1]),
+        "ROTATE" => format!("m2_rotate((uint32_t)({}), ({}))", args[0], args[1]),
         _ => format!("/* unknown builtin {} */", name),
     }
 }

@@ -1,0 +1,40 @@
+DEFINITION MODULE Texture;
+
+  FROM Gfx IMPORT Renderer;
+  FROM Font IMPORT FontHandle;
+
+  CONST
+    FLIP_NONE       = 0;
+    FLIP_HORIZONTAL = 1;
+    FLIP_VERTICAL   = 2;
+    FLIP_BOTH       = 3;
+
+  TYPE
+    Tex = ADDRESS;
+
+  PROCEDURE LoadBMP(ren: Renderer; path: ARRAY OF CHAR): Tex;
+  PROCEDURE Create(ren: Renderer; w, h: INTEGER): Tex;
+  PROCEDURE FromText(ren: Renderer; font: FontHandle;
+                     text: ARRAY OF CHAR;
+                     r, g, b, a: INTEGER): Tex;
+  PROCEDURE Destroy(tex: Tex);
+
+  PROCEDURE Draw(ren: Renderer; tex: Tex; x, y: INTEGER);
+  PROCEDURE DrawRegion(ren: Renderer; tex: Tex;
+                       sx, sy, sw, sh: INTEGER;
+                       dx, dy, dw, dh: INTEGER);
+  PROCEDURE DrawRotated(ren: Renderer; tex: Tex;
+                        dx, dy, dw, dh: INTEGER;
+                        angleDeg: INTEGER; flip: INTEGER);
+
+  PROCEDURE Width(tex: Tex): INTEGER;
+  PROCEDURE Height(tex: Tex): INTEGER;
+
+  PROCEDURE SetAlpha(tex: Tex; alpha: INTEGER);
+  PROCEDURE SetBlendMode(tex: Tex; mode: INTEGER);
+  PROCEDURE SetColorMod(tex: Tex; r, g, b: INTEGER);
+
+  PROCEDURE SetTarget(ren: Renderer; tex: Tex);
+  PROCEDURE ResetTarget(ren: Renderer);
+
+END Texture.

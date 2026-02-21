@@ -1,0 +1,6 @@
+IMPLEMENTATION MODULE EventLoop;
+  PROCEDURE Check(): INTEGER;
+  VAR s: Status;
+  BEGIN s := OK; IF s = OK THEN RETURN 10 ELSE RETURN 0 END
+  END Check;
+END EventLoop.

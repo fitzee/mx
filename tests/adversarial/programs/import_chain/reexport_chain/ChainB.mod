@@ -1,0 +1,7 @@
+IMPLEMENTATION MODULE ChainB;
+FROM ChainA IMPORT Compute;
+PROCEDURE Transform(x: INTEGER): INTEGER;
+BEGIN
+  RETURN Compute(x) + 1
+END Transform;
+END ChainB.

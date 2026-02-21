@@ -1333,6 +1333,16 @@ impl SemanticAnalyzer {
                     self.error(loc, "HALT expects 0 or 1 arguments");
                 }
             }
+            "SHIFT" | "ROTATE" | "SHL" | "SHR" | "BAND" | "BOR" | "BXOR" => {
+                if args.len() != 2 {
+                    self.error(loc, format!("{} expects 2 arguments", name));
+                }
+            }
+            "BNOT" => {
+                if args.len() != 1 {
+                    self.error(loc, "BNOT expects 1 argument");
+                }
+            }
             _ => {}
         }
     }

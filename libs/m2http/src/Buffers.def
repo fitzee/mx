@@ -1,0 +1,76 @@
+DEFINITION MODULE Buffers;
+
+  (* Binary-safe dynamic buffer for I/O and protocol parsing.
+
+     Two modes:
+       Fixed    -- capacity set at creation, never grows.
+       Growable -- logical capacity doubles on demand up to MaxCap.
+
+     Backing storage is always MaxCap bytes (allocated once).
+     Growth changes the logical capacity, never reallocates.
+     No per-append heap churn.
+
+     Read position (rpos) and write position (wpos) track the
+     unread window.  Compact slides unread bytes to offset 0. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  CONST
+    DefaultCap = 4096;
+    MaxCap     = 65536;
+
+  TYPE
+    Buffer   = ADDRESS;       (* opaque handle *)
+    GrowMode = (Fixed, Growable);
+    Status   = (OK, Invalid, Full, Empty, OutOfMemory);
+
+  (* ── Lifecycle ─────────────────────────────────────────── *)
+
+  PROCEDURE Create(initialCap: INTEGER; mode: GrowMode;
+                   VAR out: Buffer): Status;
+  PROCEDURE Destroy(VAR b: Buffer): Status;
+
+  (* ── Writing ───────────────────────────────────────────── *)
+
+  PROCEDURE AppendByte(b: Buffer; ch: CHAR): Status;
+  PROCEDURE AppendBytes(b: Buffer; VAR data: ARRAY OF CHAR;
+                        len: INTEGER): Status;
+  PROCEDURE AppendString(b: Buffer; VAR s: ARRAY OF CHAR): Status;
+
+  (* ── Reading ───────────────────────────────────────────── *)
+
+  PROCEDURE PeekByte(b: Buffer; offset: INTEGER;
+                     VAR ch: CHAR): Status;
+  PROCEDURE Consume(b: Buffer; n: INTEGER): Status;
+  PROCEDURE CopyOut(b: Buffer; offset, len: INTEGER;
+                    VAR dst: ARRAY OF CHAR): Status;
+
+  (* ── State ─────────────────────────────────────────────── *)
+
+  PROCEDURE Length(b: Buffer): INTEGER;
+  PROCEDURE Capacity(b: Buffer): INTEGER;
+  PROCEDURE Remaining(b: Buffer): INTEGER;
+  PROCEDURE Clear(b: Buffer): Status;
+  PROCEDURE Compact(b: Buffer): Status;
+
+  (* ── Zero-copy access ──────────────────────────────────── *)
+
+  (* SlicePtr returns pointer to first readable byte.
+     SliceLen returns number of readable bytes.
+     Together they define the unread window. *)
+  PROCEDURE SlicePtr(b: Buffer): ADDRESS;
+  PROCEDURE SliceLen(b: Buffer): INTEGER;
+
+  (* WritePtr returns pointer to first writable byte.
+     Remaining returns writable byte count.
+     After external writes (e.g. recv), call AdvanceWrite. *)
+  PROCEDURE WritePtr(b: Buffer): ADDRESS;
+  PROCEDURE AdvanceWrite(b: Buffer; n: INTEGER): Status;
+
+  (* ── Search ────────────────────────────────────────────── *)
+
+  PROCEDURE FindByte(b: Buffer; ch: CHAR;
+                     VAR pos: INTEGER): BOOLEAN;
+  PROCEDURE FindCRLF(b: Buffer; VAR pos: INTEGER): BOOLEAN;
+
+END Buffers.

@@ -1,0 +1,4 @@
+DEFINITION MODULE TLS;
+  TYPE Status = (OK, Invalid);
+  PROCEDURE Check(): INTEGER;
+END TLS.

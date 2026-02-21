@@ -1,0 +1,10 @@
+# m2.toml - Echo server example using m2sockets
+name=sock_echo_server
+version=0.1.0
+entry=src/Main.mod
+includes=src ../../libs/m2sockets/src
+
+[deps]
+
+[cc]
+extra-c=../../libs/m2sockets/src/sockets_bridge.c

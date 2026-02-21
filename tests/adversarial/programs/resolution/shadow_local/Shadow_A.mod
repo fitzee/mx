@@ -1,0 +1,4 @@
+IMPLEMENTATION MODULE Shadow_A;
+BEGIN
+  value := 10
+END Shadow_A.

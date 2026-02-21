@@ -1,0 +1,24 @@
+DEFINITION MODULE Color;
+
+  (* Pure Modula-2 color utilities for RGBA8888 packed format.
+     Layout: R in MSB (bits 31..24), G (23..16), B (15..8), A in LSB (7..0). *)
+
+  PROCEDURE Pack(r, g, b: INTEGER): CARDINAL;
+  (* Pack RGB into RGBA8888 with A=0xFF *)
+
+  PROCEDURE PackAlpha(r, g, b, a: INTEGER): CARDINAL;
+  (* Pack RGBA into RGBA8888 *)
+
+  PROCEDURE UnpackR(c: CARDINAL): INTEGER;
+  (* Extract red channel (bits 31..24) *)
+
+  PROCEDURE UnpackG(c: CARDINAL): INTEGER;
+  (* Extract green channel (bits 23..16) *)
+
+  PROCEDURE UnpackB(c: CARDINAL): INTEGER;
+  (* Extract blue channel (bits 15..8) *)
+
+  PROCEDURE Blend(base, target, pct: INTEGER): INTEGER;
+  (* Integer percentage interpolation: base + (target - base) * pct / 100 *)
+
+END Color.

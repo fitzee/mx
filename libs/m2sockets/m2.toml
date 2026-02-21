@@ -1,0 +1,10 @@
+# m2.toml - m2sockets: POSIX/BSD sockets for Modula-2+
+name=m2sockets
+version=0.1.0
+entry=src/Sockets.mod
+includes=src
+
+[deps]
+
+[cc]
+extra-c=src/sockets_bridge.c

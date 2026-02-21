@@ -1,0 +1,23 @@
+# m2.toml - m2tls: TLS transport for Modula-2+ async networking
+#
+# Requires OpenSSL (or LibreSSL) development headers and libraries.
+#   macOS:  brew install openssl@3
+#   Linux:  apt install libssl-dev  (or equivalent)
+#
+# If OpenSSL is not in the default include/library path, set:
+#   CFLAGS="-I/opt/homebrew/opt/openssl@3/include"
+#   LDFLAGS="-L/opt/homebrew/opt/openssl@3/lib"
+manifest_version=1
+name=m2tls
+version=0.1.0
+edition=pim4
+entry=src/TLS.mod
+includes=src
+
+[deps]
+m2futures=path:../m2futures
+m2evloop=path:../m2evloop
+
+[cc]
+extra-c=src/tls_bridge.c
+libs=-lssl -lcrypto

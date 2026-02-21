@@ -1,11 +1,13 @@
 DEFINITION MODULE Lockfile;
 
-PROCEDURE Read(path: ARRAY OF CHAR): INTEGER;
-PROCEDURE Write(path: ARRAY OF CHAR): INTEGER;
+EXCEPTION LockfileError;
+
+PROCEDURE Read(path: ARRAY OF CHAR);
+PROCEDURE Write(path: ARRAY OF CHAR);
 PROCEDURE Exists(path: ARRAY OF CHAR): INTEGER;
 
 (* Enhanced lockfile with version/source/sha256/path *)
-PROCEDURE WriteEnhanced(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE WriteEnhanced(path: ARRAY OF CHAR);
 
 (* Accessors for parsed lockfile entries *)
 PROCEDURE LockDepCount(): INTEGER;
@@ -22,7 +24,7 @@ PROCEDURE SetDepEntry(i: INTEGER; name: ARRAY OF CHAR; version: ARRAY OF CHAR;
 PROCEDURE SetLockDepCount(n: INTEGER);
 
 (* bootstrap.lock support *)
-PROCEDURE WriteBoot(path: ARRAY OF CHAR): INTEGER;
-PROCEDURE VerifyBoot(path: ARRAY OF CHAR): INTEGER;
+PROCEDURE WriteBoot(path: ARRAY OF CHAR);
+PROCEDURE VerifyBoot(path: ARRAY OF CHAR);
 
 END Lockfile.

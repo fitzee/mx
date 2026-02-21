@@ -1,0 +1,19 @@
+DEFINITION MODULE FOR "C" DnsBridge;
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  (* DNS resolution *)
+  PROCEDURE m2_dns_resolve_a(host, outAddr4: ADDRESS;
+                             VAR outPort: INTEGER;
+                             port: INTEGER): INTEGER;
+
+  (* Socket helpers *)
+  PROCEDURE m2_connect_ipv4(fd, a, b, c, d, port: INTEGER): INTEGER;
+  PROCEDURE m2_getsockopt_error(fd: INTEGER): INTEGER;
+
+  (* Error *)
+  PROCEDURE m2_dns_errno(): INTEGER;
+  PROCEDURE m2_dns_strerror(errnum: INTEGER; buf: ADDRESS;
+                            buflen: INTEGER);
+
+END DnsBridge.

@@ -1,0 +1,7 @@
+IMPLEMENTATION MODULE ChainC;
+FROM ChainB IMPORT Transform;
+PROCEDURE Process(x: INTEGER): INTEGER;
+BEGIN
+  RETURN Transform(x) + 10
+END Process;
+END ChainC.

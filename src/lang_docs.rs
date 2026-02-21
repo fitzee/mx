@@ -21,6 +21,9 @@ pub enum DocCategory {
     Builtin,
     Stdlib,
     Extension,
+    LibGraphics,
+    LibNetworking,
+    LibAsync,
 }
 
 /// O(1) lookup of embedded documentation by key.
@@ -182,6 +185,53 @@ static REGISTRY: LazyLock<HashMap<&'static str, DocEntry>> = LazyLock::new(|| {
     m.insert("SAFE", DocEntry { key: "SAFE", category: DocCategory::Extension, markdown: include_str!("../docs/lang/m2plus/SAFE.md") });
     m.insert("UNSAFE", DocEntry { key: "UNSAFE", category: DocCategory::Extension, markdown: include_str!("../docs/lang/m2plus/UNSAFE.md") });
 
+    // Library modules — m2gfx (Graphics)
+    m.insert("Gfx", DocEntry { key: "Gfx", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Gfx.md") });
+    m.insert("GFX", DocEntry { key: "Gfx", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Gfx.md") });
+    m.insert("Canvas", DocEntry { key: "Canvas", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Canvas.md") });
+    m.insert("CANVAS", DocEntry { key: "Canvas", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Canvas.md") });
+    m.insert("Events", DocEntry { key: "Events", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Events.md") });
+    m.insert("EVENTS", DocEntry { key: "Events", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Events.md") });
+    m.insert("Font", DocEntry { key: "Font", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Font.md") });
+    m.insert("FONT", DocEntry { key: "Font", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Font.md") });
+    m.insert("Texture", DocEntry { key: "Texture", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Texture.md") });
+    m.insert("TEXTURE", DocEntry { key: "Texture", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Texture.md") });
+    m.insert("PixBuf", DocEntry { key: "PixBuf", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/PixBuf.md") });
+    m.insert("PIXBUF", DocEntry { key: "PixBuf", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/PixBuf.md") });
+    m.insert("Color", DocEntry { key: "Color", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Color.md") });
+    m.insert("COLOR", DocEntry { key: "Color", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Color.md") });
+    m.insert("DrawAlgo", DocEntry { key: "DrawAlgo", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/DrawAlgo.md") });
+    m.insert("DRAWALGO", DocEntry { key: "DrawAlgo", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/DrawAlgo.md") });
+
+    // Library modules — m2sockets (Networking)
+    m.insert("Sockets", DocEntry { key: "Sockets", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2sockets/Sockets.md") });
+    m.insert("SOCKETS", DocEntry { key: "Sockets", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2sockets/Sockets.md") });
+
+    // Library modules — m2futures (Async)
+    m.insert("Scheduler", DocEntry { key: "Scheduler", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Scheduler.md") });
+    m.insert("SCHEDULER", DocEntry { key: "Scheduler", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Scheduler.md") });
+    m.insert("Promise", DocEntry { key: "Promise", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Promise.md") });
+    m.insert("PROMISE", DocEntry { key: "Promise", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Promise.md") });
+
+    // Library modules — m2evloop (Async / Runtime)
+    m.insert("EventLoop", DocEntry { key: "EventLoop", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/EventLoop.md") });
+    m.insert("EVENTLOOP", DocEntry { key: "EventLoop", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/EventLoop.md") });
+    m.insert("Timers", DocEntry { key: "Timers", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Timers.md") });
+    m.insert("TIMERS", DocEntry { key: "Timers", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Timers.md") });
+    m.insert("Poller", DocEntry { key: "Poller", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Poller.md") });
+    m.insert("POLLER", DocEntry { key: "Poller", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Poller.md") });
+
+    // Library modules — m2http (Networking)
+    m.insert("Buffers", DocEntry { key: "Buffers", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/Buffers.md") });
+    m.insert("BUFFERS", DocEntry { key: "Buffers", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/Buffers.md") });
+    m.insert("URI", DocEntry { key: "URI", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/URI.md") });
+    m.insert("DNS", DocEntry { key: "DNS", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/DNS.md") });
+    m.insert("HTTPClient", DocEntry { key: "HTTPClient", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/HTTPClient.md") });
+    m.insert("HTTPCLIENT", DocEntry { key: "HTTPClient", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/HTTPClient.md") });
+
+    // Library modules — m2tls (Networking / TLS)
+    m.insert("TLS", DocEntry { key: "TLS", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2tls/TLS.md") });
+
     m
 });
 
@@ -228,6 +278,43 @@ mod tests {
     fn test_get_doc_extension() {
         let entry = get_doc("TRY").unwrap();
         assert_eq!(entry.category, DocCategory::Extension);
+    }
+
+    #[test]
+    fn test_get_doc_library() {
+        let entry = get_doc("Gfx").unwrap();
+        assert_eq!(entry.category, DocCategory::LibGraphics);
+        let entry2 = get_doc("Sockets").unwrap();
+        assert_eq!(entry2.category, DocCategory::LibNetworking);
+        let entry3 = get_doc("Promise").unwrap();
+        assert_eq!(entry3.category, DocCategory::LibAsync);
+        let entry4 = get_doc("Scheduler").unwrap();
+        assert_eq!(entry4.category, DocCategory::LibAsync);
+        // m2evloop modules
+        let entry5 = get_doc("EventLoop").unwrap();
+        assert_eq!(entry5.category, DocCategory::LibAsync);
+        let entry6 = get_doc("Timers").unwrap();
+        assert_eq!(entry6.category, DocCategory::LibAsync);
+        let entry7 = get_doc("Poller").unwrap();
+        assert_eq!(entry7.category, DocCategory::LibAsync);
+        // uppercase aliases
+        assert!(get_doc("EVENTLOOP").is_some());
+        assert!(get_doc("TIMERS").is_some());
+        assert!(get_doc("POLLER").is_some());
+        // m2http modules
+        let entry8 = get_doc("Buffers").unwrap();
+        assert_eq!(entry8.category, DocCategory::LibNetworking);
+        let entry9 = get_doc("URI").unwrap();
+        assert_eq!(entry9.category, DocCategory::LibNetworking);
+        let entry10 = get_doc("DNS").unwrap();
+        assert_eq!(entry10.category, DocCategory::LibNetworking);
+        let entry11 = get_doc("HTTPClient").unwrap();
+        assert_eq!(entry11.category, DocCategory::LibNetworking);
+        assert!(get_doc("BUFFERS").is_some());
+        assert!(get_doc("HTTPCLIENT").is_some());
+        // m2tls module
+        let entry12 = get_doc("TLS").unwrap();
+        assert_eq!(entry12.category, DocCategory::LibNetworking);
     }
 
     #[test]

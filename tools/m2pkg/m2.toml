@@ -2,6 +2,6 @@
 name=m2pkg
 version=0.1.0
 entry=src/Main.mod
-m2plus=false
+edition=m2plus
 includes=src
 extra-c=../../libs/m2sys/m2sys.c

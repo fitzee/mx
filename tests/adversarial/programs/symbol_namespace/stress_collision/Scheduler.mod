@@ -1,0 +1,6 @@
+IMPLEMENTATION MODULE Scheduler;
+  PROCEDURE Check(): INTEGER;
+  VAR s: Status;
+  BEGIN s := OK; IF s = OK THEN RETURN 50 ELSE RETURN 0 END
+  END Check;
+END Scheduler.

@@ -1,0 +1,16 @@
+DEFINITION MODULE RecLib;
+TYPE
+  Point = RECORD
+    x, y: INTEGER
+  END;
+  Info = RECORD
+    tag: INTEGER;
+    flag: BOOLEAN;
+    ch: CHAR;
+    val: INTEGER
+  END;
+PROCEDURE MakePoint(px, py: INTEGER; VAR p: Point);
+PROCEDURE SumPoint(p: Point): INTEGER;
+PROCEDURE InitInfo(VAR i: Info; t, v: INTEGER);
+PROCEDURE InfoTag(i: Info): INTEGER;
+END RecLib.

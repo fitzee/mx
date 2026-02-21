@@ -1,0 +1,8 @@
+IMPLEMENTATION MODULE A;
+  PROCEDURE GetVal(): INTEGER;
+  VAR s: Status;
+  BEGIN
+    s := OK;
+    IF s = OK THEN RETURN 1 ELSE RETURN 0 END
+  END GetVal;
+END A.

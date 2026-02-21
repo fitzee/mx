@@ -1,0 +1,68 @@
+# GitHub Actions snippet for running the adversarial test suite.
+# Add this as a job in your .github/workflows/ci.yml or similar.
+
+name: Adversarial Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  adversarial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@v1
+        with:
+          toolchain: stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang gcc libssl-dev
+
+      - name: Build m2c compiler
+        run: cargo build --quiet
+
+      - name: Run existing unit tests
+        run: cargo test --quiet
+
+      - name: Run existing integration tests
+        run: bash tests/run_all.sh
+
+      - name: Run adversarial tests (CI mode)
+        run: |
+          python3 tests/adversarial/run_adversarial.py \
+            --mode ci \
+            --compiler all \
+            --sanitizers on \
+            --seed 20260221
+
+      - name: Upload adversarial artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adversarial-results
+          path: tests/adversarial/out/
+          retention-days: 7
+
+  # Optional: thorough local-mode run on schedule
+  adversarial-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-action@v1
+      - run: sudo apt-get update && sudo apt-get install -y clang gcc libssl-dev
+      - run: cargo build --quiet
+      - run: |
+          python3 tests/adversarial/run_adversarial.py \
+            --mode local \
+            --compiler all \
+            --sanitizers on

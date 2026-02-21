@@ -43,11 +43,32 @@ class DocTreeItem extends vscode.TreeItem {
         case "Extension":
           this.iconPath = new vscode.ThemeIcon("extensions");
           break;
+        case "LibGraphics":
+        case "LibNetworking":
+        case "LibAsync":
+          this.iconPath = new vscode.ThemeIcon("symbol-module");
+          break;
         default:
           this.iconPath = new vscode.ThemeIcon("file");
       }
     } else {
-      this.iconPath = new vscode.ThemeIcon("folder");
+      // Category/group node icons
+      switch (category) {
+        case "_Libraries":
+          this.iconPath = new vscode.ThemeIcon("library");
+          break;
+        case "LibGraphics":
+          this.iconPath = new vscode.ThemeIcon("device-desktop");
+          break;
+        case "LibNetworking":
+          this.iconPath = new vscode.ThemeIcon("globe");
+          break;
+        case "LibAsync":
+          this.iconPath = new vscode.ThemeIcon("sync");
+          break;
+        default:
+          this.iconPath = new vscode.ThemeIcon("folder");
+      }
     }
   }
 }
@@ -80,15 +101,17 @@ class DocTreeProvider implements vscode.TreeDataProvider<DocTreeItem> {
     await this.loadEntries();
 
     if (!element) {
-      // Root: show categories
+      // Root: main categories + Libraries group
       const categories = [...new Set(this.entries.map(e => e.category))].sort();
+      const mainCategories = categories.filter(c => !c.startsWith("Lib"));
+      const hasLibs = categories.some(c => c.startsWith("Lib"));
       const categoryLabels: Record<string, string> = {
         Language: "Keywords & Constructs",
         Builtin: "Built-in Procedures & Types",
         Stdlib: "Standard Library",
         Extension: "Modula-2+ Extensions",
       };
-      return categories.map(cat =>
+      const items = mainCategories.map(cat =>
         new DocTreeItem(
           categoryLabels[cat] ?? cat,
           vscode.TreeItemCollapsibleState.Collapsed,
@@ -96,9 +119,38 @@ class DocTreeProvider implements vscode.TreeDataProvider<DocTreeItem> {
           cat
         )
       );
+      if (hasLibs) {
+        items.push(new DocTreeItem(
+          "Libraries",
+          vscode.TreeItemCollapsibleState.Collapsed,
+          undefined,
+          "_Libraries"
+        ));
+      }
+      return items;
     }
 
-    // Children of a category
+    // Children of Libraries: show subcategories (Graphics, Networking, ...)
+    if (element.category === "_Libraries") {
+      const libCategories = [...new Set(
+        this.entries.filter(e => e.category.startsWith("Lib")).map(e => e.category)
+      )].sort();
+      const subLabels: Record<string, string> = {
+        LibAsync: "Async",
+        LibGraphics: "Graphics",
+        LibNetworking: "Networking",
+      };
+      return libCategories.map(cat =>
+        new DocTreeItem(
+          subLabels[cat] ?? cat.replace(/^Lib/, ""),
+          vscode.TreeItemCollapsibleState.Collapsed,
+          undefined,
+          cat
+        )
+      );
+    }
+
+    // Children of a category or subcategory: show doc entries
     if (!element.docKey && element.category) {
       const items = this.entries
         .filter(e => e.category === element.category)
@@ -452,58 +504,124 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function renderMarkdownHtml(_title: string, markdown: string): string {
-  // Simple markdown-to-HTML conversion for code blocks and headers
-  const escaped = markdown
+  // 1. Extract code blocks before any other processing
+  const codeBlocks: string[] = [];
+  let text = markdown.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => {
+    const esc = code
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const idx = codeBlocks.length;
+    codeBlocks.push(
+      `<pre><code class="language-${lang}">${esc}</code></pre>`
+    );
+    return `\x00CB${idx}\x00`;
+  });
+
+  // 2. HTML-escape the rest
+  text = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
-  // Convert ```...``` blocks
-  const withCode = escaped.replace(
-    /```(\w*)\n([\s\S]*?)```/g,
-    '<pre><code class="language-$1">$2</code></pre>'
-  );
-
-  // Convert headers
-  const withHeaders = withCode
+  // 3. Headers
+  text = text
     .replace(/^### (.+)$/gm, "<h3>$1</h3>")
     .replace(/^## (.+)$/gm, "<h2>$1</h2>")
     .replace(/^# (.+)$/gm, "<h1>$1</h1>");
 
-  // Convert bold and inline code
-  const withInline = withHeaders
+  // 4. Bold and inline code
+  text = text
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 
-  // Convert bullet lists and paragraphs
-  const withLists = withInline
-    .replace(/^- (.+)$/gm, "<li>$1</li>")
-    .replace(/(<li>[\s\S]*?<\/li>)/g, "<ul>$1</ul>");
+  // 5. Horizontal rules
+  text = text.replace(/^---$/gm, "<hr>");
 
-  // Wrap remaining text in paragraphs
-  const lines = withLists.split("\n");
+  // 6. Tables: header row + separator row + data rows
+  text = convertMarkdownTables(text);
+
+  // 7. Bullet lists: group consecutive <li> into <ul>
+  text = text.replace(/^- (.+)$/gm, "<li>$1</li>");
+  text = text.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+
+  // 8. Wrap remaining plain-text lines in <p>
+  const lines = text.split("\n");
   const html = lines
     .map(l => {
-      if (l.startsWith("<") || l.trim() === "") { return l; }
+      const t = l.trim();
+      if (t === "" || t.startsWith("<") || t.includes("\x00CB")) { return l; }
       return `<p>${l}</p>`;
     })
     .join("\n");
+
+  // 9. Re-insert code blocks
+  let final = html;
+  codeBlocks.forEach((block, i) => {
+    final = final.replace(`\x00CB${i}\x00`, block);
+  });
 
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; line-height: 1.6; }
-    h1 { border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 8px; }
-    h2 { margin-top: 24px; }
-    pre { background: var(--vscode-textCodeBlock-background); padding: 12px; border-radius: 4px; overflow-x: auto; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; line-height: 1.5; color: var(--vscode-foreground); }
+    h1 { border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 6px; margin-bottom: 12px; }
+    h2 { margin-top: 20px; margin-bottom: 8px; }
+    h3 { margin-top: 16px; margin-bottom: 6px; }
+    p { margin: 6px 0; }
+    pre { background: var(--vscode-textCodeBlock-background); padding: 12px; border-radius: 4px; overflow-x: auto; line-height: 1.4; margin: 8px 0; }
+    pre code { background: transparent; padding: 0; border-radius: 0; display: block; }
     code { font-family: var(--vscode-editor-font-family), monospace; font-size: var(--vscode-editor-font-size); }
-    ul { padding-left: 20px; }
+    p code, li code, td code, th code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; }
+    ul { padding-left: 20px; margin: 6px 0; }
+    li { margin: 2px 0; }
+    table { border-collapse: collapse; margin: 8px 0; }
+    th, td { border: 1px solid var(--vscode-panel-border); padding: 4px 10px; text-align: left; }
+    th { background: var(--vscode-textCodeBlock-background); font-weight: 600; }
+    hr { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 16px 0; }
   </style>
 </head>
-<body>${html}</body>
+<body>${final}</body>
 </html>`;
+}
+
+function convertMarkdownTables(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    // Table detected: row starting with |, next line is separator |---|
+    if (
+      i + 1 < lines.length &&
+      lines[i].trim().startsWith("|") &&
+      /^\|[\s\-:|]+\|$/.test(lines[i + 1].trim())
+    ) {
+      const headers = splitTableRow(lines[i]);
+      i += 2; // skip header + separator
+      let t = "<table><thead><tr>";
+      for (const h of headers) { t += `<th>${h}</th>`; }
+      t += "</tr></thead><tbody>";
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        const cells = splitTableRow(lines[i]);
+        t += "<tr>";
+        for (const c of cells) { t += `<td>${c}</td>`; }
+        t += "</tr>";
+        i++;
+      }
+      t += "</tbody></table>";
+      out.push(t);
+    } else {
+      out.push(lines[i]);
+      i++;
+    }
+  }
+  return out.join("\n");
+}
+
+function splitTableRow(line: string): string[] {
+  return line.split("|").slice(1, -1).map(c => c.trim());
 }
 
 export function deactivate(): Thenable<void> | undefined {

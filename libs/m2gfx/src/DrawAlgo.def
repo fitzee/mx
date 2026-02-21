@@ -1,0 +1,41 @@
+DEFINITION MODULE DrawAlgo;
+
+  (* Shared drawing algorithms parameterized by output callbacks.
+     Used by both Canvas (SDL renderer) and PixBuf (indexed pixel buffer). *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  TYPE
+    Ctx      = ADDRESS;
+    PointFn  = PROCEDURE(Ctx, INTEGER, INTEGER);
+    HLineFn  = PROCEDURE(Ctx, INTEGER, INTEGER, INTEGER);
+    LineFn   = PROCEDURE(Ctx, INTEGER, INTEGER, INTEGER, INTEGER);
+
+  (* Bresenham line — pixel by pixel via PointFn *)
+  PROCEDURE Line(ctx: Ctx; pt: PointFn;
+                 x1, y1, x2, y2: INTEGER);
+
+  (* Midpoint circle *)
+  PROCEDURE Circle(ctx: Ctx; pt: PointFn;
+                   cx, cy, radius: INTEGER);
+  PROCEDURE FillCircle(ctx: Ctx; hl: HLineFn;
+                       cx, cy, radius: INTEGER);
+
+  (* Midpoint ellipse — two-region *)
+  PROCEDURE Ellipse(ctx: Ctx; pt: PointFn;
+                    cx, cy, rx, ry: INTEGER);
+  PROCEDURE FillEllipse(ctx: Ctx; hl: HLineFn;
+                        cx, cy, rx, ry: INTEGER);
+
+  (* Triangle *)
+  PROCEDURE Triangle(ctx: Ctx; ln: LineFn;
+                     x1, y1, x2, y2, x3, y3: INTEGER);
+  PROCEDURE FillTriangle(ctx: Ctx; hl: HLineFn;
+                         x1, y1, x2, y2, x3, y3: INTEGER);
+
+  (* Cubic Bezier curve *)
+  PROCEDURE Bezier(ctx: Ctx; ln: LineFn;
+                   x1, y1, cx1, cy1, cx2, cy2, x2, y2,
+                   steps: INTEGER);
+
+END DrawAlgo.

@@ -323,8 +323,23 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                             mod_queue.push(from_mod.clone());
                         }
                     } else {
+                        // Whole-module import: IMPORT Module1, Module2;
                         for name in &imp.names {
                             if !loaded_modules.contains(name) {
+                                // Also register the def module if not already done
+                                if !registered_defs.contains(name) && !crate::stdlib::is_stdlib_module(name) {
+                                    if let Some(dep_def_path) = find_def_file(name, &opts.input, &opts.include_paths) {
+                                        if opts.verbose {
+                                            eprintln!("m2c: found definition module for {}: {}", name, dep_def_path.display());
+                                        }
+                                        if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive) {
+                                            if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
+                                                codegen.register_def_module(&dep_def);
+                                                registered_defs.insert(name.clone());
+                                            }
+                                        }
+                                    }
+                                }
                                 mod_queue.push(name.clone());
                             }
                         }

@@ -1,0 +1,92 @@
+DEFINITION MODULE Gfx;
+
+  CONST
+    (* Window creation flags *)
+    WIN_CENTERED   = 1;
+    WIN_RESIZABLE  = 2;
+    WIN_BORDERLESS = 4;
+    WIN_FULLSCREEN = 8;
+    WIN_HIDDEN     = 16;
+    WIN_MAXIMIZED  = 32;
+    WIN_HIGHDPI    = 64;
+
+    (* Renderer creation flags *)
+    RENDER_ACCELERATED = 1;
+    RENDER_VSYNC       = 2;
+    RENDER_SOFTWARE    = 4;
+
+    (* Fullscreen modes *)
+    FULLSCREEN_OFF     = 0;
+    FULLSCREEN_TRUE    = 1;
+    FULLSCREEN_DESKTOP = 2;
+
+    (* Cursor types *)
+    CURSOR_ARROW     = 0;
+    CURSOR_IBEAM     = 1;
+    CURSOR_WAIT      = 2;
+    CURSOR_CROSSHAIR = 3;
+    CURSOR_HAND      = 4;
+    CURSOR_SIZE_NWSE = 5;
+    CURSOR_SIZE_NESW = 6;
+    CURSOR_SIZE_WE   = 7;
+    CURSOR_SIZE_NS   = 8;
+    CURSOR_SIZE_ALL  = 9;
+    CURSOR_NO        = 10;
+
+  TYPE
+    Window   = ADDRESS;
+    Renderer = ADDRESS;
+
+  (* Init / Shutdown *)
+  PROCEDURE Init(): BOOLEAN;
+  PROCEDURE InitFont(): BOOLEAN;
+  PROCEDURE Quit;
+  PROCEDURE QuitFont;
+
+  (* Window management *)
+  PROCEDURE CreateWindow(title: ARRAY OF CHAR;
+                         w, h: INTEGER;
+                         flags: INTEGER): Window;
+  PROCEDURE DestroyWindow(win: Window);
+  PROCEDURE SetTitle(win: Window; title: ARRAY OF CHAR);
+  PROCEDURE SetWindowSize(win: Window; w, h: INTEGER);
+  PROCEDURE GetWindowWidth(win: Window): INTEGER;
+  PROCEDURE GetWindowHeight(win: Window): INTEGER;
+  PROCEDURE SetWindowPos(win: Window; x, y: INTEGER);
+  PROCEDURE SetFullscreen(win: Window; mode: INTEGER);
+  PROCEDURE ShowWindow(win: Window);
+  PROCEDURE HideWindow(win: Window);
+  PROCEDURE RaiseWindow(win: Window);
+  PROCEDURE MinimizeWindow(win: Window);
+  PROCEDURE MaximizeWindow(win: Window);
+  PROCEDURE RestoreWindow(win: Window);
+  PROCEDURE GetWindowID(win: Window): INTEGER;
+  PROCEDURE SetWindowMinSize(win: Window; w, h: INTEGER);
+  PROCEDURE SetWindowMaxSize(win: Window; w, h: INTEGER);
+
+  (* Renderer *)
+  PROCEDURE CreateRenderer(win: Window; flags: INTEGER): Renderer;
+  PROCEDURE DestroyRenderer(ren: Renderer);
+  PROCEDURE Present(ren: Renderer);
+  PROCEDURE OutputWidth(ren: Renderer): INTEGER;
+  PROCEDURE OutputHeight(ren: Renderer): INTEGER;
+
+  (* Screen info *)
+  PROCEDURE ScreenWidth(): INTEGER;
+  PROCEDURE ScreenHeight(): INTEGER;
+  PROCEDURE DisplayCount(): INTEGER;
+
+  (* Clipboard *)
+  PROCEDURE SetClipboard(text: ARRAY OF CHAR);
+  PROCEDURE GetClipboard(VAR text: ARRAY OF CHAR);
+  PROCEDURE HasClipboard(): BOOLEAN;
+
+  (* Timer *)
+  PROCEDURE Ticks(): INTEGER;
+  PROCEDURE Delay(ms: INTEGER);
+
+  (* Cursor *)
+  PROCEDURE SetCursor(cursorType: INTEGER);
+  PROCEDURE ShowCursor(show: BOOLEAN);
+
+END Gfx.

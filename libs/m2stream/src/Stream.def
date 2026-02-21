@@ -1,0 +1,146 @@
+DEFINITION MODULE Stream;
+
+  (* Transport-agnostic byte stream for async networking.
+
+     Wraps TCP sockets and TLS sessions behind a single interface.
+     Two usage modes:
+
+       1. Sync (try-once):  TryRead / TryWrite return immediately.
+          Caller drives retries from its own EventLoop watcher.
+          Used by HTTPClient for HTTP/HTTPS support.
+
+       2. Async (Future-returning):  ReadAsync / WriteAsync / etc.
+          Stream registers its own EventLoop watcher and returns
+          a Future.  For standalone use without HTTPClient.
+
+     Ownership model:
+       - Stream takes ownership of TLS context and session.
+       - Socket fd ownership depends on usage:
+         * Sync mode: caller manages fd lifecycle and watcher.
+         * Async mode: Stream manages watcher; caller closes fd
+           after Destroy (or Destroy closes it if Stream owns watcher).
+
+     No threads.  No hidden globals.  Single-threaded event-loop model. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM Scheduler IMPORT Scheduler;
+  FROM Promise IMPORT Future;
+
+  (* All opaque handles (Loop, TLSContext, TLSSession) are ADDRESS.
+     We use ADDRESS directly to avoid qualified-type resolution issues
+     in .def file procedure signatures. *)
+
+  TYPE
+    Stream = ADDRESS;    (* opaque handle *)
+
+    StreamKind = (TCP, TLSStream);
+
+    StreamState = (Open, ShutdownWr, Closed, Error);
+
+    Status = (OK, Invalid, WouldBlock, StreamClosed,
+              SysError, TLSError, OutOfMemory);
+
+  (* ── Creation ──────────────────────────────────────── *)
+
+  (* Create a Stream over a connected non-blocking TCP socket.
+     The socket must already be connected.
+     Post: out is a valid Stream handle on OK. *)
+  PROCEDURE CreateTCP(lp: ADDRESS; sched: Scheduler;
+                      fd: INTEGER;
+                      VAR out: Stream): Status;
+
+  (* Create a Stream over a completed TLS session.
+     The TLS handshake must already be complete.
+     Stream takes ownership of ctx and sess (destroyed on Destroy).
+     Post: out is a valid Stream handle on OK. *)
+  PROCEDURE CreateTLS(lp: ADDRESS; sched: Scheduler;
+                      fd: INTEGER;
+                      ctx: ADDRESS;   (* TLS.TLSContext *)
+                      sess: ADDRESS;  (* TLS.TLSSession *)
+                      VAR out: Stream): Status;
+
+  (* ── Sync (try-once) operations ────────────────────── *)
+
+  (* Attempt to read up to max bytes.
+     Returns:
+       OK          — got > 0 bytes read into buf
+       WouldBlock  — TLS renegotiation; EventLoop watcher adjusted
+       StreamClosed — peer closed the connection
+       SysError    — fatal socket error
+       TLSError    — fatal TLS error
+     For TCP: WouldBlock is never returned (only OK/Closed/SysError).
+     Pre: caller manages the EventLoop watcher on fd. *)
+  PROCEDURE TryRead(s: Stream; buf: ADDRESS; max: INTEGER;
+                    VAR got: INTEGER): Status;
+
+  (* Attempt to write up to len bytes.
+     Returns:
+       OK          — sent > 0 bytes from buf
+       WouldBlock  — TLS renegotiation; EventLoop watcher adjusted
+       SysError    — fatal socket error
+       TLSError    — fatal TLS error
+     Pre: caller manages the EventLoop watcher on fd. *)
+  PROCEDURE TryWrite(s: Stream; buf: ADDRESS; len: INTEGER;
+                     VAR sent: INTEGER): Status;
+
+  (* ── Async operations ──────────────────────────────── *)
+
+  (* All async operations register an EventLoop watcher on the fd.
+     Only ONE async operation may be pending at a time.
+     Pre: no other watcher is registered on this fd. *)
+
+  (* Read up to max bytes asynchronously.
+     buf must remain valid until the future settles.
+     Future resolves: Value.tag = bytes read, Value.ptr = NIL.
+     Future rejects:  Error.code = 1 (I/O error), 2 (Closed). *)
+  PROCEDURE ReadAsync(s: Stream; buf: ADDRESS; max: INTEGER;
+                      VAR out: Future): Status;
+
+  (* Write up to len bytes asynchronously.
+     buf must remain valid until the future settles.
+     Future resolves: Value.tag = bytes written (may be < len).
+     Future rejects:  Error.code = 1 (I/O error). *)
+  PROCEDURE WriteAsync(s: Stream; buf: ADDRESS; len: INTEGER;
+                       VAR out: Future): Status;
+
+  (* Write all len bytes asynchronously (loops until complete).
+     buf must remain valid until the future settles.
+     Future resolves: Value.tag = len (total bytes written).
+     Future rejects:  Error.code = 1 (I/O error). *)
+  PROCEDURE WriteAllAsync(s: Stream; buf: ADDRESS; len: INTEGER;
+                          VAR out: Future): Status;
+
+  (* Initiate graceful close asynchronously.
+     For TLS: sends close_notify then closes socket.
+     For TCP: closes socket immediately.
+     Future resolves: Value.tag = 0, Value.ptr = NIL.
+     The stream is unusable after close completes. *)
+  PROCEDURE CloseAsync(s: Stream;
+                       VAR out: Future): Status;
+
+  (* ── Sync helpers ──────────────────────────────────── *)
+
+  (* Half-close the write side synchronously.
+     Sends TCP FIN (and TLS close_notify, best-effort).
+     Reads remain possible after shutdown. *)
+  PROCEDURE ShutdownWrite(s: Stream): Status;
+
+  (* Query the current stream state. *)
+  PROCEDURE GetState(s: Stream): StreamState;
+
+  (* Return the underlying file descriptor. *)
+  PROCEDURE GetFd(s: Stream): INTEGER;
+
+  (* Return the stream transport kind. *)
+  PROCEDURE GetKind(s: Stream): StreamKind;
+
+  (* Destroy the stream and release resources.
+     TLS context and session are destroyed.
+     If Stream owns the EventLoop watcher (async mode), the watcher
+     is removed and the socket is closed.
+     If caller manages the watcher (sync mode), the socket is left
+     open for the caller to close.
+     Sets s to NIL. *)
+  PROCEDURE Destroy(VAR s: Stream): Status;
+
+END Stream.

@@ -133,6 +133,17 @@ impl SymbolTable {
         None
     }
 
+    /// Search ALL scopes for a symbol by name (fallback when current scope is wrong).
+    /// Returns the first match found in any scope.
+    pub fn lookup_any(&self, name: &str) -> Option<&Symbol> {
+        for scope in &self.scopes {
+            if let Some(sym) = scope.symbols.get(name) {
+                return Some(sym);
+            }
+        }
+        None
+    }
+
     pub fn lookup_qualified(&self, module: &str, name: &str) -> Option<&Symbol> {
         // Find the module symbol, get its scope, look up name there
         if let Some(sym) = self.lookup(module) {

@@ -1,0 +1,37 @@
+DEFINITION MODULE DNS;
+
+  (* Minimal async DNS resolver.
+     Returns a Future that resolves with an AddrRec.
+
+     Current limitation: getaddrinfo is called synchronously.
+     The returned Future is already settled on return.  This
+     preserves the Futures-first API so callers need no changes
+     when a truly asynchronous backend is added later.
+
+     IPv4 only (first A record). *)
+
+  FROM SYSTEM IMPORT ADDRESS, BYTE;
+  FROM EventLoop IMPORT Loop;
+  FROM Scheduler IMPORT Scheduler;
+  FROM Promise IMPORT Future;
+
+  TYPE
+    AddrRec = RECORD
+      addrV4 : ARRAY [0..3] OF BYTE;
+      port   : INTEGER;
+    END;
+
+    AddrPtr = POINTER TO AddrRec;
+
+    Status = (OK, Invalid, ResolveFailed, OutOfMemory);
+
+  (* Resolve hostname to IPv4 address.
+     Post: outFuture resolves with Value.ptr -> heap AddrRec.
+     Caller must DEALLOCATE the AddrRec when done.
+     Currently blocks during resolution. *)
+  PROCEDURE ResolveA(lp: Loop; sched: Scheduler;
+                     VAR host: ARRAY OF CHAR;
+                     port: INTEGER;
+                     VAR outFuture: Future): Status;
+
+END DNS.

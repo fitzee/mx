@@ -1,0 +1,4 @@
+DEFINITION MODULE Promise;
+  TYPE Status = (OK, Invalid);
+  PROCEDURE Check(): INTEGER;
+END Promise.

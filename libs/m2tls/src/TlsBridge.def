@@ -1,0 +1,57 @@
+DEFINITION MODULE FOR "C" TlsBridge;
+
+  (* Thin FFI binding to tls_bridge.c (OpenSSL/LibreSSL backend).
+     All pointers are ADDRESS; the C side casts to SSL_CTX*/SSL*.
+     See tls_bridge.h for return-code conventions. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  (* Initialisation *)
+  PROCEDURE m2_tls_init;
+
+  (* Context lifecycle *)
+  PROCEDURE m2_tls_ctx_create(): ADDRESS;
+  PROCEDURE m2_tls_ctx_destroy(ctx: ADDRESS);
+
+  (* Context configuration *)
+  PROCEDURE m2_tls_ctx_set_verify(ctx: ADDRESS;
+                                   mode: INTEGER): INTEGER;
+  PROCEDURE m2_tls_ctx_set_min_version(ctx: ADDRESS;
+                                        ver: INTEGER): INTEGER;
+  PROCEDURE m2_tls_ctx_load_system_roots(ctx: ADDRESS): INTEGER;
+  PROCEDURE m2_tls_ctx_load_ca_file(ctx: ADDRESS;
+                                     path: ADDRESS): INTEGER;
+  PROCEDURE m2_tls_ctx_set_client_cert(ctx: ADDRESS;
+                                        certPath: ADDRESS;
+                                        keyPath: ADDRESS): INTEGER;
+
+  (* Session lifecycle *)
+  PROCEDURE m2_tls_session_create(ctx: ADDRESS;
+                                   fd: INTEGER): ADDRESS;
+  PROCEDURE m2_tls_session_destroy(sess: ADDRESS);
+  PROCEDURE m2_tls_session_set_sni(sess: ADDRESS;
+                                    host: ADDRESS): INTEGER;
+
+  (* Handshake *)
+  PROCEDURE m2_tls_handshake(sess: ADDRESS): INTEGER;
+
+  (* Data I/O *)
+  PROCEDURE m2_tls_read(sess: ADDRESS;
+                         buf: ADDRESS;
+                         max: INTEGER): INTEGER;
+  PROCEDURE m2_tls_write(sess: ADDRESS;
+                          buf: ADDRESS;
+                          len: INTEGER): INTEGER;
+
+  (* Shutdown *)
+  PROCEDURE m2_tls_shutdown(sess: ADDRESS): INTEGER;
+
+  (* Diagnostics *)
+  PROCEDURE m2_tls_get_verify_result(sess: ADDRESS): INTEGER;
+  PROCEDURE m2_tls_get_peer_summary(sess: ADDRESS;
+                                     out: ADDRESS;
+                                     max: INTEGER): INTEGER;
+  PROCEDURE m2_tls_get_last_error(out: ADDRESS;
+                                   max: INTEGER);
+
+END TlsBridge.

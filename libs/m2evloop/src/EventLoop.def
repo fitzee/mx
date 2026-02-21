@@ -1,0 +1,98 @@
+DEFINITION MODULE EventLoop;
+
+  (* Single-threaded event loop integrating I/O polling, timers,
+     and microtask scheduling.
+
+     Layering: OS syscalls -> C bridge -> Poller -> EventLoop
+                                          Timers -^
+                                       Scheduler -^
+
+     The event loop owns a Poller, a TimerQueue, and a Scheduler.
+     Each RunOnce iteration:
+       1. Compute timeout from nearest timer deadline
+       2. Poll for I/O events (or sleep until timeout)
+       3. Dispatch watcher callbacks inline
+       4. Tick expired timers (enqueue callbacks on scheduler)
+       5. Pump scheduler (microtask drain)
+
+     The loop runs until Stop is called or there are no more
+     active watchers, timers, or scheduled tasks. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM Scheduler IMPORT Scheduler, TaskProc;
+  FROM Timers IMPORT TimerId;
+
+  TYPE
+    (* Callback for fd readiness events.
+       fd: the file descriptor, events: bitmask of Poller.Ev* *)
+    WatcherProc = PROCEDURE(INTEGER, INTEGER, ADDRESS);
+
+    Loop = ADDRESS;   (* opaque handle *)
+
+    Status = (OK, Invalid, SysError, PoolExhausted);
+
+  (* ── Lifecycle ─────────────────────────────────────────── *)
+
+  (* Create an event loop.
+     Allocates a Poller, TimerQueue, and Scheduler internally.
+     Post: out contains a valid Loop on OK. *)
+  PROCEDURE Create(VAR out: Loop): Status;
+
+  (* Destroy the event loop and all owned resources.
+     Active watchers and timers are discarded. *)
+  PROCEDURE Destroy(VAR lp: Loop): Status;
+
+  (* ── Timers ────────────────────────────────────────────── *)
+
+  (* Schedule a one-shot timer.
+     cb(user) is enqueued on the scheduler after delayMs. *)
+  PROCEDURE SetTimeout(lp: Loop; delayMs: INTEGER;
+                       cb: TaskProc; user: ADDRESS;
+                       VAR id: TimerId): Status;
+
+  (* Schedule a repeating timer.
+     cb(user) fires every intervalMs, starting after intervalMs. *)
+  PROCEDURE SetInterval(lp: Loop; intervalMs: INTEGER;
+                        cb: TaskProc; user: ADDRESS;
+                        VAR id: TimerId): Status;
+
+  (* Cancel a timer by id.  Idempotent. *)
+  PROCEDURE CancelTimer(lp: Loop; id: TimerId): Status;
+
+  (* ── I/O watchers ──────────────────────────────────────── *)
+
+  (* Watch a file descriptor for readiness events.
+     events: bitmask of Poller.EvRead / Poller.EvWrite.
+     cb(fd, readyEvents, user) is called inline during RunOnce. *)
+  PROCEDURE WatchFd(lp: Loop; fd, events: INTEGER;
+                    cb: WatcherProc; user: ADDRESS): Status;
+
+  (* Change the interest set for an already-watched fd. *)
+  PROCEDURE ModifyFd(lp: Loop; fd, events: INTEGER): Status;
+
+  (* Stop watching a file descriptor. *)
+  PROCEDURE UnwatchFd(lp: Loop; fd: INTEGER): Status;
+
+  (* ── Scheduling ────────────────────────────────────────── *)
+
+  (* Enqueue a microtask for execution during the next pump. *)
+  PROCEDURE Enqueue(lp: Loop; cb: TaskProc; user: ADDRESS): Status;
+
+  (* Return the underlying Scheduler handle (for use with
+     Promise/Future APIs that require a Scheduler). *)
+  PROCEDURE GetScheduler(lp: Loop): Scheduler;
+
+  (* ── Running ───────────────────────────────────────────── *)
+
+  (* Execute one iteration of the event loop.
+     Returns TRUE if there is still work to do (watchers, timers,
+     or queued tasks remain). *)
+  PROCEDURE RunOnce(lp: Loop): BOOLEAN;
+
+  (* Run the event loop until Stop is called or all work completes. *)
+  PROCEDURE Run(lp: Loop);
+
+  (* Signal the event loop to stop after the current iteration. *)
+  PROCEDURE Stop(lp: Loop);
+
+END EventLoop.

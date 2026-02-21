@@ -1,0 +1,27 @@
+{
+  "m2c": "cargo run --quiet --",
+  "project_root": "../..",
+
+  "_comment_m2c": "Transpiler command. Split on spaces. For release binary use: ./target/release/m2c",
+  "_comment_project_root": "Relative to tests/adversarial/. Points to repo root.",
+
+  "runtime_include_dirs": [
+    "@root/libs/m2futures/src",
+    "@root/libs/m2evloop/src",
+    "@root/libs/m2stream/src",
+    "@root/libs/m2tls/src",
+    "@root/libs/m2sockets/src"
+  ],
+  "runtime_extra_c_files": [
+    "@root/libs/m2evloop/src/poller_bridge.c",
+    "@root/libs/m2sockets/src/sockets_bridge.c",
+    "@root/libs/m2tls/src/tls_bridge.c"
+  ],
+  "runtime_extra_cflags": [
+    "-I/opt/homebrew/opt/openssl@3/include",
+    "-L/opt/homebrew/opt/openssl@3/lib"
+  ],
+  "runtime_extra_ldflags": [
+    "-lssl", "-lcrypto"
+  ]
+}

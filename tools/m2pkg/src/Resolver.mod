@@ -14,7 +14,7 @@ VAR
   tmp: ARRAY [0..511] OF CHAR;
   registryUrl: ARRAY [0..511] OF CHAR;
 
-PROCEDURE Resolve(): INTEGER;
+PROCEDURE Resolve;
 VAR
   i, nd, rc: INTEGER;
   dname: ARRAY [0..63] OF CHAR;
@@ -47,7 +47,7 @@ BEGIN
           WriteString(dname);
           WriteString("' path not found: ");
           WriteString(dpath); WriteLn;
-          RETURN 1
+          RAISE ResolveError
         END;
         (* Check that dep has a m2.toml *)
         Assign(dpath, mpath);
@@ -58,7 +58,7 @@ BEGIN
           WriteString(dname);
           WriteString("' has no m2.toml at ");
           WriteString(mpath); WriteLn;
-          RETURN 1
+          RAISE ResolveError
         END;
         WriteString("m2pkg: resolved "); WriteString(dname);
         WriteString(" -> "); WriteString(dpath); WriteLn;
@@ -70,10 +70,7 @@ BEGIN
         (* Check if dver starts with https:// — remote dep *)
         IF (Length(dver) > 8) AND (dver[0] = 'h') AND (dver[1] = 't') AND
            (dver[2] = 't') AND (dver[3] = 'p') THEN
-          (* Remote dep: url:version format — parse after last ':' *)
-          (* For now, treat as remote fetch with global registry URL *)
-          rc := FetchRemote(registryUrl, dname, dver, fetchPath);
-          IF rc # 0 THEN RETURN 1 END;
+          FetchRemote(registryUrl, dname, dver, fetchPath);
           SetDepEntry(i, dname, dver, "registry", "", fetchPath)
         ELSE
           (* Check if it's a range (starts with ^, ~, >=) vs exact *)
@@ -89,25 +86,15 @@ BEGIN
             IF rc # 0 THEN
               (* Try remote if registry URL configured *)
               IF Length(registryUrl) > 0 THEN
-                rc := FetchRemote(registryUrl, dname, dver, fetchPath);
-                IF rc # 0 THEN
-                  WriteString("m2pkg: no matching version for ");
-                  WriteString(dname); WriteString(" "); WriteString(dver); WriteLn;
-                  RETURN 1
-                END;
+                FetchRemote(registryUrl, dname, dver, fetchPath);
                 SetDepEntry(i, dname, dver, "registry", "", fetchPath)
               ELSE
                 WriteString("m2pkg: no matching version for ");
                 WriteString(dname); WriteString(" "); WriteString(dver); WriteLn;
-                RETURN 1
+                RAISE ResolveError
               END
             ELSE
-              rc := Fetch(dname, resolvedVer, fetchPath);
-              IF rc # 0 THEN
-                WriteString("m2pkg: failed to fetch "); WriteString(dname);
-                WriteString(" "); WriteString(resolvedVer); WriteLn;
-                RETURN 1
-              END;
+              Fetch(dname, resolvedVer, fetchPath);
               WriteString("m2pkg: resolved "); WriteString(dname);
               WriteString("@"); WriteString(dver);
               WriteString(" -> "); WriteString(resolvedVer);
@@ -120,25 +107,15 @@ BEGIN
             IF rc # 0 THEN
               (* Try remote if registry URL configured *)
               IF Length(registryUrl) > 0 THEN
-                rc := FetchRemote(registryUrl, dname, dver, fetchPath);
-                IF rc # 0 THEN
-                  WriteString("m2pkg: package not found: ");
-                  WriteString(dname); WriteString(" "); WriteString(dver); WriteLn;
-                  RETURN 1
-                END;
+                FetchRemote(registryUrl, dname, dver, fetchPath);
                 SetDepEntry(i, dname, dver, "registry", "", fetchPath)
               ELSE
                 WriteString("m2pkg: package not found in registry: ");
                 WriteString(dname); WriteString(" "); WriteString(dver); WriteLn;
-                RETURN 1
+                RAISE ResolveError
               END
             ELSE
-              rc := Fetch(dname, dver, fetchPath);
-              IF rc # 0 THEN
-                WriteString("m2pkg: failed to fetch "); WriteString(dname);
-                WriteString(" "); WriteString(dver); WriteLn;
-                RETURN 1
-              END;
+              Fetch(dname, dver, fetchPath);
               WriteString("m2pkg: resolved "); WriteString(dname);
               WriteString("@"); WriteString(dver);
               WriteString(" -> "); WriteString(fetchPath); WriteLn;
@@ -152,14 +129,8 @@ BEGIN
   END;
 
   (* Write enhanced lockfile *)
-  rc := WriteEnhanced("m2.lock");
-  IF rc = 0 THEN
-    WriteString("m2pkg: wrote m2.lock"); WriteLn
-  ELSE
-    WriteString("m2pkg: failed to write m2.lock"); WriteLn;
-    RETURN 1
-  END;
-  RETURN 0
+  WriteEnhanced("m2.lock");
+  WriteString("m2pkg: wrote m2.lock"); WriteLn
 END Resolve;
 
 END Resolver.

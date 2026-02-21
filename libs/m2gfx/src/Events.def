@@ -1,0 +1,127 @@
+DEFINITION MODULE Events;
+
+  CONST
+    (* Event types returned by Poll/Wait *)
+    NONE         = 0;
+    QUIT_EVENT   = 1;
+    KEYDOWN      = 2;
+    KEYUP        = 3;
+    MOUSEDOWN    = 4;
+    MOUSEUP      = 5;
+    MOUSEMOVE    = 6;
+    MOUSEWHEEL   = 7;
+    TEXTINPUT    = 8;
+    WINDOW_EVENT = 9;
+    TEXTEDITING  = 10;
+
+    (* Window event subtypes *)
+    WEVT_SHOWN        = 1;
+    WEVT_HIDDEN       = 2;
+    WEVT_EXPOSED      = 3;
+    WEVT_MOVED        = 4;
+    WEVT_RESIZED      = 5;
+    WEVT_MINIMIZED    = 6;
+    WEVT_MAXIMIZED    = 7;
+    WEVT_RESTORED     = 8;
+    WEVT_ENTER        = 9;
+    WEVT_LEAVE        = 10;
+    WEVT_FOCUS_GAINED = 11;
+    WEVT_FOCUS_LOST   = 12;
+    WEVT_CLOSE        = 13;
+
+    (* Mouse buttons *)
+    BUTTON_LEFT   = 1;
+    BUTTON_MIDDLE = 2;
+    BUTTON_RIGHT  = 3;
+
+    (* Modifier flags (combinable with +) *)
+    MOD_SHIFT = 1;
+    MOD_CTRL  = 2;
+    MOD_ALT   = 4;
+    MOD_GUI   = 8;
+
+    (* Key codes -- ASCII keys use their ASCII value (a=97, A=65, 0=48, etc.) *)
+    KEY_RETURN    = 13;
+    KEY_ESCAPE    = 27;
+    KEY_BACKSPACE = 8;
+    KEY_TAB       = 9;
+    KEY_SPACE     = 32;
+    KEY_DELETE    = 127;
+
+    KEY_UP    = 256;
+    KEY_DOWN  = 257;
+    KEY_LEFT  = 258;
+    KEY_RIGHT = 259;
+
+    KEY_INSERT   = 260;
+    KEY_HOME     = 262;
+    KEY_END      = 263;
+    KEY_PAGEUP   = 264;
+    KEY_PAGEDOWN = 265;
+
+    KEY_F1  = 282;  KEY_F2  = 283;  KEY_F3  = 284;  KEY_F4  = 285;
+    KEY_F5  = 286;  KEY_F6  = 287;  KEY_F7  = 288;  KEY_F8  = 289;
+    KEY_F9  = 290;  KEY_F10 = 291;  KEY_F11 = 292;  KEY_F12 = 293;
+
+    KEY_NUMLOCK    = 300;
+    KEY_CAPSLOCK   = 301;
+    KEY_SCROLLLOCK = 302;
+    KEY_LSHIFT = 304;  KEY_RSHIFT = 305;
+    KEY_LCTRL  = 306;  KEY_RCTRL  = 307;
+    KEY_LALT   = 308;  KEY_RALT   = 309;
+    KEY_LGUI   = 310;  KEY_RGUI   = 311;
+
+    KEY_KP_ENTER = 271;
+    KEY_KP_0 = 320;  KEY_KP_1 = 321;  KEY_KP_2 = 322;  KEY_KP_3 = 323;
+    KEY_KP_4 = 324;  KEY_KP_5 = 325;  KEY_KP_6 = 326;  KEY_KP_7 = 327;
+    KEY_KP_8 = 328;  KEY_KP_9 = 329;
+
+    (* Scancodes for IsKeyPressed -- common ones *)
+    SCAN_A = 4;   SCAN_B = 5;   SCAN_C = 6;   SCAN_D = 7;
+    SCAN_E = 8;   SCAN_F = 9;   SCAN_G = 10;  SCAN_H = 11;
+    SCAN_I = 12;  SCAN_J = 13;  SCAN_K = 14;  SCAN_L = 15;
+    SCAN_M = 16;  SCAN_N = 17;  SCAN_O = 18;  SCAN_P = 19;
+    SCAN_Q = 20;  SCAN_R = 21;  SCAN_S = 22;  SCAN_T = 23;
+    SCAN_U = 24;  SCAN_V = 25;  SCAN_W = 26;  SCAN_X = 27;
+    SCAN_Y = 28;  SCAN_Z = 29;
+    SCAN_1 = 30;  SCAN_2 = 31;  SCAN_3 = 32;  SCAN_4 = 33;
+    SCAN_5 = 34;  SCAN_6 = 35;  SCAN_7 = 36;  SCAN_8 = 37;
+    SCAN_9 = 38;  SCAN_0 = 39;
+    SCAN_RETURN = 40;  SCAN_ESCAPE = 41;  SCAN_BACKSPACE = 42;
+    SCAN_TAB = 43;     SCAN_SPACE = 44;
+    SCAN_RIGHT = 79;   SCAN_LEFT = 80;
+    SCAN_DOWN = 81;    SCAN_UP = 82;
+
+  (* Event polling *)
+  PROCEDURE Poll(): INTEGER;
+  PROCEDURE Wait(): INTEGER;
+  PROCEDURE WaitTimeout(ms: INTEGER): INTEGER;
+
+  (* Event accessors -- call after Poll/Wait returns non-zero *)
+  PROCEDURE KeyCode(): INTEGER;
+  PROCEDURE ScanCode(): INTEGER;
+  PROCEDURE KeyMod(): INTEGER;
+  PROCEDURE MouseX(): INTEGER;
+  PROCEDURE MouseY(): INTEGER;
+  PROCEDURE MouseButton(): INTEGER;
+  PROCEDURE WheelX(): INTEGER;
+  PROCEDURE WheelY(): INTEGER;
+  PROCEDURE WindowID(): INTEGER;
+  PROCEDURE WindowEvent(): INTEGER;
+  PROCEDURE TextInput(VAR s: ARRAY OF CHAR);
+  PROCEDURE TextInputLen(): INTEGER;
+
+  (* Text input mode *)
+  PROCEDURE StartTextInput;
+  PROCEDURE StopTextInput;
+  PROCEDURE IsTextInputActive(): BOOLEAN;
+
+  (* Keyboard state *)
+  PROCEDURE IsKeyPressed(scancode: INTEGER): BOOLEAN;
+
+  (* Mouse state *)
+  PROCEDURE GetMouseState(VAR x, y: INTEGER): INTEGER;
+  PROCEDURE GetMouseGlobal(VAR x, y: INTEGER): INTEGER;
+  PROCEDURE WarpMouse(win: ADDRESS; x, y: INTEGER);
+
+END Events.

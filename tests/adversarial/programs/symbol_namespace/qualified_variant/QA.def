@@ -1,0 +1,5 @@
+DEFINITION MODULE QA;
+  TYPE Status = (OK, Error, Timeout);
+  PROCEDURE MakeOK(): INTEGER;
+  PROCEDURE MakeErr(): INTEGER;
+END QA.

@@ -385,3 +385,39 @@ m2c build              # rebuild
 | Thread | Thread creation and joining (M2+ only) |
 | Mutex | Mutual exclusion locks (M2+ only) |
 | Condition | Condition variables (M2+ only) |
+
+---
+
+## Extension libraries
+
+Libraries shipped in `libs/` that provide higher-level functionality via C bridges.
+Add them to your project via the `includes=` and `[cc] extra-c=` fields in `m2.toml`.
+
+### [m2gfx](libs/m2gfx/) — Graphics
+
+SDL2-based graphics library: windowing, 2D drawing, textures, TrueType fonts,
+indexed pixel buffers, event handling, and animation.
+
+| Module | Description |
+|--------|-------------|
+| Gfx | Window management, renderer lifecycle, screen info, clipboard, timer, cursor |
+| Canvas | 2D drawing primitives on the SDL renderer (rect, circle, ellipse, line, arc, bezier) |
+| Events | Event polling, keyboard/mouse input, text input, scancodes |
+| Font | TrueType font loading and text rendering via SDL2_ttf |
+| Texture | Hardware-accelerated texture loading, drawing, and render targets |
+| PixBuf | 8-bit indexed pixel buffer with drawing, layers, animation frames, file I/O |
+| Color | Pure M2 RGBA8888 pack/unpack utilities |
+| DrawAlgo | Shared drawing algorithms parameterized by output callbacks |
+
+Requires SDL2 and SDL2_ttf. See [m2gfx documentation](libs/m2gfx/).
+
+### [m2sockets](libs/m2sockets/) — Networking
+
+Minimal POSIX/BSD sockets wrapper for TCP/UDP networking on Linux and macOS.
+Thin C bridge (13 syscall wrappers); all logic in Modula-2.
+
+| Module | Description |
+|--------|-------------|
+| Sockets | TCP/UDP socket lifecycle, server (bind/listen/accept), client (connect), I/O, non-blocking |
+
+See [m2sockets documentation](libs/m2sockets/).

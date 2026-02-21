@@ -62,6 +62,7 @@ fn main() {
         eprintln!("  -g, --debug    Compile with debug info (DWARF via #line mapping)");
         eprintln!("  -l <lib>       Link with library");
         eprintln!("  -L <path>      Add library search path");
+        eprintln!("  --cflag <arg>  Pass flag to C compiler");
         eprintln!("  file.c/.o/.a   Extra C/object/archive files to link");
         eprintln!();
         eprintln!("  --version-json  Print version info as JSON");
@@ -220,6 +221,14 @@ fn main() {
             }
             arg if arg.starts_with("-L") => {
                 opts.link_paths.push(arg[2..].to_string());
+            }
+            "--cflag" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("m2c: --cflag requires an argument");
+                    process::exit(1);
+                }
+                opts.extra_cflags.push(args[i].clone());
             }
             arg if arg.starts_with('-') => {
                 eprintln!("m2c: unknown option '{}'", arg);

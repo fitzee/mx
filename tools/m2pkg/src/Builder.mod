@@ -35,7 +35,6 @@ VAR
   libBuf: ARRAY [0..63] OF CHAR;
   fwBuf: ARRAY [0..63] OF CHAR;
   ecBuf: ARRAY [0..255] OF CHAR;
-  rc2: INTEGER;
 BEGIN
   ndeps2 := DepCount();
   j := 0;
@@ -48,59 +47,57 @@ BEGIN
       Assign(tmp, depManifest);
       (* Save current manifest state, read dep manifest *)
       Clear;
-      rc2 := Read(depManifest);
-      IF rc2 = 0 THEN
-        (* Append dep's cflags *)
-        GetCCFlags(ccBuf);
-        IF Length(ccBuf) > 0 THEN
-          Append(" ");
-          Append(ccBuf)
-        END;
-        (* Append dep's libs *)
-        nlibs := CCLibCount();
-        i := 0;
-        WHILE i < nlibs DO
-          GetCCLib(i, libBuf);
-          Append(" -l");
-          Append(libBuf);
-          INC(i)
-        END;
-        (* Append dep's ldflags *)
-        GetLDFlags(ccBuf);
-        IF Length(ccBuf) > 0 THEN
-          Append(" ");
-          Append(ccBuf)
-        END;
-        (* Append dep's extra-c with dep path prefix *)
-        nexcc := CCExtraCCount();
-        i := 0;
-        WHILE i < nexcc DO
-          GetCCExtraC(i, ecBuf);
-          Append(" ");
-          Append(depPath2);
-          Append("/");
-          Append(ecBuf);
-          INC(i)
-        END;
-        (* Append dep's frameworks *)
-        nfws := CCFrameworkCount();
-        i := 0;
-        WHILE i < nfws DO
-          GetCCFramework(i, fwBuf);
-          Append(" -framework ");
-          Append(fwBuf);
-          INC(i)
-        END
+      Read(depManifest);
+      (* Append dep's cflags *)
+      GetCCFlags(ccBuf);
+      IF Length(ccBuf) > 0 THEN
+        Append(" ");
+        Append(ccBuf)
+      END;
+      (* Append dep's libs *)
+      nlibs := CCLibCount();
+      i := 0;
+      WHILE i < nlibs DO
+        GetCCLib(i, libBuf);
+        Append(" -l");
+        Append(libBuf);
+        INC(i)
+      END;
+      (* Append dep's ldflags *)
+      GetLDFlags(ccBuf);
+      IF Length(ccBuf) > 0 THEN
+        Append(" ");
+        Append(ccBuf)
+      END;
+      (* Append dep's extra-c with dep path prefix *)
+      nexcc := CCExtraCCount();
+      i := 0;
+      WHILE i < nexcc DO
+        GetCCExtraC(i, ecBuf);
+        Append(" ");
+        Append(depPath2);
+        Append("/");
+        Append(ecBuf);
+        INC(i)
+      END;
+      (* Append dep's frameworks *)
+      nfws := CCFrameworkCount();
+      i := 0;
+      WHILE i < nfws DO
+        GetCCFramework(i, fwBuf);
+        Append(" -framework ");
+        Append(fwBuf);
+        INC(i)
       END
     END;
     INC(j)
   END;
   (* Re-read main manifest to restore state *)
   Clear;
-  rc2 := Read("m2.toml")
+  Read("m2.toml")
 END AppendDepCC;
 
-PROCEDURE Build(release: INTEGER; target: ARRAY OF CHAR): INTEGER;
+PROCEDURE Build(release: INTEGER; target: ARRAY OF CHAR);
 VAR
   rc, i, ndeps, nextra: INTEGER;
   entry: ARRAY [0..255] OF CHAR;
@@ -118,13 +115,13 @@ BEGIN
   (* Read lockfile if it exists for resolved paths *)
   Assign("m2.lock", lockPath);
   IF m2sys_file_exists(ADR(lockPath)) = 1 THEN
-    rc := Lockfile.Read("m2.lock")
+    Lockfile.Read("m2.lock")
   END;
 
   GetEntry(entry);
   IF Length(entry) = 0 THEN
     WriteString("m2pkg: no entry module specified in manifest"); WriteLn;
-    RETURN 1
+    RAISE BuildError
   END;
 
   (* Ensure target/ directory exists *)
@@ -281,20 +278,18 @@ BEGIN
   rc := m2sys_exec(ADR(cmd));
   IF rc # 0 THEN
     WriteString("m2pkg: build failed (exit "); WriteInt(rc, 1); WriteString(")"); WriteLn;
-    RETURN 1
+    RAISE BuildError
   END;
-  WriteString("m2pkg: built "); WriteString(outPath); WriteLn;
-  RETURN 0
+  WriteString("m2pkg: built "); WriteString(outPath); WriteLn
 END Build;
 
-PROCEDURE BuildAndRun(release: INTEGER; target: ARRAY OF CHAR): INTEGER;
+PROCEDURE BuildAndRun(release: INTEGER; target: ARRAY OF CHAR);
 VAR
   rc: INTEGER;
   name: ARRAY [0..63] OF CHAR;
   runCmd: ARRAY [0..511] OF CHAR;
 BEGIN
-  rc := Build(release, target);
-  IF rc # 0 THEN RETURN rc END;
+  Build(release, target);
 
   GetName(name);
   Assign("./target/", runCmd);
@@ -303,7 +298,9 @@ BEGIN
 
   WriteString("m2pkg: running "); WriteString(runCmd); WriteLn;
   rc := m2sys_exec(ADR(runCmd));
-  RETURN rc
+  IF rc # 0 THEN
+    RAISE BuildError
+  END
 END BuildAndRun;
 
 END Builder.

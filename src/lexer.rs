@@ -495,15 +495,23 @@ impl Lexer {
                 break;
             }
         }
-        // Keywords are ALWAYS case-insensitive (standard Modula-2 behavior).
+        // Keywords are ALL-UPPERCASE only (PIM4 standard).
+        // Mixed-case names like 'Loop', 'Set', 'Type' are identifiers, not keywords.
+        // This avoids clashes with EventLoop.Loop, common variable names, etc.
         // Identifiers: case-sensitive by default, uppercase if case_sensitive=false.
-        let canon = name.to_ascii_uppercase();
-        let kind = if let Some(kw) = TokenKind::keyword_from_str(&canon) {
-            kw
+        let is_all_upper = name.bytes().all(|b| !b.is_ascii_lowercase());
+        let kind = if is_all_upper {
+            if let Some(kw) = TokenKind::keyword_from_str(&name) {
+                kw
+            } else if self.case_sensitive {
+                TokenKind::Ident(name)
+            } else {
+                TokenKind::Ident(name.to_ascii_uppercase())
+            }
         } else if self.case_sensitive {
             TokenKind::Ident(name)
         } else {
-            TokenKind::Ident(canon)
+            TokenKind::Ident(name.to_ascii_uppercase())
         };
         Token::new(kind, loc)
     }
@@ -684,9 +692,9 @@ mod tests {
     }
 
     #[test]
-    fn test_case_insensitive_keywords() {
-        // Keywords are ALWAYS case-insensitive regardless of mode
-        let tokens = lex("for while if module begin end");
+    fn test_uppercase_only_keywords() {
+        // Keywords are ALL-UPPERCASE only (PIM4 standard)
+        let tokens = lex("FOR WHILE IF MODULE BEGIN END");
         assert_eq!(tokens, vec![
             TokenKind::For, TokenKind::While, TokenKind::If,
             TokenKind::Module, TokenKind::Begin, TokenKind::End, TokenKind::Eof,
@@ -694,23 +702,42 @@ mod tests {
     }
 
     #[test]
-    fn test_case_insensitive_mixed_case_keywords() {
-        let tokens = lex("For While Module Begin End");
+    fn test_mixed_case_are_identifiers() {
+        // Mixed-case names like 'Loop', 'For', 'Module' are identifiers, not keywords
+        let tokens = lex("For While Module Begin End Loop");
         assert_eq!(tokens, vec![
-            TokenKind::For, TokenKind::While, TokenKind::Module,
-            TokenKind::Begin, TokenKind::End, TokenKind::Eof,
+            TokenKind::Ident("For".to_string()),
+            TokenKind::Ident("While".to_string()),
+            TokenKind::Ident("Module".to_string()),
+            TokenKind::Ident("Begin".to_string()),
+            TokenKind::Ident("End".to_string()),
+            TokenKind::Ident("Loop".to_string()),
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn test_lowercase_are_identifiers() {
+        // Lowercase names are always identifiers
+        let tokens = lex("for while loop module");
+        assert_eq!(tokens, vec![
+            TokenKind::Ident("for".to_string()),
+            TokenKind::Ident("while".to_string()),
+            TokenKind::Ident("loop".to_string()),
+            TokenKind::Ident("module".to_string()),
+            TokenKind::Eof,
         ]);
     }
 
     #[test]
     fn test_case_sensitive_identifiers() {
-        // Default mode (case_sensitive=true): keywords still case-insensitive,
-        // but identifiers preserve their original case
+        // Default mode (case_sensitive=true): keywords must be ALL-UPPERCASE,
+        // identifiers preserve their original case
         let tokens = lex("for Bar MODULE myVar");
         assert_eq!(tokens, vec![
-            TokenKind::For,                          // keyword: always case-insensitive
+            TokenKind::Ident("for".to_string()),     // lowercase: identifier, not keyword
             TokenKind::Ident("Bar".to_string()),     // identifier: original case preserved
-            TokenKind::Module,                        // keyword: uppercase still works
+            TokenKind::Module,                        // keyword: ALL-UPPERCASE
             TokenKind::Ident("myVar".to_string()),   // identifier: original case preserved
             TokenKind::Eof,
         ]);
@@ -718,15 +745,16 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_identifiers() {
-        // With case_sensitive=false, identifiers are also canonicalized to uppercase
-        let mut lexer = Lexer::new("foo Bar baz123 for", "test");
+        // With case_sensitive=false, identifiers are canonicalized to uppercase
+        // but only ALL-UPPERCASE forms match keywords
+        let mut lexer = Lexer::new("foo Bar baz123 FOR", "test");
         lexer.set_case_sensitive(false);
         let tokens: Vec<TokenKind> = lexer.tokenize().unwrap().into_iter().map(|t| t.kind).collect();
         assert_eq!(tokens, vec![
             TokenKind::Ident("FOO".to_string()),
             TokenKind::Ident("BAR".to_string()),
             TokenKind::Ident("BAZ123".to_string()),
-            TokenKind::For,  // keyword
+            TokenKind::For,  // keyword: ALL-UPPERCASE
             TokenKind::Eof,
         ]);
     }

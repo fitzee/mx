@@ -1,0 +1,4 @@
+DEFINITION MODULE A;
+  TYPE Status = (OK, Error);
+  PROCEDURE GetVal(): INTEGER;
+END A.

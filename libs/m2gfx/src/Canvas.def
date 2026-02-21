@@ -1,0 +1,62 @@
+DEFINITION MODULE Canvas;
+
+  FROM Gfx IMPORT Renderer;
+
+  CONST
+    BLEND_NONE  = 0;
+    BLEND_ALPHA = 1;
+    BLEND_ADD   = 2;
+    BLEND_MOD   = 4;
+
+  (* Color *)
+  PROCEDURE SetColor(ren: Renderer; r, g, b, a: INTEGER);
+  PROCEDURE GetColor(ren: Renderer; VAR r, g, b, a: INTEGER);
+  PROCEDURE Clear(ren: Renderer);
+
+  (* Rectangles *)
+  PROCEDURE DrawRect(ren: Renderer; x, y, w, h: INTEGER);
+  PROCEDURE FillRect(ren: Renderer; x, y, w, h: INTEGER);
+  PROCEDURE DrawRoundRect(ren: Renderer; x, y, w, h, radius: INTEGER);
+  PROCEDURE FillRoundRect(ren: Renderer; x, y, w, h, radius: INTEGER);
+
+  (* Lines *)
+  PROCEDURE DrawLine(ren: Renderer; x1, y1, x2, y2: INTEGER);
+  PROCEDURE DrawThickLine(ren: Renderer; x1, y1, x2, y2, thickness: INTEGER);
+
+  (* Points *)
+  PROCEDURE DrawPoint(ren: Renderer; x, y: INTEGER);
+
+  (* Circles *)
+  PROCEDURE DrawCircle(ren: Renderer; cx, cy, radius: INTEGER);
+  PROCEDURE FillCircle(ren: Renderer; cx, cy, radius: INTEGER);
+
+  (* Ellipses *)
+  PROCEDURE DrawEllipse(ren: Renderer; cx, cy, rx, ry: INTEGER);
+  PROCEDURE FillEllipse(ren: Renderer; cx, cy, rx, ry: INTEGER);
+
+  (* Triangles *)
+  PROCEDURE DrawTriangle(ren: Renderer; x1, y1, x2, y2, x3, y3: INTEGER);
+  PROCEDURE FillTriangle(ren: Renderer; x1, y1, x2, y2, x3, y3: INTEGER);
+
+  (* Arcs and Curves *)
+  PROCEDURE DrawArc(ren: Renderer; cx, cy, radius, startDeg, endDeg: INTEGER);
+  PROCEDURE DrawBezier(ren: Renderer;
+                       x1, y1, cx1, cy1, cx2, cy2, x2, y2,
+                       steps: INTEGER);
+
+  (* Clipping *)
+  PROCEDURE SetClip(ren: Renderer; x, y, w, h: INTEGER);
+  PROCEDURE ClearClip(ren: Renderer);
+  PROCEDURE GetClipX(ren: Renderer): INTEGER;
+  PROCEDURE GetClipY(ren: Renderer): INTEGER;
+  PROCEDURE GetClipW(ren: Renderer): INTEGER;
+  PROCEDURE GetClipH(ren: Renderer): INTEGER;
+
+  (* Blend mode *)
+  PROCEDURE SetBlendMode(ren: Renderer; mode: INTEGER);
+
+  (* Viewport *)
+  PROCEDURE SetViewport(ren: Renderer; x, y, w, h: INTEGER);
+  PROCEDURE ResetViewport(ren: Renderer);
+
+END Canvas.

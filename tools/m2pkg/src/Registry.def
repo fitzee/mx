@@ -1,10 +1,12 @@
 DEFINITION MODULE Registry;
 
+EXCEPTION RegistryError;
+
 (* Initialize registry directory (~/.m2pkg/registry/) *)
-PROCEDURE Init(): INTEGER;
+PROCEDURE Init;
 
 (* Publish current package to local registry *)
-PROCEDURE Publish(): INTEGER;
+PROCEDURE Publish;
 
 (* Lookup a package version in the registry index.
    Returns 0 if found, -1 if not found.
@@ -13,9 +15,9 @@ PROCEDURE Lookup(name: ARRAY OF CHAR; version: ARRAY OF CHAR;
                  VAR shaBuf: ARRAY OF CHAR): INTEGER;
 
 (* Fetch a package from registry to cache.
-   Returns 0 on success, sets resolved path in pathBuf. *)
+   Sets resolved path in pathBuf. RAISEs on failure. *)
 PROCEDURE Fetch(name: ARRAY OF CHAR; version: ARRAY OF CHAR;
-                VAR pathBuf: ARRAY OF CHAR): INTEGER;
+                VAR pathBuf: ARRAY OF CHAR);
 
 (* Verify a cached package against its registry sha256.
    Returns 0 if valid, -1 if mismatch or missing. *)
@@ -37,8 +39,8 @@ PROCEDURE VersionExists(name: ARRAY OF CHAR; version: ARRAY OF CHAR): INTEGER;
 PROCEDURE GetLatestVersion(name: ARRAY OF CHAR; VAR latestBuf: ARRAY OF CHAR): INTEGER;
 
 (* Fetch a package from a remote HTTP registry.
-   Returns 0 on success, sets resolved path in pathBuf. *)
+   Sets resolved path in pathBuf. RAISEs on failure. *)
 PROCEDURE FetchRemote(url: ARRAY OF CHAR; name: ARRAY OF CHAR;
-                      version: ARRAY OF CHAR; VAR pathBuf: ARRAY OF CHAR): INTEGER;
+                      version: ARRAY OF CHAR; VAR pathBuf: ARRAY OF CHAR);
 
 END Registry.

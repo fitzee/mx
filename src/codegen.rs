@@ -84,6 +84,8 @@ pub struct CodeGen {
     in_module_body: bool,
     /// Counter for generating unique exception IDs
     exception_counter: usize,
+    /// Known exception names (for M2_EXC_ prefix resolution in RAISE)
+    exception_names: HashSet<String>,
     /// Enable Modula-2+ mode (set by driver based on --m2plus flag or auto-detected)
     m2plus: bool,
     /// Track which M2+ runtime features are needed
@@ -97,6 +99,10 @@ pub struct CodeGen {
     export_c_names: HashMap<String, String>,
     /// Stored (non-foreign) definition modules for emitting types during embedded impl gen
     def_modules: HashMap<String, crate::ast::DefinitionModule>,
+    /// Maps procedure type name -> param info (e.g., "ThenFn" -> params) for proc-var calls
+    proc_type_params: HashMap<String, Vec<ParamCodegenInfo>>,
+    /// Embedded module names that have init bodies (need calling from main)
+    embedded_init_modules: Vec<String>,
     /// Procedure names local to the current embedded implementation (for module-prefixed calls)
     embedded_local_procs: HashSet<String>,
     /// Module-level variable names in the current embedded implementation (for module-prefixed access)
@@ -107,6 +113,10 @@ pub struct CodeGen {
     last_line_file: String,
     /// Last line number emitted in a #line directive (to avoid redundant directives)
     last_line_num: usize,
+    /// Set to the module name when generating types for an embedded module (for enum prefixing)
+    generating_for_module: Option<String>,
+    /// Tracks module-prefixed enum type names (e.g., "EventLoop_Status") for type resolution
+    embedded_enum_types: HashSet<String>,
 }
 
 // ── Free variable analysis helpers ─────────────────────────────────────
@@ -339,6 +349,7 @@ impl CodeGen {
             variant_field_map: HashMap::new(),
             in_module_body: false,
             exception_counter: 0,
+            exception_names: HashSet::new(),
             m2plus: false,
             uses_gc: false,
             uses_threads: false,
@@ -346,11 +357,15 @@ impl CodeGen {
             foreign_def_modules: Vec::new(),
             export_c_names: HashMap::new(),
             def_modules: HashMap::new(),
+            proc_type_params: HashMap::new(),
+            embedded_init_modules: Vec::new(),
             embedded_local_procs: HashSet::new(),
             embedded_local_vars: HashSet::new(),
             emit_debug_lines: false,
             last_line_file: String::new(),
             last_line_num: 0,
+            generating_for_module: None,
+            embedded_enum_types: HashSet::new(),
         }
     }
 
@@ -652,9 +667,14 @@ impl CodeGen {
     // ── Program module ──────────────────────────────────────────────
 
     fn build_import_map(&mut self, imports: &[Import]) {
+        // Collect enum variant names to add to import_map after the main loop.
+        // When importing an enum type, its variant names are implicitly in scope.
+        let mut extra_variants: Vec<(String, String)> = Vec::new();
         for imp in imports {
             if let Some(from_mod) = &imp.from_module {
                 // FROM Module IMPORT name1, name2;
+                // Also register the module name so Module.Proc() syntax works
+                self.imported_modules.insert(from_mod.clone());
                 for name in &imp.names {
                     self.import_map.insert(name.clone(), from_mod.clone());
                     // Register stdlib proc params for codegen (is_char, is_var, etc.)
@@ -668,6 +688,20 @@ impl CodeGen {
                             self.proc_params.insert(name.clone(), info);
                         }
                     }
+                    // If this imported name is an enum type, also import its variant names
+                    if let Some(def_mod) = self.def_modules.get(from_mod.as_str()) {
+                        for d in &def_mod.definitions {
+                            if let Definition::Type(t) = d {
+                                if t.name == *name {
+                                    if let Some(TypeNode::Enumeration { variants, .. }) = &t.typ {
+                                        for v in variants {
+                                            extra_variants.push((v.clone(), from_mod.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 // IMPORT Module1, Module2;  (whole-module / qualified import)
@@ -675,6 +709,9 @@ impl CodeGen {
                     self.imported_modules.insert(name.clone());
                 }
             }
+        }
+        for (variant_name, module_name) in extra_variants {
+            self.import_map.entry(variant_name).or_insert(module_name);
         }
     }
 
@@ -686,6 +723,7 @@ impl CodeGen {
         let saved_var_params = self.var_params.clone();
         let saved_open_array_params = self.open_array_params.clone();
         let saved_proc_params = self.proc_params.clone();
+        let saved_array_vars = self.save_array_var_scope();
 
         self.module_name = imp.name.clone();
         self.build_import_map(&imp.imports);
@@ -704,6 +742,9 @@ impl CodeGen {
                     for name in &v.names {
                         self.embedded_local_vars.insert(name.clone());
                     }
+                }
+                Declaration::Const(c) => {
+                    self.embedded_local_vars.insert(c.name.clone());
                 }
                 _ => {}
             }
@@ -740,8 +781,24 @@ impl CodeGen {
         }
 
         // Emit type and const declarations from the corresponding definition module,
-        // but skip types that are redefined in the implementation module
+        // but skip types that are redefined in the implementation module.
+        // Set generating_for_module so enum types and constants get module-prefixed C names.
+        self.generating_for_module = Some(imp.name.clone());
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+            // Register def-module constants and exported VARs as local vars for module-prefixed references
+            for d in &def_mod.definitions {
+                match d {
+                    Definition::Const(c) => {
+                        self.embedded_local_vars.insert(c.name.clone());
+                    }
+                    Definition::Var(v) => {
+                        for name in &v.names {
+                            self.embedded_local_vars.insert(name.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
             let impl_type_names: HashSet<String> = imp.block.decls.iter()
                 .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
                 .collect();
@@ -753,27 +810,53 @@ impl CodeGen {
                         }
                     }
                     Definition::Const(c) => self.gen_const_decl(c),
+                    Definition::Exception(e) => self.gen_exception_decl(e),
                     _ => {}
                 }
             }
         }
 
-        // Type and const declarations
+        // Type, const, and exception declarations
         for decl in &imp.block.decls {
             match decl {
                 Declaration::Const(c) => self.gen_const_decl(c),
                 Declaration::Type(t) => self.gen_type_decl(t),
+                Declaration::Exception(e) => self.gen_exception_decl(e),
                 _ => {}
             }
         }
+        self.generating_for_module = None;
 
-        // Add module-prefixed type aliases for externally visible types
+        // Add module-prefixed type aliases for externally visible types.
+        // Sema resolves imported types to module-qualified names (e.g., EventLoop.Loop),
+        // so the codegen needs Module_TypeName aliases to exist in C.
+        // Skip enum types since their typedefs are already module-prefixed.
+        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+            let impl_type_names: HashSet<String> = imp.block.decls.iter()
+                .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
+                .collect();
+            for d in &def_mod.definitions {
+                if let Definition::Type(t) = d {
+                    if !impl_type_names.contains(&t.name) {
+                        let is_enum = matches!(&t.typ, Some(TypeNode::Enumeration { .. }));
+                        if !is_enum {
+                            let prefixed = format!("{}_{}", imp.name, t.name);
+                            if prefixed != t.name {
+                                self.emitln(&format!("typedef {} {};", self.mangle(&t.name), prefixed));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for decl in &imp.block.decls {
             if let Declaration::Type(t) = decl {
-                let prefixed = format!("{}_{}", imp.name, t.name);
-                // Only add if the prefixed name would differ from the original
-                if prefixed != t.name {
-                    self.emitln(&format!("typedef {} {};", self.mangle(&t.name), prefixed));
+                let is_enum = matches!(&t.typ, Some(TypeNode::Enumeration { .. }));
+                if !is_enum {
+                    let prefixed = format!("{}_{}", imp.name, t.name);
+                    if prefixed != t.name {
+                        self.emitln(&format!("typedef {} {};", self.mangle(&t.name), prefixed));
+                    }
                 }
             }
         }
@@ -827,7 +910,16 @@ impl CodeGen {
         }
         self.newline();
 
-        // Variable declarations
+        // Variable declarations from definition module (exported VARs)
+        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+            for d in &def_mod.definitions {
+                if let Definition::Var(v) = d {
+                    self.gen_var_decl(v);
+                }
+            }
+        }
+
+        // Variable declarations from implementation module
         for decl in &imp.block.decls {
             if let Declaration::Var(v) = decl {
                 self.gen_var_decl(v);
@@ -913,6 +1005,7 @@ impl CodeGen {
             self.indent -= 1;
             self.emitln("}");
             self.newline();
+            self.embedded_init_modules.push(imp.name.clone());
         }
 
         // Restore state, but preserve module-prefixed proc params
@@ -925,6 +1018,7 @@ impl CodeGen {
         self.var_params = saved_var_params;
         self.open_array_params = saved_open_array_params;
         self.proc_params = saved_proc_params;
+        self.restore_array_var_scope(saved_array_vars);
         self.embedded_local_procs.clear();
         self.embedded_local_vars.clear();
         // Merge back the module-prefixed proc param info
@@ -932,11 +1026,14 @@ impl CodeGen {
     }
 
     /// Topologically sort implementation modules so dependencies come before dependents.
-    fn topo_sort_modules(modules: Vec<ImplementationModule>) -> Vec<ImplementationModule> {
+    /// Also considers imports from corresponding .def files so that type dependencies
+    /// (e.g. `FROM Gfx IMPORT Renderer;` in Font.def) are properly ordered.
+    fn topo_sort_modules(modules: Vec<ImplementationModule>, def_modules: &HashMap<String, crate::ast::DefinitionModule>) -> Vec<ImplementationModule> {
         let names: HashSet<String> = modules.iter().map(|m| m.name.clone()).collect();
         let mut deps: HashMap<String, Vec<String>> = HashMap::new();
         for m in &modules {
             let mut my_deps = Vec::new();
+            // Collect deps from implementation module imports
             for imp in &m.imports {
                 if let Some(ref from_mod) = imp.from_module {
                     if names.contains(from_mod) {
@@ -946,6 +1043,22 @@ impl CodeGen {
                     for name in &imp.names {
                         if names.contains(name) {
                             my_deps.push(name.clone());
+                        }
+                    }
+                }
+            }
+            // Also collect deps from the corresponding definition module imports
+            if let Some(def_mod) = def_modules.get(&m.name) {
+                for imp in &def_mod.imports {
+                    if let Some(ref from_mod) = imp.from_module {
+                        if names.contains(from_mod) && !my_deps.contains(from_mod) {
+                            my_deps.push(from_mod.clone());
+                        }
+                    } else {
+                        for name in &imp.names {
+                            if names.contains(name) && !my_deps.contains(name) {
+                                my_deps.push(name.clone());
+                            }
                         }
                     }
                 }
@@ -988,19 +1101,9 @@ impl CodeGen {
         self.module_name = m.name.clone();
         self.build_import_map(&m.imports);
 
-        // Emit extern declarations for foreign C modules BEFORE embedded implementations
-        self.gen_foreign_extern_decls();
-
-        // Generate code for imported modules first (topologically sorted by dependencies)
-        if let Some(pending) = self.pending_modules.take() {
-            let sorted = Self::topo_sort_modules(pending);
-            for imp_mod in &sorted {
-                self.gen_embedded_implementation(imp_mod);
-            }
-        }
-
-        // Register param info for imported module procedures
-        for (mod_name, exports) in &self.module_exports {
+        // Register param info for imported module procedures BEFORE embedded implementations
+        // so that calls to foreign functions from embedded modules have correct VAR param info.
+        for (mod_name, exports) in &self.module_exports.clone() {
             for (proc_name, param_info) in exports {
                 let prefixed = format!("{}_{}", mod_name, proc_name);
                 self.proc_params.insert(prefixed, param_info.clone());
@@ -1008,6 +1111,17 @@ impl CodeGen {
                 if self.foreign_modules.contains(mod_name.as_str()) {
                     self.proc_params.insert(proc_name.clone(), param_info.clone());
                 }
+            }
+        }
+
+        // Emit extern declarations for foreign C modules BEFORE embedded implementations
+        self.gen_foreign_extern_decls();
+
+        // Generate code for imported modules first (topologically sorted by dependencies)
+        if let Some(pending) = self.pending_modules.take() {
+            let sorted = Self::topo_sort_modules(pending, &self.def_modules);
+            for imp_mod in &sorted {
+                self.gen_embedded_implementation(imp_mod);
             }
         }
 
@@ -1081,6 +1195,11 @@ impl CodeGen {
             self.emitln("atexit(m2_finally_handler);");
         }
 
+        // Call embedded module init functions (in dependency order)
+        for mod_name in &self.embedded_init_modules.clone() {
+            self.emitln(&format!("{}_init();", mod_name));
+        }
+
         self.in_module_body = true;
         if let Some(stmts) = &m.block.body {
             self.emit_line_directive(&m.block.loc);
@@ -1123,6 +1242,7 @@ impl CodeGen {
                 }
                 Definition::Exception(e) => {
                     // Exception declaration: generate unique integer constant
+                    self.exception_names.insert(e.name.clone());
                     self.emitln(&format!("#define M2_EXC_{} __COUNTER__", self.mangle(&e.name)));
                 }
             }
@@ -1153,7 +1273,7 @@ impl CodeGen {
 
         // Generate code for imported modules (topologically sorted by dependencies)
         if let Some(pending) = self.pending_modules.take() {
-            let sorted = Self::topo_sort_modules(pending);
+            let sorted = Self::topo_sort_modules(pending, &self.def_modules);
             for imp_mod in &sorted {
                 self.gen_embedded_implementation(imp_mod);
             }
@@ -1257,16 +1377,24 @@ impl CodeGen {
     }
 
     fn gen_const_decl(&mut self, c: &ConstDecl) {
+        let c_name = if let Some(ref mod_name) = self.generating_for_module {
+            format!("{}_{}", mod_name, self.mangle(&c.name))
+        } else {
+            self.mangle(&c.name)
+        };
         // Try to evaluate as a compile-time integer constant
         if let Some(val) = self.try_eval_const_int(&c.expr) {
             self.const_int_values.insert(c.name.clone(), val);
-            self.emitln(&format!("static const int32_t {} = {};", self.mangle(&c.name), val));
+            if let Some(ref mod_name) = self.generating_for_module {
+                self.const_int_values.insert(format!("{}_{}", mod_name, c.name), val);
+            }
+            self.emitln(&format!("static const int32_t {} = {};", c_name, val));
             return;
         }
         // Fall back to expression-based constant
         self.emit_indent();
         let ctype = self.infer_c_type(&c.expr);
-        self.emit(&format!("static const {} {} = ", ctype, self.mangle(&c.name)));
+        self.emit(&format!("static const {} {} = ", ctype, c_name));
         self.gen_expr(&c.expr);
         self.emit(";\n");
     }
@@ -1340,17 +1468,31 @@ impl CodeGen {
                 TypeNode::Enumeration { variants, .. } => {
                     self.emit_indent();
                     self.emit("typedef enum { ");
-                    let type_name = self.mangle(&t.name);
+                    let bare_type_name = self.mangle(&t.name);
+                    // Module-prefix enum types from embedded modules to avoid C-level collisions
+                    let type_name = if let Some(ref mod_name) = self.generating_for_module {
+                        format!("{}_{}", mod_name, bare_type_name)
+                    } else {
+                        bare_type_name.clone()
+                    };
                     for (i, v) in variants.iter().enumerate() {
                         if i > 0 {
                             self.emit(", ");
                         }
                         let c_name = format!("{}_{}", type_name, v);
                         self.emit(&c_name);
-                        // Register mapping so we can find the C name when the variant is used
+                        // Register variant under module-qualified key for qualified access
+                        if let Some(ref mod_name) = self.generating_for_module {
+                            let qual_key = format!("{}_{}", mod_name, v);
+                            self.enum_variants.insert(qual_key, c_name.clone());
+                        }
+                        // Register under bare name (last module wins — used for FROM imports)
                         self.enum_variants.insert(v.clone(), c_name);
                     }
                     self.emit(&format!(" }} {};\n", type_name));
+                    if self.generating_for_module.is_some() {
+                        self.embedded_enum_types.insert(type_name);
+                    }
                 }
                 TypeNode::Pointer { base, .. } => {
                     self.emit_indent();
@@ -1374,6 +1516,24 @@ impl CodeGen {
                     self.emit(&format!("typedef {} {}{};\n", ctype, self.mangle(&t.name), suffix));
                 }
                 TypeNode::ProcedureType { params, return_type, .. } => {
+                    // Register param info for this procedure type name
+                    // so variables of this type can get correct VAR/open-array info at call sites
+                    {
+                        let mut pinfo = Vec::new();
+                        for fp in params {
+                            let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                            let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
+                            for name in &fp.names {
+                                pinfo.push(ParamCodegenInfo {
+                                    name: name.clone(),
+                                    is_var: fp.is_var,
+                                    is_open_array: is_open,
+                                    is_char,
+                                });
+                            }
+                        }
+                        self.proc_type_params.insert(t.name.clone(), pinfo);
+                    }
                     // typedef RetType (*Name)(params);
                     self.emit_indent();
                     let ret = if let Some(rt) = return_type {
@@ -1491,6 +1651,35 @@ impl CodeGen {
                 }
             }
         }
+        // Register procedure-typed variables so call sites get correct VAR param info
+        if let TypeNode::Named(qi) = &v.typ {
+            if let Some(pinfo) = self.proc_type_params.get(&qi.name).cloned() {
+                for name in &v.names {
+                    self.proc_params.insert(name.clone(), pinfo.clone());
+                }
+            }
+        }
+        if Self::is_proc_type(&v.typ) {
+            // Inline procedure type — extract param info directly
+            if let TypeNode::ProcedureType { params, .. } = &v.typ {
+                let mut pinfo = Vec::new();
+                for fp in params {
+                    let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                    let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
+                    for name in &fp.names {
+                        pinfo.push(ParamCodegenInfo {
+                            name: name.clone(),
+                            is_var: fp.is_var,
+                            is_open_array: is_open,
+                            is_char,
+                        });
+                    }
+                }
+                for name in &v.names {
+                    self.proc_params.insert(name.clone(), pinfo.clone());
+                }
+            }
+        }
         // Also check if it's directly an ARRAY OF CHAR
         if self.is_char_array_type(&v.typ) {
             for name in &v.names {
@@ -1541,22 +1730,37 @@ impl CodeGen {
                 self.emit(&format!("{};\n", decl));
             }
         } else {
-            self.emit_indent();
             let ctype = self.type_to_c(&v.typ);
             let array_suffix = self.type_array_suffix(&v.typ);
-            self.emit(&format!("{} ", ctype));
-            for (i, name) in v.names.iter().enumerate() {
-                if i > 0 {
-                    self.emit(", ");
+            // For pointer types with multiple names, emit separate declarations
+            // to avoid C's `void * a, b;` bug (b would be void, not void*).
+            let is_ptr = ctype.ends_with('*');
+            if is_ptr && v.names.len() > 1 {
+                for name in &v.names {
+                    self.emit_indent();
+                    let c_name = if self.embedded_local_vars.contains(name) {
+                        format!("{}_{}", self.module_name, name)
+                    } else {
+                        self.mangle(name)
+                    };
+                    self.emit(&format!("{} {}{};\n", ctype, c_name, array_suffix));
                 }
-                let c_name = if self.embedded_local_vars.contains(name) {
-                    format!("{}_{}", self.module_name, name)
-                } else {
-                    self.mangle(name)
-                };
-                self.emit(&format!("{}{}", c_name, array_suffix));
+            } else {
+                self.emit_indent();
+                self.emit(&format!("{} ", ctype));
+                for (i, name) in v.names.iter().enumerate() {
+                    if i > 0 {
+                        self.emit(", ");
+                    }
+                    let c_name = if self.embedded_local_vars.contains(name) {
+                        format!("{}_{}", self.module_name, name)
+                    } else {
+                        self.mangle(name)
+                    };
+                    self.emit(&format!("{}{}", c_name, array_suffix));
+                }
+                self.emit(";\n");
             }
-            self.emit(";\n");
         }
     }
 
@@ -1880,7 +2084,19 @@ impl CodeGen {
                     self.emit(";\n");
                 } else {
                     self.emit_indent();
-                    let c_name = self.resolve_proc_name(desig);
+                    // Check if this is a call through a complex designator (pointer deref,
+                    // array indexing, record field access chain). These need the full
+                    // designator string, not just the resolved proc name.
+                    let has_complex_selectors = desig.selectors.iter().any(|s| {
+                        matches!(s, Selector::Deref(_) | Selector::Index(_, _))
+                    }) || (desig.selectors.len() > 1
+                        && desig.ident.module.is_none()
+                        && !self.imported_modules.contains(&desig.ident.name));
+                    let c_name = if has_complex_selectors {
+                        self.designator_to_string(desig)
+                    } else {
+                        self.resolve_proc_name(desig)
+                    };
                     // Look up param info: try module-prefixed name, then actual name,
                     // then FROM-import prefixed name
                     let param_info = if let Some((mod_name, _)) = module_qualified {
@@ -2170,10 +2386,21 @@ impl CodeGen {
             StatementKind::Raise { expr } => {
                 self.emit_indent();
                 if let Some(e) = expr {
-                    // Use M2+ exception frame stack if available, fallback to ISO mechanism
-                    self.emit("{ int _exc_id = (int)(");
-                    self.gen_expr(e);
-                    self.emit("); m2_raise(_exc_id, NULL, NULL); }\n");
+                    // Check if the expression is a known exception name
+                    if let ExprKind::Designator(d) = &e.kind {
+                        if d.selectors.is_empty() && self.exception_names.contains(&d.ident.name) {
+                            let exc_c = format!("M2_EXC_{}", self.mangle(&d.ident.name));
+                            self.emit(&format!("m2_raise({}, \"{}\", NULL);\n", exc_c, d.ident.name));
+                        } else {
+                            self.emit("{ int _exc_id = (int)(");
+                            self.gen_expr(e);
+                            self.emit("); m2_raise(_exc_id, NULL, NULL); }\n");
+                        }
+                    } else {
+                        self.emit("{ int _exc_id = (int)(");
+                        self.gen_expr(e);
+                        self.emit("); m2_raise(_exc_id, NULL, NULL); }\n");
+                    }
                 } else {
                     self.emitln("m2_raise(1, NULL, NULL);");
                 }
@@ -2271,7 +2498,17 @@ impl CodeGen {
                     }).collect();
                     self.emit(&builtins::codegen_builtin(&actual_name, &arg_strs));
                 } else {
-                    let c_name = self.resolve_proc_name(desig);
+                    // Check for complex designator (pointer deref, indexing, etc.)
+                    let has_complex_selectors = desig.selectors.iter().any(|s| {
+                        matches!(s, Selector::Deref(_) | Selector::Index(_, _))
+                    }) || (desig.selectors.len() > 1
+                        && desig.ident.module.is_none()
+                        && !self.imported_modules.contains(&desig.ident.name));
+                    let c_name = if has_complex_selectors {
+                        self.designator_to_string(desig)
+                    } else {
+                        self.resolve_proc_name(desig)
+                    };
                     // Look up param info: try module-prefixed name, then actual name,
                     // then FROM-import prefixed name
                     let param_info = if let Some((mod_name, _)) = module_qualified {
@@ -2588,7 +2825,17 @@ impl CodeGen {
                 desig.ident.name.clone()
             } else {
                 let mapped = stdlib::map_stdlib_call(module, &desig.ident.name);
-                mapped.unwrap_or_else(|| format!("{}_{}", module, desig.ident.name))
+                mapped.unwrap_or_else(|| {
+                    let candidate = format!("{}_{}", module, desig.ident.name);
+                    // Check for module-prefixed enum variant (e.g., Stream.OK → Stream_Status_OK)
+                    if let Some(c_name) = self.enum_variants.get(&candidate) {
+                        c_name.clone()
+                    } else if let Some(c_name) = self.resolve_reexported_enum_variant(module, &desig.ident.name) {
+                        c_name
+                    } else {
+                        candidate
+                    }
+                })
             }
         } else if let Some((mod_name, field_name)) = self.resolve_module_qualified(desig) {
             // Whole-module import: `IMPORT MathUtils; ... MathUtils.Square`
@@ -2600,7 +2847,15 @@ impl CodeGen {
             } else if let Some(c_name) = stdlib::map_stdlib_call(&mod_name, &field_name) {
                 c_name
             } else {
-                format!("{}_{}", mod_name, field_name)
+                // Check for module-prefixed enum variant (e.g., EventLoop.OK → EventLoop_Status_OK)
+                let candidate = format!("{}_{}", mod_name, field_name);
+                if let Some(c_name) = self.enum_variants.get(&candidate) {
+                    c_name.clone()
+                } else if let Some(c_name) = self.resolve_reexported_enum_variant(&mod_name, &field_name) {
+                    c_name
+                } else {
+                    candidate
+                }
             }
         } else {
             sel_start = 0;
@@ -2655,16 +2910,46 @@ impl CodeGen {
                     }
                 }
             }
-            // Check if this bare name is an imported stdlib variable (e.g., Done from BinaryIO)
+            // Check if this bare name is an enum variant of the CURRENT module.
+            // This must come before import_map to avoid name collisions (e.g., "Error"
+            // could be both a StreamState enum variant and an imported record type).
+            {
+                let mod_key = format!("{}_{}", self.module_name, desig.ident.name);
+                if let Some(c_name) = self.enum_variants.get(&mod_key) {
+                    return c_name.clone();
+                }
+            }
+            // Check if this bare name is an imported enum variant or stdlib variable
             if let Some(module) = self.import_map.get(&desig.ident.name).cloned() {
+                // Check for module-prefixed enum variant (e.g., OK from Stream → Stream_Status_OK)
+                let qual_key = format!("{}_{}", module, &desig.ident.name);
+                if let Some(c_name) = self.enum_variants.get(&qual_key) {
+                    return c_name.clone();
+                }
+                // Check re-exported enum variants (e.g., OK from Promise → Scheduler_Status_OK)
+                if let Some(c_name) = self.resolve_reexported_enum_variant(&module, &desig.ident.name) {
+                    return c_name;
+                }
                 if stdlib::is_stdlib_module(&module) {
                     if let Some(c_name) = stdlib::map_stdlib_call(&module, &desig.ident.name) {
                         return c_name;
                     }
                 }
+                // For imported names from embedded (non-stdlib, non-foreign) modules,
+                // use module-prefixed name (constants, variables, etc.)
+                if !stdlib::is_stdlib_module(&module) && !self.foreign_modules.contains(module.as_str()) {
+                    return format!("{}_{}", module, desig.ident.name);
+                }
             }
-            // Inside an embedded implementation, module-level vars need module prefix
-            if self.embedded_local_vars.contains(&desig.ident.name) {
+            // Fallback: check bare enum_variants (for main module's own enums
+            // where generating_for_module was None, stored with bare name keys)
+            if let Some(c_name) = self.enum_variants.get(&desig.ident.name) {
+                return c_name.clone();
+            }
+            // Inside an embedded implementation, module-level vars/procs need module prefix
+            if self.embedded_local_vars.contains(&desig.ident.name)
+                || self.embedded_local_procs.contains(&desig.ident.name)
+            {
                 format!("{}_{}", self.module_name, desig.ident.name)
             } else {
                 self.mangle(&desig.ident.name)
@@ -2882,7 +3167,26 @@ impl CodeGen {
             if self.foreign_modules.contains(module.as_str()) {
                 return self.mangle(&qi.name);
             }
-            return format!("{}_{}", module, self.mangle(&qi.name));
+            let prefixed = format!("{}_{}", module, self.mangle(&qi.name));
+            // For re-exported types (e.g., Promise.Status where Promise imports Status
+            // from Scheduler), resolve to the original source module's prefixed name
+            if self.embedded_enum_types.contains(&prefixed) {
+                return prefixed;
+            }
+            // Check if this module re-exports the type from another module
+            if let Some(def_mod) = self.def_modules.get(module.as_str()) {
+                for imp in &def_mod.imports {
+                    if let Some(ref from_mod) = imp.from_module {
+                        if imp.names.contains(&qi.name) {
+                            let source_prefixed = format!("{}_{}", from_mod, self.mangle(&qi.name));
+                            if self.embedded_enum_types.contains(&source_prefixed) {
+                                return source_prefixed;
+                            }
+                        }
+                    }
+                }
+            }
+            return prefixed;
         }
         match qi.name.as_str() {
             "INTEGER" => "int32_t".to_string(),
@@ -2899,7 +3203,24 @@ impl CodeGen {
             "LONGCARD" => "uint64_t".to_string(),
             "COMPLEX" => "m2_COMPLEX".to_string(),
             "LONGCOMPLEX" => "m2_LONGCOMPLEX".to_string(),
-            other => self.mangle(other),
+            "File" => "m2_File".to_string(),
+            other => {
+                // Check if this is a module-local enum type in an embedded implementation
+                // (e.g., "Status" inside Poller module → "Poller_Status")
+                let local_prefixed = format!("{}_{}", self.module_name, self.mangle(other));
+                if self.embedded_enum_types.contains(&local_prefixed) {
+                    return local_prefixed;
+                }
+                // Check if imported from another embedded module
+                // (e.g., "Status" from Stream → "Stream_Status")
+                if let Some(module) = self.import_map.get(other) {
+                    let prefixed = format!("{}_{}", module, self.mangle(other));
+                    if self.embedded_enum_types.contains(&prefixed) {
+                        return prefixed;
+                    }
+                }
+                self.mangle(other)
+            },
         }
     }
 
@@ -2999,18 +3320,54 @@ impl CodeGen {
         if let Some(params) = self.proc_params.get(name) {
             return params.clone();
         }
-        // Check stdlib imports - look up in sema symtab
-        if let Some(sym) = self.sema.symtab.lookup(name) {
+        // Check symtab: try current scope first, then all scopes as fallback
+        // (codegen doesn't manage scope stack, so current scope may be wrong for locals)
+        let sym_opt = self.sema.symtab.lookup(name)
+            .or_else(|| self.sema.symtab.lookup_any(name));
+        if let Some(sym) = sym_opt {
             if let crate::symtab::SymbolKind::Procedure { params, .. } = &sym.kind {
-                return params.iter().map(|p| ParamCodegenInfo {
-                    name: p.name.clone(),
-                    is_var: p.is_var,
-                    is_open_array: false,
-                    is_char: p.typ == TY_CHAR,
+                return params.iter().map(|p| {
+                    let is_open = matches!(self.sema.types.get(p.typ), Type::OpenArray { .. });
+                    ParamCodegenInfo {
+                        name: p.name.clone(),
+                        is_var: p.is_var,
+                        is_open_array: is_open,
+                        is_char: p.typ == TY_CHAR,
+                    }
                 }).collect();
+            }
+            // For variables/params with procedure type, extract param info from the type
+            if matches!(sym.kind, crate::symtab::SymbolKind::Variable) {
+                if let Some(info) = self.param_info_from_proc_type(sym.typ) {
+                    return info;
+                }
             }
         }
         Vec::new()
+    }
+
+    /// Extract parameter info from a ProcedureType, following aliases.
+    fn param_info_from_proc_type(&self, mut tid: TypeId) -> Option<Vec<ParamCodegenInfo>> {
+        // Follow aliases to find the underlying type
+        loop {
+            match self.sema.types.get(tid) {
+                Type::Alias { target, .. } => tid = *target,
+                Type::ProcedureType { params, .. } => {
+                    return Some(params.iter().enumerate().map(|(i, p)| {
+                        let ptyp = self.sema.types.get(p.typ);
+                        let is_open = matches!(ptyp, Type::OpenArray { .. });
+                        let is_char = p.typ == TY_CHAR;
+                        ParamCodegenInfo {
+                            name: format!("p{}", i),
+                            is_var: p.is_var,
+                            is_open_array: is_open,
+                            is_char,
+                        }
+                    }).collect());
+                }
+                _ => return None,
+            }
+        }
     }
 
     /// Get VAR parameter flags for a named procedure
@@ -3282,7 +3639,7 @@ impl CodeGen {
             ExprKind::FuncCall { desig, .. } => {
                 // CARDINAL(x) type transfer, ORD, HIGH, SHR, SHL, BAND, BOR, BXOR, BNOT
                 matches!(desig.ident.name.as_str(),
-                    "CARDINAL" | "ORD" | "HIGH" | "SHR" | "SHL" | "BAND" | "BOR" | "BXOR" | "BNOT")
+                    "CARDINAL" | "ORD" | "HIGH" | "SHR" | "SHL" | "BAND" | "BOR" | "BXOR" | "BNOT" | "SHIFT" | "ROTATE")
             }
             ExprKind::BinaryOp { left, right, .. } => {
                 self.is_unsigned_expr(left) || self.is_unsigned_expr(right)
@@ -3405,6 +3762,24 @@ impl CodeGen {
     /// If the designator starts with an imported module name followed by a field selector,
     /// return (module_name, proc_name) and the remaining selectors start at index 1.
     /// Otherwise return None.
+    /// Resolve an enum variant through a module's re-exports.
+    /// When module M re-exports a type from module S (e.g., Promise re-exports Status from Scheduler),
+    /// a reference like M.OK needs to resolve to S_Status_OK via S_OK in enum_variants.
+    fn resolve_reexported_enum_variant(&self, module: &str, name: &str) -> Option<String> {
+        if let Some(def_mod) = self.def_modules.get(module) {
+            for imp in &def_mod.imports {
+                if let Some(ref from_mod) = imp.from_module {
+                    // Check if source_module has this name as an enum variant
+                    let source_key = format!("{}_{}", from_mod, name);
+                    if let Some(c_name) = self.enum_variants.get(&source_key) {
+                        return Some(c_name.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn resolve_module_qualified<'a>(&self, desig: &'a Designator) -> Option<(&'a str, &'a str)> {
         if desig.ident.module.is_some() {
             return None; // already qualified
@@ -3429,13 +3804,7 @@ impl CodeGen {
             | "int" | "long" | "register" | "return" | "short" | "signed" | "sizeof"
             | "static" | "struct" | "switch" | "typedef" | "union" | "unsigned" | "void"
             | "volatile" | "while" => format!("m2_{}", name),
-            _ => {
-                // Check if it's an enum variant
-                if let Some(c_name) = self.enum_variants.get(name) {
-                    return c_name.clone();
-                }
-                name.to_string()
-            }
+            _ => name.to_string(),
         }
     }
 
@@ -3541,7 +3910,8 @@ impl CodeGen {
 
     fn gen_exception_decl(&mut self, e: &ExceptionDecl) {
         let exc_id = self.next_exception_id();
-        self.emitln(&format!("static const int {} = {};", self.mangle(&e.name), exc_id));
+        self.exception_names.insert(e.name.clone());
+        self.emitln(&format!("static const int M2_EXC_{} = {};", self.mangle(&e.name), exc_id));
     }
 
     fn next_exception_id(&mut self) -> usize {

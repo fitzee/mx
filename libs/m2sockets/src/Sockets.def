@@ -1,0 +1,122 @@
+DEFINITION MODULE Sockets;
+
+  (* Minimal POSIX/BSD sockets wrapper for Modula-2+.
+     Targets Linux and macOS.  Blocking I/O by default.
+
+     Error model: every procedure returns Status.
+       OK          — success
+       WouldBlock  — non-blocking socket has no data (EAGAIN)
+       Closed      — peer closed the connection
+       SysError    — OS error; call GetLastErrno() / GetLastErrorText()
+       Invalid     — bad argument (programmer error) *)
+
+  FROM SYSTEM IMPORT BYTE;
+
+  TYPE
+    Socket = INTEGER;                   (* underlying file descriptor   *)
+
+    SockAddr = RECORD
+      family : INTEGER;                 (* AF_INET = 2                  *)
+      port   : CARDINAL;               (* host byte order              *)
+      addrV4 : ARRAY [0..3] OF BYTE;   (* e.g. 127.0.0.1 = 127,0,0,1 *)
+    END;
+
+    Status = (OK, WouldBlock, Closed, SysError, Invalid);
+
+  CONST
+    InvalidSocket = -1;
+
+    (* Address families *)
+    AF_INET      = 2;
+
+    (* Socket types *)
+    SOCK_STREAM  = 1;
+    SOCK_DGRAM   = 2;
+
+    (* Shutdown modes *)
+    SHUT_RD      = 0;
+    SHUT_WR      = 1;
+    SHUT_RDWR    = 2;
+
+  (* ── Lifecycle ───────────────────────────────────────── *)
+
+  (* Create a socket.
+     Pre:  family = AF_INET; socktype = SOCK_STREAM or SOCK_DGRAM.
+     Post: out contains a valid fd on OK; InvalidSocket on error. *)
+  PROCEDURE SocketCreate(family, socktype: INTEGER;
+                         VAR out: Socket): Status;
+
+  (* Close a socket.  Idempotent if s = InvalidSocket. *)
+  PROCEDURE CloseSocket(s: Socket): Status;
+
+  (* Half-close.  how = SHUT_RD, SHUT_WR, or SHUT_RDWR. *)
+  PROCEDURE Shutdown(s: Socket; how: INTEGER): Status;
+
+  (* ── Server ──────────────────────────────────────────── *)
+
+  (* Bind to INADDR_ANY on the given port.  Sets SO_REUSEADDR.
+     Pre:  s is an open socket; port in [1..65535].
+     Post: socket is bound on OK. *)
+  PROCEDURE Bind(s: Socket; port: CARDINAL): Status;
+
+  (* Mark socket as passive.
+     Pre:  s is bound.  backlog > 0. *)
+  PROCEDURE Listen(s: Socket; backlog: INTEGER): Status;
+
+  (* Accept one connection.
+     Post: outClient is the new connected fd; outPeer has the
+           peer's address and port.  Blocks unless non-blocking. *)
+  PROCEDURE Accept(s: Socket;
+                   VAR outClient: Socket;
+                   VAR outPeer: SockAddr): Status;
+
+  (* ── Client ──────────────────────────────────────────── *)
+
+  (* Resolve host (name or dotted-quad) and connect.
+     Pre:  s is an open SOCK_STREAM socket.
+     Post: connected on OK; SysError on failure. *)
+  PROCEDURE Connect(s: Socket;
+                    host: ARRAY OF CHAR;
+                    port: CARDINAL): Status;
+
+  (* ── I/O (blocking by default) ──────────────────────── *)
+
+  (* Send up to len bytes from buf.
+     Post: sent = actual bytes sent (may be < len). *)
+  PROCEDURE SendBytes(s: Socket;
+                      VAR buf: ARRAY OF BYTE;
+                      len: CARDINAL;
+                      VAR sent: CARDINAL): Status;
+
+  (* Receive up to max bytes into buf.
+     Post: got = actual bytes received.
+           Returns Closed when peer closes. *)
+  PROCEDURE RecvBytes(s: Socket;
+                      VAR buf: ARRAY OF BYTE;
+                      max: CARDINAL;
+                      VAR got: CARDINAL): Status;
+
+  (* ── Convenience (pure M2+ logic) ───────────────────── *)
+
+  (* Send a NUL-terminated string (excluding the NUL). *)
+  PROCEDURE SendString(s: Socket; str: ARRAY OF CHAR): Status;
+
+  (* Read until LF or buffer full.  Strips trailing CR+LF.
+     Returns Closed if peer disconnects before any data. *)
+  PROCEDURE RecvLine(s: Socket; VAR line: ARRAY OF CHAR): Status;
+
+  (* ── Non-blocking ───────────────────────────────────── *)
+
+  (* Set or clear O_NONBLOCK on the socket. *)
+  PROCEDURE SetNonBlocking(s: Socket; enable: BOOLEAN): Status;
+
+  (* ── Error info ──────────────────────────────────────── *)
+
+  (* Return raw errno from the last failed bridge call. *)
+  PROCEDURE GetLastErrno(): INTEGER;
+
+  (* Copy strerror text into out.
+     Post: out contains a NUL-terminated error description. *)
+  PROCEDURE GetLastErrorText(VAR out: ARRAY OF CHAR);
+
+END Sockets.

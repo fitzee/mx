@@ -855,6 +855,21 @@ static inline double m2_lcomplex_abs(m2_LONGCOMPLEX a) {
 #define m2_max(T) m2_max_##T
 #define m2_min(T) m2_min_##T
 
+/* ISO SYSTEM.SHIFT — positive n shifts left, negative shifts right, vacated bits = 0 */
+static inline uint32_t m2_shift(uint32_t val, int32_t n) {
+    if (n == 0) return val;
+    if (n > 0) return (n >= 32) ? 0u : (val << n);
+    n = -n;
+    return (n >= 32) ? 0u : (val >> n);
+}
+/* ISO SYSTEM.ROTATE — positive n rotates left, negative rotates right */
+static inline uint32_t m2_rotate(uint32_t val, int32_t n) {
+    n = n % 32;
+    if (n < 0) n += 32;
+    if (n == 0) return val;
+    return (val << n) | (val >> (32 - n));
+}
+
 /* InOut module */
 static int m2_InOut_Done = 1;
 static void m2_WriteString(const char *s) { printf("%s", s); }

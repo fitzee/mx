@@ -34,7 +34,7 @@ BEGIN
   m2sys_join_path(ADR(t), ADR("cache"), ADR(buf), 1024)
 END GetCacheDir;
 
-PROCEDURE Init(): INTEGER;
+PROCEDURE Init;
 VAR
   regDir: ARRAY [0..1023] OF CHAR;
   idxDir: ARRAY [0..1023] OF CHAR;
@@ -44,16 +44,28 @@ VAR
 BEGIN
   GetRegistryDir(regDir);
   rc := m2sys_mkdir_p(ADR(regDir));
-  IF rc # 0 THEN RETURN -1 END;
+  IF rc # 0 THEN
+    WriteString("m2pkg: failed to create registry directory"); WriteLn;
+    RAISE RegistryError
+  END;
   m2sys_join_path(ADR(regDir), ADR("index"), ADR(idxDir), 1024);
   rc := m2sys_mkdir_p(ADR(idxDir));
-  IF rc # 0 THEN RETURN -1 END;
+  IF rc # 0 THEN
+    WriteString("m2pkg: failed to create registry index directory"); WriteLn;
+    RAISE RegistryError
+  END;
   m2sys_join_path(ADR(regDir), ADR("packages"), ADR(pkgDir), 1024);
   rc := m2sys_mkdir_p(ADR(pkgDir));
-  IF rc # 0 THEN RETURN -1 END;
+  IF rc # 0 THEN
+    WriteString("m2pkg: failed to create registry packages directory"); WriteLn;
+    RAISE RegistryError
+  END;
   GetCacheDir(cacheDir);
   rc := m2sys_mkdir_p(ADR(cacheDir));
-  RETURN rc
+  IF rc # 0 THEN
+    WriteString("m2pkg: failed to create cache directory"); WriteLn;
+    RAISE RegistryError
+  END
 END Init;
 
 PROCEDURE WrLine(fh: INTEGER; s: ARRAY OF CHAR);
@@ -65,7 +77,7 @@ BEGIN
   rc := m2sys_fwrite_str(fh, ADR(nl))
 END WrLine;
 
-PROCEDURE Publish(): INTEGER;
+PROCEDURE Publish;
 VAR
   name: ARRAY [0..63] OF CHAR;
   ver: ARRAY [0..31] OF CHAR;
@@ -91,24 +103,24 @@ BEGIN
   GetVersion(ver);
   IF Length(name) = 0 THEN
     WriteString("m2pkg: no package name in manifest"); WriteLn;
-    RETURN 1
+    RAISE RegistryError
   END;
   IF Length(ver) = 0 THEN
     WriteString("m2pkg: no version in manifest"); WriteLn;
-    RETURN 1
+    RAISE RegistryError
   END;
 
   (* Semver enforcement *)
   IF IsValid(ver) = 0 THEN
     WriteString("m2pkg: version '"); WriteString(ver);
     WriteString("' is not valid semver (expected X.Y.Z)"); WriteLn;
-    RETURN 1
+    RAISE RegistryError
   END;
   IF VersionExists(name, ver) = 1 THEN
     WriteString("m2pkg: version "); WriteString(ver);
     WriteString(" of "); WriteString(name);
     WriteString(" already published"); WriteLn;
-    RETURN 1
+    RAISE RegistryError
   END;
   rc := GetLatestVersion(name, latestVer);
   IF (rc = 0) AND (Length(latestVer) > 0) THEN
@@ -118,16 +130,12 @@ BEGIN
       IF (rc = 0) AND (Compare(pubVer, latVer) < 0) THEN
         WriteString("m2pkg: version "); WriteString(ver);
         WriteString(" is less than latest published "); WriteString(latestVer); WriteLn;
-        RETURN 1
+        RAISE RegistryError
       END
     END
   END;
 
-  rc := Init();
-  IF rc # 0 THEN
-    WriteString("m2pkg: failed to initialize registry"); WriteLn;
-    RETURN 1
-  END;
+  Init;
 
   GetRegistryDir(regDir);
   m2sys_join_path(ADR(regDir), ADR("packages"), ADR(pkgDir), 1024);
@@ -146,14 +154,14 @@ BEGIN
   rc := m2sys_tar_create_ex(ADR(tarPath), ADR(tmp1), ADR(excl));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to create tarball"); WriteLn;
-    RETURN 1
+    RAISE RegistryError
   END;
 
   (* Compute sha256 of tarball *)
   rc := m2sys_sha256_file(ADR(tarPath), ADR(sha));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to hash tarball"); WriteLn;
-    RETURN 1
+    RAISE RegistryError
   END;
 
   (* Create index entry directory *)
@@ -172,39 +180,39 @@ BEGIN
   fh := m2sys_fopen(ADR(idxFile), ADR(wmode));
   IF fh < 0 THEN
     WriteString("m2pkg: failed to write index entry"); WriteLn;
-    RETURN 1
+    RAISE RegistryError
   END;
   rc := m2sys_flock(fh, 1);
-
-  (* Copy manifest content *)
-  Assign("r", rmode);
-  Assign("m2.toml", mfPath);
-  lockfh := m2sys_fopen(ADR(mfPath), ADR(rmode));
-  IF lockfh >= 0 THEN
-    LOOP
-      rc := m2sys_fread_line(lockfh, ADR(mfLine), 512);
-      IF rc < 0 THEN EXIT END;
-      WrLine(fh, mfLine)
+  TRY
+    (* Copy manifest content *)
+    Assign("r", rmode);
+    Assign("m2.toml", mfPath);
+    lockfh := m2sys_fopen(ADR(mfPath), ADR(rmode));
+    IF lockfh >= 0 THEN
+      LOOP
+        rc := m2sys_fread_line(lockfh, ADR(mfLine), 512);
+        IF rc < 0 THEN EXIT END;
+        WrLine(fh, mfLine)
+      END;
+      rc := m2sys_fclose(lockfh)
     END;
-    rc := m2sys_fclose(lockfh)
+
+    (* Append [registry] section *)
+    WrLine(fh, "");
+    WrLine(fh, "[registry]");
+    Assign("sha256=", ln);
+    Concat(ln, sha, tmp1); Assign(tmp1, ln);
+    WrLine(fh, ln);
+    Assign("published=2026-02-18", ln);
+    WrLine(fh, ln)
+  FINALLY
+    rc := m2sys_funlock(fh);
+    rc := m2sys_fclose(fh)
   END;
-
-  (* Append [registry] section *)
-  WrLine(fh, "");
-  WrLine(fh, "[registry]");
-  Assign("sha256=", ln);
-  Concat(ln, sha, tmp1); Assign(tmp1, ln);
-  WrLine(fh, ln);
-  Assign("published=2026-02-18", ln);
-  WrLine(fh, ln);
-
-  rc := m2sys_funlock(fh);
-  rc := m2sys_fclose(fh);
 
   WriteString("m2pkg: published "); WriteString(name);
   WriteString(" "); WriteString(ver);
-  WriteString(" (sha256: "); WriteString(sha); WriteString(")"); WriteLn;
-  RETURN 0
+  WriteString(" (sha256: "); WriteString(sha); WriteString(")"); WriteLn
 END Publish;
 
 PROCEDURE Lookup(name: ARRAY OF CHAR; version: ARRAY OF CHAR;
@@ -257,7 +265,7 @@ BEGIN
 END Lookup;
 
 PROCEDURE Fetch(name: ARRAY OF CHAR; version: ARRAY OF CHAR;
-                VAR pathBuf: ARRAY OF CHAR): INTEGER;
+                VAR pathBuf: ARRAY OF CHAR);
 VAR
   sha: ARRAY [0..64] OF CHAR;
   regDir: ARRAY [0..1023] OF CHAR;
@@ -281,7 +289,7 @@ BEGIN
 
   IF m2sys_is_dir(ADR(cachePkg)) = 1 THEN
     Assign(cachePkg, pathBuf);
-    RETURN 0
+    RETURN
   END;
 
   (* Lookup in registry *)
@@ -289,7 +297,7 @@ BEGIN
   IF rc # 0 THEN
     WriteString("m2pkg: package not found in registry: ");
     WriteString(name); WriteString(" "); WriteString(version); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   (* Find tarball *)
@@ -303,40 +311,39 @@ BEGIN
 
   IF m2sys_file_exists(ADR(tarPath)) = 0 THEN
     WriteString("m2pkg: tarball not found: "); WriteString(tarPath); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   (* Verify sha256 *)
   rc := m2sys_sha256_file(ADR(tarPath), ADR(actualSha));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to hash tarball"); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
   IF CompareStr(sha, actualSha) # 0 THEN
     WriteString("m2pkg: sha256 mismatch for "); WriteString(name);
     WriteString(" "); WriteString(version); WriteLn;
     WriteString("  expected: "); WriteString(sha); WriteLn;
     WriteString("  actual:   "); WriteString(actualSha); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   (* Extract to cache *)
   rc := m2sys_mkdir_p(ADR(cachePkg));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to create cache directory"); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
   rc := m2sys_tar_extract(ADR(tarPath), ADR(cachePkg));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to extract tarball"); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   Assign(cachePkg, pathBuf);
   WriteString("m2pkg: fetched "); WriteString(name);
   WriteString(" "); WriteString(version);
-  WriteString(" -> "); WriteString(cachePkg); WriteLn;
-  RETURN 0
+  WriteString(" -> "); WriteString(cachePkg); WriteLn
 END Fetch;
 
 PROCEDURE Verify(name: ARRAY OF CHAR; version: ARRAY OF CHAR): INTEGER;
@@ -520,7 +527,7 @@ BEGIN
 END GetLatestVersion;
 
 PROCEDURE FetchRemote(url: ARRAY OF CHAR; name: ARRAY OF CHAR;
-                      version: ARRAY OF CHAR; VAR pathBuf: ARRAY OF CHAR): INTEGER;
+                      version: ARRAY OF CHAR; VAR pathBuf: ARRAY OF CHAR);
 VAR
   cacheDir: ARRAY [0..1023] OF CHAR;
   cachePkg: ARRAY [0..1023] OF CHAR;
@@ -545,7 +552,7 @@ BEGIN
   m2sys_join_path(ADR(cacheDir), ADR(dirName), ADR(cachePkg), 1024);
   IF m2sys_is_dir(ADR(cachePkg)) = 1 THEN
     Assign(cachePkg, pathBuf);
-    RETURN 0
+    RETURN
   END;
 
   (* Build index URL: <url>/index/<name>/<version>.toml *)
@@ -561,7 +568,7 @@ BEGIN
   rc := m2sys_http_get(ADR(idxUrl), ADR(idxPath));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to fetch index from "); WriteString(idxUrl); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   (* Read sha256 from downloaded index entry *)
@@ -581,7 +588,7 @@ BEGIN
   END;
   IF Length(sha) = 0 THEN
     WriteString("m2pkg: no sha256 in remote index for "); WriteString(name); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   (* Build tarball URL: <url>/packages/<name>-<version>.tar *)
@@ -598,35 +605,37 @@ BEGIN
   rc := m2sys_http_get(ADR(tarUrl), ADR(tarPath));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to fetch tarball from "); WriteString(tarUrl); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   (* Verify sha256 *)
   rc := m2sys_sha256_file(ADR(tarPath), ADR(actualSha));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to hash remote tarball"); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
   IF CompareStr(sha, actualSha) # 0 THEN
     WriteString("m2pkg: sha256 mismatch for remote "); WriteString(name);
     WriteString(" "); WriteString(version); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   (* Extract to cache *)
   rc := m2sys_mkdir_p(ADR(cachePkg));
-  IF rc # 0 THEN RETURN -1 END;
+  IF rc # 0 THEN
+    WriteString("m2pkg: failed to create cache directory"); WriteLn;
+    RAISE RegistryError
+  END;
   rc := m2sys_tar_extract(ADR(tarPath), ADR(cachePkg));
   IF rc # 0 THEN
     WriteString("m2pkg: failed to extract remote tarball"); WriteLn;
-    RETURN -1
+    RAISE RegistryError
   END;
 
   Assign(cachePkg, pathBuf);
   WriteString("m2pkg: fetched remote "); WriteString(name);
   WriteString(" "); WriteString(version);
-  WriteString(" -> "); WriteString(cachePkg); WriteLn;
-  RETURN 0
+  WriteString(" -> "); WriteString(cachePkg); WriteLn
 END FetchRemote;
 
 END Registry.
