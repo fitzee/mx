@@ -25,9 +25,28 @@ DEFINITION MODULE FOR "C" TlsBridge;
                                         certPath: ADDRESS;
                                         keyPath: ADDRESS): INTEGER;
 
+  (* Server context *)
+  PROCEDURE m2_tls_ctx_create_server(): ADDRESS;
+  PROCEDURE m2_tls_ctx_set_server_cert(ctx: ADDRESS;
+                                        certPath: ADDRESS;
+                                        keyPath: ADDRESS): INTEGER;
+
+  (* ALPN *)
+  PROCEDURE m2_tls_ctx_set_alpn(ctx: ADDRESS;
+                                 protos: ADDRESS;
+                                 protosLen: INTEGER): INTEGER;
+  PROCEDURE m2_tls_ctx_set_alpn_server(ctx: ADDRESS;
+                                        protos: ADDRESS;
+                                        protosLen: INTEGER): INTEGER;
+  PROCEDURE m2_tls_get_alpn(sess: ADDRESS;
+                             out: ADDRESS;
+                             max: INTEGER): INTEGER;
+
   (* Session lifecycle *)
   PROCEDURE m2_tls_session_create(ctx: ADDRESS;
                                    fd: INTEGER): ADDRESS;
+  PROCEDURE m2_tls_session_create_server(ctx: ADDRESS;
+                                          fd: INTEGER): ADDRESS;
   PROCEDURE m2_tls_session_destroy(sess: ADDRESS);
   PROCEDURE m2_tls_session_set_sni(sess: ADDRESS;
                                     host: ADDRESS): INTEGER;

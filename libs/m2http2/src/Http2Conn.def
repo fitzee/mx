@@ -1,0 +1,100 @@
+DEFINITION MODULE Http2Conn;
+(* HTTP/2 connection state machine.
+
+   Manages the connection-level FSM, settings negotiation,
+   flow control, stream ID allocation, and frame dispatch.
+
+   Uses m2Fsm for the connection state machine.
+   Uses Http2Stream for per-stream management. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM Fsm IMPORT StepStatus;
+FROM ByteBuf IMPORT BytesView, Buf;
+FROM Http2Types IMPORT FrameHeader, Settings;
+FROM Http2Stream IMPORT H2Stream, StreamTransTable;
+FROM Http2Hpack IMPORT DynTable;
+
+(* ── Connection record ─────────────────────────────────── *)
+
+CONST
+  MaxStreams = 64;
+
+TYPE
+  H2Conn = RECORD
+    localSettings:  Settings;
+    remoteSettings: Settings;
+    connSendWindow: INTEGER;
+    connRecvWindow: INTEGER;
+    nextStreamId:   CARDINAL;  (* next client stream ID, odd numbers *)
+    lastPeerStream: CARDINAL;  (* last stream ID from peer *)
+    goawayCode:     CARDINAL;
+    goawaySent:     BOOLEAN;
+    goawayRecv:     BOOLEAN;
+    streams:    ARRAY [0..63] OF H2Stream;
+    streamUsed: ARRAY [0..63] OF BOOLEAN;
+    numActive:  CARDINAL;
+    streamTable: StreamTransTable;
+    dynTableEnc: DynTable;    (* encoder dynamic table *)
+    dynTableDec: DynTable;    (* decoder dynamic table *)
+    outBuf:     Buf;          (* output frame buffer *)
+  END;
+
+(* ── Lifecycle ─────────────────────────────────────────── *)
+
+(* Initialise a connection with default settings.
+   Allocates the output buffer. *)
+PROCEDURE InitConn(VAR c: H2Conn);
+
+(* Free connection resources. *)
+PROCEDURE FreeConn(VAR c: H2Conn);
+
+(* ── Connection preface ────────────────────────────────── *)
+
+(* Write the client connection preface and initial SETTINGS frame
+   into the output buffer.  Caller must flush outBuf to the wire. *)
+PROCEDURE SendPreface(VAR c: H2Conn);
+
+(* ── Frame processing ──────────────────────────────────── *)
+
+(* Process a received frame (header + payload).
+   Updates connection/stream state, settings, flow control.
+   May append response frames (SETTINGS_ACK, PING_ACK, etc.)
+   to outBuf.
+   Returns ok=FALSE on connection error (GOAWAY should be sent). *)
+PROCEDURE ProcessFrame(VAR c: H2Conn;
+                       hdr: FrameHeader;
+                       payload: BytesView;
+                       VAR ok: BOOLEAN);
+
+(* ── Stream management ─────────────────────────────────── *)
+
+(* Allocate a new client stream.  Returns the stream ID.
+   Returns 0 if no slots available or GOAWAY received. *)
+PROCEDURE OpenStream(VAR c: H2Conn): CARDINAL;
+
+(* Find stream by ID.  Returns the slot index or MaxStreams if not found. *)
+PROCEDURE FindStream(VAR c: H2Conn; streamId: CARDINAL): CARDINAL;
+
+(* ── Flow control ──────────────────────────────────────── *)
+
+(* Update connection-level send window (from WINDOW_UPDATE on stream 0). *)
+PROCEDURE UpdateConnSendWindow(VAR c: H2Conn; increment: CARDINAL);
+
+(* Consume from connection-level send window.
+   Returns FALSE if insufficient window. *)
+PROCEDURE ConsumeConnSendWindow(VAR c: H2Conn; n: CARDINAL): BOOLEAN;
+
+(* ── Settings ──────────────────────────────────────────── *)
+
+(* Apply received settings (updates remoteSettings). *)
+PROCEDURE ApplyRemoteSettings(VAR c: H2Conn; s: Settings);
+
+(* ── Output ────────────────────────────────────────────── *)
+
+(* Get a view of pending output data (frames to send). *)
+PROCEDURE GetOutput(VAR c: H2Conn): BytesView;
+
+(* Clear the output buffer after flushing. *)
+PROCEDURE ClearOutput(VAR c: H2Conn);
+
+END Http2Conn.

@@ -1,0 +1,112 @@
+DEFINITION MODULE RpcClient;
+(* Promise-based RPC client with concurrent in-flight requests.
+
+   Issues requests over a transport via RpcFrame, correlates
+   responses by request_id, and resolves/rejects Promises.
+
+   Timeouts are optional: provide an EventLoop handle for timer
+   support, or NIL for no timeouts (useful in testing).  When a
+   timeout fires, the corresponding Promise is rejected with
+   RpcErrors.Timeout.
+
+   Single-threaded.  The caller must arrange for OnReadable to be
+   called when the transport has data available (e.g. from an
+   EventLoop watcher or a manual test pump).
+
+   Flow:
+     1. InitClient with transport and optional EventLoop
+     2. Call() to issue requests -- returns a Future
+     3. OnReadable() when transport has data -- dispatches responses
+     4. Scheduler pump to execute promise continuations
+     5. FreeClient when done
+
+   In-flight tracking uses a fixed-size array (MaxInflight).
+   Each Call occupies one slot until the response arrives or
+   the request times out.
+
+   Promise settlement:
+     - Fulfilled: Value.tag = 0, Value.ptr = pointer to response
+       body BytesView (valid until the next OnReadable call).
+     - Rejected:  Error.code = RpcErrors error code,
+                  Error.ptr = NIL. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM ByteBuf IMPORT Buf, BytesView;
+FROM RpcFrame IMPORT ReadFn, WriteFn;
+FROM Scheduler IMPORT Scheduler;
+FROM Promise IMPORT Future;
+FROM Timers IMPORT TimerId;
+
+CONST
+  MaxInflight = 64;
+
+TYPE
+  TimeoutCtx = RECORD
+    clientPtr: ADDRESS;
+    requestId: CARDINAL;
+  END;
+
+  PendingCall = RECORD
+    active:     BOOLEAN;
+    requestId:  CARDINAL;
+    promise:    ADDRESS;     (* Promise handle *)
+    timerId:    TimerId;
+    hasTimer:   BOOLEAN;
+    timeoutCtx: TimeoutCtx;
+  END;
+
+  Client = RECORD
+    readFn:    ReadFn;
+    readCtx:   ADDRESS;
+    writeFn:   WriteFn;
+    writeCtx:  ADDRESS;
+    loop:      ADDRESS;      (* EventLoop.Loop or NIL *)
+    sched:     Scheduler;
+    nextId:    CARDINAL;
+    pending:   ARRAY [0..MaxInflight-1] OF PendingCall;
+    outBuf:    Buf;          (* reusable encoding buffer *)
+    respBuf:   Buf;          (* holds last decoded response body *)
+    alive:     BOOLEAN;
+  END;
+
+(* Initialize a client.
+   readFn/readCtx: transport for reading responses.
+   writeFn/writeCtx: transport for writing requests.
+   sched: Scheduler for promise settlement.
+   loop: EventLoop.Loop for timeouts (NIL to disable timeouts). *)
+PROCEDURE InitClient(VAR c: Client;
+                     readFn: ReadFn; readCtx: ADDRESS;
+                     writeFn: WriteFn; writeCtx: ADDRESS;
+                     sched: Scheduler;
+                     loop: ADDRESS);
+
+(* Issue an RPC request.
+   method: method name, methodLen: byte count.
+   body: request payload (may be empty).
+   timeoutMs: timeout in milliseconds (0 = no timeout).
+   Returns a Future that settles when the response arrives or
+   the request times out.
+   ok is set to FALSE if the in-flight table is full or the
+   write fails. *)
+PROCEDURE Call(VAR c: Client;
+               method: ARRAY OF CHAR;
+               methodLen: CARDINAL;
+               body: BytesView;
+               timeoutMs: CARDINAL;
+               VAR out: Future;
+               VAR ok: BOOLEAN);
+
+(* Process incoming data from the transport.
+   Reads frames and dispatches responses to pending promises.
+   Call this when the transport signals readability.
+   Returns TRUE if the connection is still alive. *)
+PROCEDURE OnReadable(VAR c: Client): BOOLEAN;
+
+(* Cancel all pending calls with RpcErrors.Closed.
+   Does not close the transport. *)
+PROCEDURE CancelAll(VAR c: Client);
+
+(* Free internal buffers.  Does not close the transport. *)
+PROCEDURE FreeClient(VAR c: Client);
+
+END RpcClient.

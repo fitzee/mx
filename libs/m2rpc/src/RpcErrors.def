@@ -1,0 +1,25 @@
+DEFINITION MODULE RpcErrors;
+(* Stable RPC error codes and human-readable descriptions.
+
+   Error codes appear in ERR messages on the wire (u16 err_code).
+   Code 0 (Ok) is never sent in an ERR message -- it exists only
+   as a sentinel for "no error" in local logic.
+
+   Codes 1..99 are reserved for the framework.
+   Application-defined codes should start at 100. *)
+
+CONST
+  Ok            = 0;
+  BadRequest    = 1;
+  UnknownMethod = 2;
+  Timeout       = 3;
+  Internal      = 4;
+  TooLarge      = 5;
+  Closed        = 6;
+
+(* Return a short human-readable string for a framework error code.
+   Unknown codes return "Unknown".  The returned string is a
+   compile-time constant -- do not deallocate it. *)
+PROCEDURE ToString(code: CARDINAL; VAR s: ARRAY OF CHAR);
+
+END RpcErrors.

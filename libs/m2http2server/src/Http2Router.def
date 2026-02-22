@@ -1,0 +1,39 @@
+DEFINITION MODULE Http2Router;
+
+  (* Method + path router for HTTP/2 requests.
+     Exact match on (method, path).  Default 404 handler. *)
+
+  FROM Http2ServerTypes IMPORT Request, Response, HandlerProc,
+                                MaxRoutes, MaxMethodLen, MaxPathLen;
+
+  TYPE
+    Route = RECORD
+      method:  ARRAY [0..MaxMethodLen] OF CHAR;
+      path:    ARRAY [0..MaxPathLen] OF CHAR;
+      handler: HandlerProc;
+      ctx:     ADDRESS;
+    END;
+
+    Router = RECORD
+      routes: ARRAY [0..MaxRoutes-1] OF Route;
+      count:  CARDINAL;
+    END;
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  PROCEDURE RouterInit(VAR r: Router);
+
+  (* Register a handler for (method, path).
+     Returns FALSE if route table is full. *)
+  PROCEDURE AddRoute(VAR r: Router;
+                     method, path: ARRAY OF CHAR;
+                     handler: HandlerProc;
+                     ctx: ADDRESS): BOOLEAN;
+
+  (* Dispatch request to matching handler.
+     Calls default 404 handler if no route matches. *)
+  PROCEDURE Dispatch(VAR r: Router;
+                     VAR req: Request;
+                     VAR resp: Response);
+
+END Http2Router.

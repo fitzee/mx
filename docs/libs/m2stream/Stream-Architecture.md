@@ -7,7 +7,7 @@ Internal design of the m2stream library: layering, data structures, dual API rat
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  Application Code                                        │
-│  (echo_client.mod, https_get.mod, custom clients, etc.)  │
+│  (echo_client.mod, https_get.mod, echo_server.mod, custom clients/servers, etc.) │
 ├──────────────────────────────────────────────────────────┤
 │  HTTPClient                   (m2http)                   │
 │  Drives Stream sync API from its own watcher callback    │
@@ -44,6 +44,36 @@ m2stream
 ├── m2evloop    (EventLoop.WatchFd, ModifyFd, UnwatchFd)
 └── m2futures   (PromiseCreate, Resolve, Reject)
 ```
+
+## Server Path
+
+Stream has no server-specific code. The server path uses the same `CreateTCP` and `CreateTLS` constructors as the client path:
+
+```
+                    Server                          Client
+                      │                               │
+          Sockets.Accept(fd)              Sockets.Connect(fd)
+                      │                               │
+             SetNonBlocking(fd)              SetNonBlocking(fd)
+                      │                               │
+         ┌────────────┴────────────┐     ┌────────────┴────────────┐
+         │    TLS (optional)       │     │    TLS (optional)       │
+         │ SessionCreateServer     │     │ SessionCreate           │
+         │ Handshake               │     │ SetSNI + Handshake      │
+         └────────────┬────────────┘     └────────────┬────────────┘
+                      │                               │
+         CreateTCP or CreateTLS          CreateTCP or CreateTLS
+                      │                               │
+                      └───────────┬───────────────────┘
+                                  │
+                      ┌───────────▼───────────┐
+                      │       Stream          │
+                      │  TryRead / TryWrite   │
+                      │  ReadAsync / WriteAsync│
+                      └───────────────────────┘
+```
+
+The `StreamRec` fields are identical for client and server streams. The `kind` field only distinguishes TCP from TLS, not client from server.
 
 ## Internal Data Structure: StreamRec
 

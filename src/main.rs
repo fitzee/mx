@@ -230,6 +230,18 @@ fn main() {
                 }
                 opts.extra_cflags.push(args[i].clone());
             }
+            "--emit-per-module" => {
+                opts.emit_per_module = true;
+                opts.emit_c = true;  // per-module implies emit-c (no linking by driver)
+            }
+            "--out-dir" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("m2c: --out-dir requires an argument");
+                    process::exit(1);
+                }
+                opts.out_dir = Some(PathBuf::from(&args[i]));
+            }
             arg if arg.starts_with('-') => {
                 eprintln!("m2c: unknown option '{}'", arg);
                 process::exit(1);
@@ -485,22 +497,28 @@ fn run_subcommand(args: &[String]) {
             }
         }
         // Create a modified manifest with test entry
-        let mut m = project_resolver::Manifest {
+        let m = project_resolver::Manifest {
             name: format!("{}_test", ctx.manifest.name),
             version: ctx.manifest.version.clone(),
             entry: ctx.manifest.test.entry.clone(),
             m2plus: ctx.manifest.m2plus,
             includes: ctx.manifest.includes.clone(),
-            deps: Vec::new(),
-            cc: project_resolver::CcSection::default(),
+            deps: ctx.manifest.deps.iter().map(|d| project_resolver::DepEntry {
+                name: d.name.clone(),
+                source: match &d.source {
+                    project_resolver::DepSource::Local(p) => project_resolver::DepSource::Local(p.clone()),
+                    project_resolver::DepSource::Registry(v) => project_resolver::DepSource::Registry(v.clone()),
+                },
+            }).collect(),
+            cc: project_resolver::CcSection {
+                cflags: ctx.manifest.cc.cflags.clone(),
+                ldflags: ctx.manifest.cc.ldflags.clone(),
+                libs: ctx.manifest.cc.libs.clone(),
+                extra_c: ctx.manifest.cc.extra_c.clone(),
+                frameworks: ctx.manifest.cc.frameworks.clone(),
+            },
             test: project_resolver::TestSection::default(),
         };
-        // Copy cc section
-        m.cc.cflags = ctx.manifest.cc.cflags.clone();
-        m.cc.ldflags = ctx.manifest.cc.ldflags.clone();
-        m.cc.libs = ctx.manifest.cc.libs.clone();
-        m.cc.extra_c = ctx.manifest.cc.extra_c.clone();
-        m.cc.frameworks = ctx.manifest.cc.frameworks.clone();
         m
     } else {
         // Transfer ownership-like copy for build/run
@@ -510,7 +528,13 @@ fn run_subcommand(args: &[String]) {
             entry: ctx.manifest.entry.clone(),
             m2plus: ctx.manifest.m2plus,
             includes: ctx.manifest.includes.clone(),
-            deps: Vec::new(),
+            deps: ctx.manifest.deps.iter().map(|d| project_resolver::DepEntry {
+                name: d.name.clone(),
+                source: match &d.source {
+                    project_resolver::DepSource::Local(p) => project_resolver::DepSource::Local(p.clone()),
+                    project_resolver::DepSource::Registry(v) => project_resolver::DepSource::Registry(v.clone()),
+                },
+            }).collect(),
             cc: project_resolver::CcSection {
                 cflags: ctx.manifest.cc.cflags.clone(),
                 ldflags: ctx.manifest.cc.ldflags.clone(),

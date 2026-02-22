@@ -364,6 +364,44 @@ For `WriteAllAsync`, the module tracks the send offset (`opSent`) internally and
 
 For `ReadAsync` and `WriteAsync`, the operation completes after a single successful underlying I/O call (partial transfer). The caller must issue additional operations to transfer more data.
 
+## Server-Side Usage
+
+Stream requires no special API for server-side connections. The `CreateTCP` and `CreateTLS` constructors accept any connected socket, including sockets returned by `Sockets.Accept`.
+
+### TCP Server Pattern
+
+```modula2
+(* Accept a client connection *)
+sst := Sockets.Accept(listenSock, clientSock, peer);
+sst := Sockets.SetNonBlocking(clientSock, TRUE);
+
+(* Wrap in a Stream *)
+st := Stream.CreateTCP(loop, sched, INTEGER(clientSock), strm);
+(* Now use TryRead/TryWrite or ReadAsync/WriteAsync as normal *)
+```
+
+### TLS Server Pattern
+
+```modula2
+(* Accept a client connection *)
+sst := Sockets.Accept(listenSock, clientSock, peer);
+sst := Sockets.SetNonBlocking(clientSock, TRUE);
+
+(* Create server TLS session and handshake *)
+tst := TLS.SessionCreateServer(loop, sched, tlsCtx,
+                                INTEGER(clientSock), tlsSess);
+tst := TLS.SetSNI(tlsSess, host);  (* not needed for servers *)
+tst := TLS.HandshakeAsync(tlsSess, hsFut);
+(* ... wait for handshake Future to resolve ... *)
+
+(* Wrap in a TLS Stream *)
+st := Stream.CreateTLS(loop, sched, INTEGER(clientSock),
+                        tlsCtx, tlsSess, strm);
+(* Now use TryRead/TryWrite or ReadAsync/WriteAsync as normal *)
+```
+
+The key insight: **Stream is transport-agnostic and direction-agnostic**. Whether the socket was created via `Connect` (client) or `Accept` (server), and whether TLS uses connect state or accept state, Stream handles I/O identically.
+
 ## Limitations
 
 - **Single pending operation**: Only one async operation per stream at a time. Starting a second returns `Invalid`.
@@ -371,6 +409,7 @@ For `ReadAsync` and `WriteAsync`, the operation completes after a single success
 - **No connect**: Stream requires an already-connected socket. Use Sockets.Connect or m2http for connection setup.
 - **No handshake**: Stream requires a completed TLS handshake. Use TLS.Handshake or TLS.HandshakeAsync before creating a TLS stream.
 - **No read after ShutdownWr via async**: The `ShutdownWrite` call is synchronous only; async reads after shutdown require the caller to manage the watcher.
+- **No server-specific API**: Stream has no `AcceptTLS` or `ListenTLS`. Server setup (bind, listen, accept, TLS handshake) is done with Sockets and TLS modules directly; Stream wraps the resulting connected socket.
 - **Best-effort TLS shutdown**: `ShutdownWrite` ignores WANT_READ/WANT_WRITE from TLS.Shutdown. Use `CloseAsync` for a proper TLS close.
 
 ## See Also
@@ -382,3 +421,4 @@ For `ReadAsync` and `WriteAsync`, the operation completes after a single success
 - [../m2http/HTTPClient](../m2http/HTTPClient.md) -- HTTP client (uses Stream sync API)
 - [../m2evloop/EventLoop](../m2evloop/EventLoop.md) -- Event loop integration
 - [../m2futures/Promise](../m2futures/Promise.md) -- Future/Promise types
+- [../m2tls/https_server_example](../m2tls/https_server_example.md) -- TLS server example

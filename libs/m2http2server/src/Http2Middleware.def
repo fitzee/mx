@@ -1,0 +1,60 @@
+DEFINITION MODULE Http2Middleware;
+
+  (* Middleware chain for pre-processing requests.
+     Each middleware runs before the handler.
+     If any middleware returns FALSE, the handler is skipped
+     (the middleware must have written the response). *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM Http2ServerTypes IMPORT Request, Response,
+                                MiddlewareProc, HandlerProc,
+                                MaxMiddleware;
+
+  TYPE
+    MwEntry = RECORD
+      proc: MiddlewareProc;
+      ctx:  ADDRESS;
+    END;
+
+    Chain = RECORD
+      entries: ARRAY [0..MaxMiddleware-1] OF MwEntry;
+      count:   CARDINAL;
+    END;
+
+  PROCEDURE ChainInit(VAR c: Chain);
+
+  (* Add middleware to the chain.  Runs in insertion order.
+     Returns FALSE if chain is full. *)
+  PROCEDURE ChainAdd(VAR c: Chain;
+                     mw: MiddlewareProc;
+                     ctx: ADDRESS): BOOLEAN;
+
+  (* Run the middleware chain, then call the handler if all
+     middleware returned TRUE. *)
+  PROCEDURE ChainRun(VAR c: Chain;
+                     VAR req: Request;
+                     VAR resp: Response;
+                     handler: HandlerProc;
+                     handlerCtx: ADDRESS);
+
+  (* ── Built-in middleware ─────────────────────────── *)
+
+  (* Logging middleware: logs method + path at INFO level.
+     ctx must point to a Log.Logger. *)
+  PROCEDURE LoggingMw(VAR req: Request;
+                      VAR resp: Response;
+                      ctx: ADDRESS): BOOLEAN;
+
+  (* Request size limit middleware: rejects bodies > limit.
+     ctx must point to a CARDINAL containing the max body size. *)
+  PROCEDURE SizeLimitMw(VAR req: Request;
+                        VAR resp: Response;
+                        ctx: ADDRESS): BOOLEAN;
+
+  (* Guard middleware: catches handler errors (status 0) and
+     returns 500.  ctx is ignored (pass NIL). *)
+  PROCEDURE GuardMw(VAR req: Request;
+                    VAR resp: Response;
+                    ctx: ADDRESS): BOOLEAN;
+
+END Http2Middleware.

@@ -7,7 +7,7 @@ Internal design of the m2tls library: layering, state machines, watcher manageme
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  Application Code                                        │
-│  (https_get.mod, custom TLS clients, etc.)               │
+│  (https_get.mod, https_server.mod, custom TLS clients/servers, etc.) │
 ├──────────────────────────────────────────────────────────┤
 │  HTTPClient                   (m2http)                   │
 │  HTTPS: TLS context + session per connection             │
@@ -139,6 +139,78 @@ The `op` field tracks which async operation is active. Only one async operation 
                   (repeat until OK or Error)
 ```
 
+## Server Session Flow
+
+Server sessions use `SSL_set_accept_state()` instead of `SSL_set_connect_state()`.
+The handshake state machine is identical -- the server just waits for the client
+to initiate.
+
+```
+                  ┌─────────────────────┐
+                  │ ContextCreateServer  │
+                  └────────┬────────────┘
+                           │
+                  ┌────────▼────────────┐
+                  │ SetServerCert       │ (required)
+                  └────────┬────────────┘
+                           │
+                  ┌────────▼────────────┐
+                  │ SetALPNServer       │ (optional, for HTTP/2)
+                  └────────┬────────────┘
+                           │
+        (per accepted connection)
+                           │
+                  ┌────────▼────────────┐
+                  │ SessionCreateServer  │
+                  └────────┬────────────┘
+                           │
+                  ┌────────▼────────────┐
+                  │    Handshake()       │
+                  └──┬──────┬──────┬────┘
+                     │      │      │
+                OK   │  WANT│  WANT│  Error
+                     │  READ│  WRITE│
+              ┌──────▼┐ ┌──▼──┐ ┌─▼──────┐
+              │Complete│ │Wait │ │Wait    │
+              └───────┘ └──┬──┘ └──┬─────┘
+                            └──┬───┘
+                               │ retry
+                   ┌───────────▼───────────┐
+                   │     Handshake()        │
+                   └───────────────────────┘
+```
+
+## ALPN Negotiation
+
+ALPN (Application-Layer Protocol Negotiation) is a TLS extension that allows
+client and server to agree on an application protocol (e.g. "h2" for HTTP/2)
+during the TLS handshake, without an extra round-trip.
+
+### Client Flow
+
+1. Before handshake: `SetALPN(ctx, protos, len)` -- sets the offered protocol list.
+2. During handshake: OpenSSL sends the ALPN extension in ClientHello.
+3. After handshake: `GetALPN(sess, buf, got)` -- reads the server's selection.
+
+### Server Flow
+
+1. Before handshake: `SetALPNServer(ctx, protos, len)` -- sets preferred protocols.
+2. During handshake: OpenSSL calls the select callback, which uses
+   `SSL_select_next_proto()` to match the client's list against the server's.
+3. After handshake: `GetALPN(sess, buf, got)` -- reads the negotiated protocol.
+
+### Wire Format
+
+ALPN protocol lists use length-prefixed encoding:
+
+```
+\x02h2           → "h2" (HTTP/2)
+\x08http/1.1     → "http/1.1"
+\x02h2\x08http/1.1  → "h2", "http/1.1" (prefer h2)
+```
+
+The `MaxALPNLen` constant (64 bytes) limits the total wire-format size.
+
 ## Watcher Mask Changes
 
 During async operations, the watcher mask changes dynamically based on what OpenSSL needs:
@@ -269,10 +341,15 @@ The C bridge supports:
 | SSL_get1_peer_certificate| 3.0+            | Macro alias for older versions  |
 | TLS 1.3                  | 1.1.1+          | Conditional on TLS1_3_VERSION   |
 | SSL_CTX_set_min_proto_version | 1.1.0+     | Used for version enforcement    |
+| TLS_server_method()      | 1.1.0+          | Replaces SSLv23_server_method() |
+| SSL_CTX_set_alpn_protos  | 1.0.2+          | Client-side ALPN                |
+| SSL_CTX_set_alpn_select_cb | 1.0.2+        | Server-side ALPN callback       |
+| SSL_get0_alpn_selected   | 1.0.2+          | Query negotiated protocol       |
 
 ## See Also
 
 - [TLS](TLS.md) -- API reference
 - [https_get_example](https_get_example.md) -- HTTPS GET example walkthrough
+- [https_server_example](https_server_example.md) -- HTTPS server example walkthrough
 - [../m2http/Net-Architecture](../m2http/Net-Architecture.md) -- Overall networking stack
 - [../m2evloop/Async-Architecture](../m2evloop/Async-Architecture.md) -- Event loop internals

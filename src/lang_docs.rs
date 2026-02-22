@@ -1,32 +1,33 @@
-//! Tier 1: Embedded language documentation for Modula-2 / M2+.
+//! Documentation for Modula-2 / M2+.
 //!
-//! Provides O(1) lookup of comprehensive documentation for types, builtins,
-//! keywords, stdlib modules, and M2+ extensions. Documentation is sourced
-//! from `docs/lang/` markdown files via `include_str!`.
+//! Two tiers:
+//!   1. Core docs (keywords, builtins, stdlib, M2+ extensions) — embedded via
+//!      `include_str!` at compile time. These rarely change.
+//!   2. Library docs (m2gfx, m2log, m2bytes, etc.) — loaded from disk at
+//!      runtime by the LSP via `LibraryDocs`. Adding new library docs does
+//!      NOT require recompiling m2c.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-/// A documentation entry for a language element.
+/// A documentation entry for a core language element (embedded at compile time).
 pub struct DocEntry {
     pub key: &'static str,
     pub category: DocCategory,
     pub markdown: &'static str,
 }
 
-/// Category of documentation entry.
+/// Category of core documentation entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocCategory {
     Language,
     Builtin,
     Stdlib,
     Extension,
-    LibGraphics,
-    LibNetworking,
-    LibAsync,
 }
 
-/// O(1) lookup of embedded documentation by key.
+/// O(1) lookup of embedded core documentation by key.
 /// Keys: keywords uppercase, builtins uppercase, module names exact case.
 pub fn get_doc(key: &str) -> Option<&'static DocEntry> {
     // Try exact match first (for module names like "InOut")
@@ -43,7 +44,7 @@ pub fn format_hover(entry: &DocEntry) -> String {
     entry.markdown.to_string()
 }
 
-/// Return all registered documentation keys (deduplicated by canonical key).
+/// Return all registered core documentation keys (deduplicated by canonical key).
 pub fn all_keys() -> Vec<&'static str> {
     let mut seen = std::collections::HashSet::new();
     REGISTRY.values()
@@ -52,7 +53,7 @@ pub fn all_keys() -> Vec<&'static str> {
         .collect()
 }
 
-// ── Registry ────────────────────────────────────────────────────────
+// ── Core Registry (embedded at compile time) ────────────────────────
 
 static REGISTRY: LazyLock<HashMap<&'static str, DocEntry>> = LazyLock::new(|| {
     let mut m = HashMap::new();
@@ -164,8 +165,6 @@ static REGISTRY: LazyLock<HashMap<&'static str, DocEntry>> = LazyLock::new(|| {
     m.insert("MUTEX", DocEntry { key: "Mutex", category: DocCategory::Stdlib, markdown: include_str!("../docs/lang/stdlib/Mutex.md") });
     m.insert("Condition", DocEntry { key: "Condition", category: DocCategory::Stdlib, markdown: include_str!("../docs/lang/stdlib/Condition.md") });
     m.insert("CONDITION", DocEntry { key: "Condition", category: DocCategory::Stdlib, markdown: include_str!("../docs/lang/stdlib/Condition.md") });
-    // FileSystem not yet documented
-    // m.insert("FileSystem", DocEntry { ... });
 
     // M2+ extensions
     m.insert("TRY", DocEntry { key: "TRY", category: DocCategory::Extension, markdown: include_str!("../docs/lang/m2plus/TRY.md") });
@@ -185,55 +184,186 @@ static REGISTRY: LazyLock<HashMap<&'static str, DocEntry>> = LazyLock::new(|| {
     m.insert("SAFE", DocEntry { key: "SAFE", category: DocCategory::Extension, markdown: include_str!("../docs/lang/m2plus/SAFE.md") });
     m.insert("UNSAFE", DocEntry { key: "UNSAFE", category: DocCategory::Extension, markdown: include_str!("../docs/lang/m2plus/UNSAFE.md") });
 
-    // Library modules — m2gfx (Graphics)
-    m.insert("Gfx", DocEntry { key: "Gfx", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Gfx.md") });
-    m.insert("GFX", DocEntry { key: "Gfx", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Gfx.md") });
-    m.insert("Canvas", DocEntry { key: "Canvas", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Canvas.md") });
-    m.insert("CANVAS", DocEntry { key: "Canvas", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Canvas.md") });
-    m.insert("Events", DocEntry { key: "Events", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Events.md") });
-    m.insert("EVENTS", DocEntry { key: "Events", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Events.md") });
-    m.insert("Font", DocEntry { key: "Font", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Font.md") });
-    m.insert("FONT", DocEntry { key: "Font", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Font.md") });
-    m.insert("Texture", DocEntry { key: "Texture", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Texture.md") });
-    m.insert("TEXTURE", DocEntry { key: "Texture", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Texture.md") });
-    m.insert("PixBuf", DocEntry { key: "PixBuf", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/PixBuf.md") });
-    m.insert("PIXBUF", DocEntry { key: "PixBuf", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/PixBuf.md") });
-    m.insert("Color", DocEntry { key: "Color", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Color.md") });
-    m.insert("COLOR", DocEntry { key: "Color", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/Color.md") });
-    m.insert("DrawAlgo", DocEntry { key: "DrawAlgo", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/DrawAlgo.md") });
-    m.insert("DRAWALGO", DocEntry { key: "DrawAlgo", category: DocCategory::LibGraphics, markdown: include_str!("../docs/libs/m2gfx/DrawAlgo.md") });
-
-    // Library modules — m2sockets (Networking)
-    m.insert("Sockets", DocEntry { key: "Sockets", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2sockets/Sockets.md") });
-    m.insert("SOCKETS", DocEntry { key: "Sockets", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2sockets/Sockets.md") });
-
-    // Library modules — m2futures (Async)
-    m.insert("Scheduler", DocEntry { key: "Scheduler", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Scheduler.md") });
-    m.insert("SCHEDULER", DocEntry { key: "Scheduler", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Scheduler.md") });
-    m.insert("Promise", DocEntry { key: "Promise", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Promise.md") });
-    m.insert("PROMISE", DocEntry { key: "Promise", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2futures/Promise.md") });
-
-    // Library modules — m2evloop (Async / Runtime)
-    m.insert("EventLoop", DocEntry { key: "EventLoop", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/EventLoop.md") });
-    m.insert("EVENTLOOP", DocEntry { key: "EventLoop", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/EventLoop.md") });
-    m.insert("Timers", DocEntry { key: "Timers", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Timers.md") });
-    m.insert("TIMERS", DocEntry { key: "Timers", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Timers.md") });
-    m.insert("Poller", DocEntry { key: "Poller", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Poller.md") });
-    m.insert("POLLER", DocEntry { key: "Poller", category: DocCategory::LibAsync, markdown: include_str!("../docs/libs/m2evloop/Poller.md") });
-
-    // Library modules — m2http (Networking)
-    m.insert("Buffers", DocEntry { key: "Buffers", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/Buffers.md") });
-    m.insert("BUFFERS", DocEntry { key: "Buffers", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/Buffers.md") });
-    m.insert("URI", DocEntry { key: "URI", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/URI.md") });
-    m.insert("DNS", DocEntry { key: "DNS", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/DNS.md") });
-    m.insert("HTTPClient", DocEntry { key: "HTTPClient", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/HTTPClient.md") });
-    m.insert("HTTPCLIENT", DocEntry { key: "HTTPClient", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2http/HTTPClient.md") });
-
-    // Library modules — m2tls (Networking / TLS)
-    m.insert("TLS", DocEntry { key: "TLS", category: DocCategory::LibNetworking, markdown: include_str!("../docs/libs/m2tls/TLS.md") });
-
     m
 });
+
+// ── Library Docs (loaded from disk at runtime) ──────────────────────
+
+/// A library documentation entry loaded from disk.
+pub struct LibraryDocEntry {
+    pub key: String,
+    pub category: String,     // "LibGraphics", "LibNetworking", etc.
+    pub markdown: String,
+}
+
+/// Runtime-loaded library documentation.
+/// Populated by scanning `docs/libs/` using `libraries.toml` as the category index.
+pub struct LibraryDocs {
+    entries: HashMap<String, LibraryDocEntry>,
+}
+
+impl LibraryDocs {
+    /// Create an empty LibraryDocs (used when docs path is not found).
+    pub fn empty() -> Self {
+        Self { entries: HashMap::new() }
+    }
+
+    /// Load library docs from the given docs root directory.
+    /// Reads `docs_root/libs/libraries.toml` for category mappings,
+    /// then scans each library subdirectory for module .md files.
+    pub fn load(docs_root: &Path) -> Self {
+        let manifest_path = docs_root.join("libs").join("libraries.toml");
+        let manifest_str = match std::fs::read_to_string(&manifest_path) {
+            Ok(s) => s,
+            Err(_) => return Self::empty(),
+        };
+
+        // Parse the TOML manifest (minimal parser — no external deps)
+        let categories = parse_libraries_toml(&manifest_str);
+
+        let mut entries = HashMap::new();
+        let libs_dir = docs_root.join("libs");
+
+        for (lib_dir_name, category_name) in &categories {
+            let lib_path = libs_dir.join(lib_dir_name);
+            if !lib_path.is_dir() {
+                continue;
+            }
+            let category = format!("Lib{}", category_name);
+
+            let dir_entries = match std::fs::read_dir(&lib_path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            for entry in dir_entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+                let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                };
+                // Only include files whose stem looks like a module name:
+                // starts with uppercase, no hyphens or underscores
+                if !is_module_name(&stem) {
+                    continue;
+                }
+                let markdown = match std::fs::read_to_string(&path) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                // Insert exact-case entry
+                let doc = LibraryDocEntry {
+                    key: stem.clone(),
+                    category: category.clone(),
+                    markdown: markdown.clone(),
+                };
+                entries.insert(stem.clone(), doc);
+
+                // Insert uppercase alias (if different from exact case)
+                let upper = stem.to_uppercase();
+                if upper != stem {
+                    let alias = LibraryDocEntry {
+                        key: stem.clone(),
+                        category: category.clone(),
+                        markdown,
+                    };
+                    entries.insert(upper, alias);
+                }
+            }
+        }
+
+        Self { entries }
+    }
+
+    /// Lookup a library doc entry by key (case-insensitive).
+    pub fn get(&self, key: &str) -> Option<&LibraryDocEntry> {
+        if let Some(entry) = self.entries.get(key) {
+            return Some(entry);
+        }
+        self.entries.get(&key.to_uppercase())
+    }
+
+    /// Return all canonical library doc keys (deduplicated).
+    pub fn all_keys(&self) -> Vec<&str> {
+        let mut seen = std::collections::HashSet::new();
+        self.entries.values()
+            .filter(|entry| seen.insert(entry.key.as_str()))
+            .map(|entry| entry.key.as_str())
+            .collect()
+    }
+}
+
+/// Check if a filename stem looks like a Modula-2 module name.
+/// Must start with uppercase A-Z, rest alphanumeric only.
+fn is_module_name(stem: &str) -> bool {
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_uppercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Minimal TOML parser for libraries.toml.
+/// Extracts [section] + category = "value" pairs.
+fn parse_libraries_toml(content: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    let mut current_section = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            current_section = trimmed[1..trimmed.len() - 1].trim().to_string();
+        } else if let Some(eq_pos) = trimmed.find('=') {
+            let key = trimmed[..eq_pos].trim();
+            let val = trimmed[eq_pos + 1..].trim().trim_matches('"');
+            if key == "category" && !current_section.is_empty() {
+                result.push((current_section.clone(), val.to_string()));
+            }
+        }
+    }
+    result
+}
+
+/// Resolve the docs root directory.
+/// Checks (in order):
+///   1. M2C_DOCS_PATH environment variable
+///   2. Walk up from the binary's real path looking for docs/libs/libraries.toml
+pub fn resolve_docs_root() -> Option<PathBuf> {
+    // 1. Environment variable
+    if let Ok(path) = std::env::var("M2C_DOCS_PATH") {
+        let p = PathBuf::from(&path);
+        if p.join("libs").join("libraries.toml").exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Walk up from binary location
+    if let Ok(exe) = std::env::current_exe() {
+        // Resolve symlinks to get the real path
+        let real = match std::fs::canonicalize(&exe) {
+            Ok(p) => p,
+            Err(_) => exe,
+        };
+        let mut dir = real.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("docs").join("libs").join("libraries.toml");
+            if candidate.exists() {
+                return Some(d.join("docs"));
+            }
+            dir = d.parent();
+        }
+    }
+
+    None
+}
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -281,50 +411,69 @@ mod tests {
     }
 
     #[test]
-    fn test_get_doc_library() {
-        let entry = get_doc("Gfx").unwrap();
-        assert_eq!(entry.category, DocCategory::LibGraphics);
-        let entry2 = get_doc("Sockets").unwrap();
-        assert_eq!(entry2.category, DocCategory::LibNetworking);
-        let entry3 = get_doc("Promise").unwrap();
-        assert_eq!(entry3.category, DocCategory::LibAsync);
-        let entry4 = get_doc("Scheduler").unwrap();
-        assert_eq!(entry4.category, DocCategory::LibAsync);
-        // m2evloop modules
-        let entry5 = get_doc("EventLoop").unwrap();
-        assert_eq!(entry5.category, DocCategory::LibAsync);
-        let entry6 = get_doc("Timers").unwrap();
-        assert_eq!(entry6.category, DocCategory::LibAsync);
-        let entry7 = get_doc("Poller").unwrap();
-        assert_eq!(entry7.category, DocCategory::LibAsync);
-        // uppercase aliases
-        assert!(get_doc("EVENTLOOP").is_some());
-        assert!(get_doc("TIMERS").is_some());
-        assert!(get_doc("POLLER").is_some());
-        // m2http modules
-        let entry8 = get_doc("Buffers").unwrap();
-        assert_eq!(entry8.category, DocCategory::LibNetworking);
-        let entry9 = get_doc("URI").unwrap();
-        assert_eq!(entry9.category, DocCategory::LibNetworking);
-        let entry10 = get_doc("DNS").unwrap();
-        assert_eq!(entry10.category, DocCategory::LibNetworking);
-        let entry11 = get_doc("HTTPClient").unwrap();
-        assert_eq!(entry11.category, DocCategory::LibNetworking);
-        assert!(get_doc("BUFFERS").is_some());
-        assert!(get_doc("HTTPCLIENT").is_some());
-        // m2tls module
-        let entry12 = get_doc("TLS").unwrap();
-        assert_eq!(entry12.category, DocCategory::LibNetworking);
-    }
-
-    #[test]
     fn test_get_doc_missing() {
         assert!(get_doc("NONEXISTENT").is_none());
     }
 
     #[test]
-    fn test_registry_size() {
-        // Verify we have a reasonable number of entries
-        assert!(REGISTRY.len() >= 80, "expected at least 80 entries, got {}", REGISTRY.len());
+    fn test_core_registry_size() {
+        // Core entries only (no library entries)
+        assert!(REGISTRY.len() >= 80, "expected at least 80 core entries, got {}", REGISTRY.len());
+    }
+
+    #[test]
+    fn test_is_module_name() {
+        assert!(is_module_name("Gfx"));
+        assert!(is_module_name("HTTPClient"));
+        assert!(is_module_name("TLS"));
+        assert!(is_module_name("ByteBuf"));
+        // NOTE: README passes is_module_name() since it starts uppercase and is all alpha.
+        // This is fine — "README" won't conflict with any real M2 module name.
+        assert!(!is_module_name("api"));         // lowercase start
+        assert!(!is_module_name("design"));      // lowercase start
+        assert!(!is_module_name("Stream-Architecture")); // has hyphen
+        assert!(!is_module_name("http_get_example"));    // has underscore, lowercase
+    }
+
+    #[test]
+    fn test_parse_libraries_toml() {
+        let toml = r#"
+# comment
+[m2gfx]
+category = "Graphics"
+
+[m2log]
+category = "Helpers"
+"#;
+        let result = parse_libraries_toml(toml);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("m2gfx".to_string(), "Graphics".to_string()));
+        assert_eq!(result[1], ("m2log".to_string(), "Helpers".to_string()));
+    }
+
+    #[test]
+    fn test_library_docs_load() {
+        // Test loading from the actual docs directory
+        if let Some(docs_root) = resolve_docs_root() {
+            let lib_docs = LibraryDocs::load(&docs_root);
+            // Should find at least some library entries
+            assert!(!lib_docs.entries.is_empty(), "expected library docs to be loaded");
+            // Check a known module
+            let gfx = lib_docs.get("Gfx");
+            assert!(gfx.is_some(), "expected Gfx doc to be loaded");
+            assert_eq!(gfx.unwrap().category, "LibGraphics");
+            // Check case-insensitive lookup
+            assert!(lib_docs.get("GFX").is_some());
+            // Check m2bytes
+            assert!(lib_docs.get("ByteBuf").is_some());
+            assert_eq!(lib_docs.get("ByteBuf").unwrap().category, "LibHelpers");
+        }
+    }
+
+    #[test]
+    fn test_library_docs_empty() {
+        let lib_docs = LibraryDocs::empty();
+        assert!(lib_docs.get("Gfx").is_none());
+        assert!(lib_docs.all_keys().is_empty());
     }
 }

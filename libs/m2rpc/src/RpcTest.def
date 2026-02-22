@@ -1,0 +1,69 @@
+DEFINITION MODULE RpcTest;
+(* In-memory duplex byte stream for deterministic RPC testing.
+
+   A Pipe connects two endpoints (A and B) back-to-back.
+   Bytes written by A are readable by B, and vice versa.
+   No network, no syscalls, fully deterministic.
+
+   Partial I/O simulation: set readLimit / writeLimit to control
+   how many bytes each read/write call transfers.  This exercises
+   the FrameReader's incremental state machine with split reads.
+
+   ReadA / WriteA / ReadB / WriteB have the same signature as
+   RpcFrame.ReadFn / WriteFn, so they can be passed directly
+   as transport callbacks. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  Pipe = ADDRESS;  (* opaque handle *)
+
+(* Create a pipe pair.  readLimit and writeLimit control the
+   maximum bytes transferred per read/write call (0 = unlimited).
+   This lets tests simulate partial I/O without real networking. *)
+PROCEDURE CreatePipe(VAR p: Pipe;
+                     readLimit: CARDINAL;
+                     writeLimit: CARDINAL);
+
+(* Destroy a pipe and free its internal buffers. Sets p to NIL. *)
+PROCEDURE DestroyPipe(VAR p: Pipe);
+
+(* Close endpoint A's write direction.
+   Subsequent ReadB calls will see TsClosed after draining. *)
+PROCEDURE CloseA(p: Pipe);
+
+(* Close endpoint B's write direction.
+   Subsequent ReadA calls will see TsClosed after draining. *)
+PROCEDURE CloseB(p: Pipe);
+
+(* ── Endpoint A transport functions ───────────────────── *)
+
+(* Read from B→A direction.  Signature matches ReadFn.
+   ctx must be a valid Pipe handle. *)
+PROCEDURE ReadA(ctx: ADDRESS; buf: ADDRESS; max: CARDINAL;
+                VAR got: CARDINAL): CARDINAL;
+
+(* Write to A→B direction.  Signature matches WriteFn.
+   ctx must be a valid Pipe handle. *)
+PROCEDURE WriteA(ctx: ADDRESS; buf: ADDRESS; len: CARDINAL;
+                 VAR sent: CARDINAL): CARDINAL;
+
+(* ── Endpoint B transport functions ───────────────────── *)
+
+(* Read from A→B direction.  Signature matches ReadFn. *)
+PROCEDURE ReadB(ctx: ADDRESS; buf: ADDRESS; max: CARDINAL;
+                VAR got: CARDINAL): CARDINAL;
+
+(* Write to B→A direction.  Signature matches WriteFn. *)
+PROCEDURE WriteB(ctx: ADDRESS; buf: ADDRESS; len: CARDINAL;
+                 VAR sent: CARDINAL): CARDINAL;
+
+(* ── Query ────────────────────────────────────────────── *)
+
+(* Number of unread bytes pending in A→B direction. *)
+PROCEDURE PendingAtoB(p: Pipe): CARDINAL;
+
+(* Number of unread bytes pending in B→A direction. *)
+PROCEDURE PendingBtoA(p: Pipe): CARDINAL;
+
+END RpcTest.

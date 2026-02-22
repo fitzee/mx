@@ -1,0 +1,173 @@
+DEFINITION MODULE Fsm;
+(* Table-driven finite state machine with O(1) transition lookup.
+
+   Dense transition table: flat array indexed by state*numEvents+event.
+   No heap allocation in core runtime.  Caller provides all arrays.
+
+   Features:
+   - Per-transition actions and optional guards
+   - State entry/exit hooks
+   - Instrumentation counters (steps, invalid, rejected, errors)
+   - Optional trace hook for debugging
+
+   Usage:
+     VAR f: Fsm;
+         table: ARRAY [0..8] OF Transition;
+         acts: ARRAY [0..2] OF ActionProc;
+     ClearTable(ADR(table), 9);
+     SetTrans(table[0*3+0], 1, 1, NoGuard);
+     Init(f, 0, NIL, 3, 3, ADR(table));
+     SetActions(f, ADR(acts), 3);
+     Step(f, 0, NIL, status); *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* ── Identifiers ─────────────────────────────────────── *)
+
+TYPE
+  StateId  = CARDINAL;
+  EventId  = CARDINAL;
+  ActionId = CARDINAL;
+  GuardId  = CARDINAL;
+
+(* ── Status ──────────────────────────────────────────── *)
+
+TYPE
+  StepStatus = (Ok, NoTransition, GuardRejected, Error);
+
+(* ── Sentinels ───────────────────────────────────────── *)
+
+CONST
+  NoState  = 4294967295;  (* transition entry means "no transition" *)
+  NoAction = 0;           (* action slot 0 is reserved / no-op *)
+  NoGuard  = 0;           (* guard slot 0 is reserved / no-op *)
+
+(* ── Transition record ───────────────────────────────── *)
+
+TYPE
+  Transition = RECORD
+    next:   StateId;   (* target state; NoState = no transition *)
+    action: ActionId;  (* index into actions array; NoAction = skip *)
+    guard:  GuardId;   (* index into guards array; NoGuard = skip *)
+  END;
+
+(* ── Callback types ──────────────────────────────────── *)
+
+TYPE
+  (* Called when a transition fires. Set ok to FALSE to signal error. *)
+  ActionProc = PROCEDURE(ADDRESS, EventId, ADDRESS, VAR BOOLEAN);
+
+  (* Called before transition; set allow to FALSE to reject. *)
+  GuardProc  = PROCEDURE(ADDRESS, EventId, ADDRESS, VAR BOOLEAN);
+
+  (* Called on state entry or exit. *)
+  HookProc   = PROCEDURE(ADDRESS, StateId, ADDRESS);
+
+  (* Called once per Step with full context.
+     Args: traceCtx, fromState, toState, event, action, status. *)
+  TraceProc  = PROCEDURE(ADDRESS, StateId, StateId, EventId,
+                          ActionId, StepStatus);
+
+(* ── FSM instance ────────────────────────────────────── *)
+
+TYPE
+  Fsm = RECORD
+    state:     StateId;
+    start:     StateId;
+    ctx:       ADDRESS;
+    trans:     ADDRESS;
+    numStates: CARDINAL;
+    numEvents: CARDINAL;
+    acts:      ADDRESS;
+    numActs:   CARDINAL;
+    guards:    ADDRESS;
+    numGuards: CARDINAL;
+    onEnter:   ADDRESS;
+    onExit:    ADDRESS;
+    trace:     TraceProc;
+    traceCtx:  ADDRESS;
+    steps:     CARDINAL;
+    invalid:   CARDINAL;
+    rejected:  CARDINAL;
+    errors:    CARDINAL;
+  END;
+
+(* ── Lifecycle ───────────────────────────────────────── *)
+
+(* Initialise an FSM with a dense transition table.
+   trans must point to an array of numStates*numEvents Transition records.
+   Caller passes ADR(myTransitionArray).
+   Start state is set; all counters zeroed; no actions/guards/hooks. *)
+PROCEDURE Init(VAR f: Fsm; start: StateId; ctx: ADDRESS;
+               numStates, numEvents: CARDINAL; trans: ADDRESS);
+
+(* Reset state to start; clear all counters. *)
+PROCEDURE Reset(VAR f: Fsm);
+
+(* ── Configuration ───────────────────────────────────── *)
+
+(* Set the action callback array.
+   acts must point to an array of numActs ActionProc values.
+   Index 0 is reserved (NoAction); real actions start at index 1.
+   NIL entries are treated as no-op. *)
+PROCEDURE SetActions(VAR f: Fsm; acts: ADDRESS; numActs: CARDINAL);
+
+(* Set the guard callback array.
+   guards must point to an array of numGuards GuardProc values.
+   Index 0 is reserved (NoGuard); real guards start at index 1.
+   NIL entries are treated as no-op (allow). *)
+PROCEDURE SetGuards(VAR f: Fsm; guards: ADDRESS; numGuards: CARDINAL);
+
+(* Set state entry/exit hook arrays.
+   Each must point to an array of numStates HookProc values,
+   indexed by StateId.  NIL entries are no-op.
+   Pass NIL for either to disable that hook class. *)
+PROCEDURE SetHooks(VAR f: Fsm; enterHooks, exitHooks: ADDRESS);
+
+(* Set the trace callback.  Called once per Step with full context.
+   Pass NIL for proc to disable tracing. *)
+PROCEDURE SetTrace(VAR f: Fsm; proc: TraceProc; traceCtx: ADDRESS);
+
+(* ── Core ────────────────────────────────────────────── *)
+
+(* Process one event.
+   1. Bounds-check state/event; if out of range => Error.
+   2. Lookup transition; if NoState => NoTransition, invalid++.
+   3. If guard exists and rejects => GuardRejected, rejected++.
+   4. Call onExit hook for current state (if set).
+   5. Change state.
+   6. Call onEnter hook for new state (if set).
+   7. If action exists, call it; if ok=FALSE => Error, errors++.
+      State remains changed on error (documented choice).
+   8. Otherwise => Ok, steps++.
+   Trace is called exactly once at the end of every Step. *)
+PROCEDURE Step(VAR f: Fsm; ev: EventId; payload: ADDRESS;
+               VAR status: StepStatus);
+
+(* ── Queries ─────────────────────────────────────────── *)
+
+(* Current state. *)
+PROCEDURE CurrentState(VAR f: Fsm): StateId;
+
+(* Number of successful transitions. *)
+PROCEDURE StepCount(VAR f: Fsm): CARDINAL;
+
+(* Number of events with no matching transition. *)
+PROCEDURE InvalidCount(VAR f: Fsm): CARDINAL;
+
+(* Number of transitions rejected by guards. *)
+PROCEDURE RejectCount(VAR f: Fsm): CARDINAL;
+
+(* Number of action errors. *)
+PROCEDURE ErrorCount(VAR f: Fsm): CARDINAL;
+
+(* ── Table helpers ───────────────────────────────────── *)
+
+(* Fill a Transition record. *)
+PROCEDURE SetTrans(VAR t: Transition; next: StateId;
+                   action: ActionId; guard: GuardId);
+
+(* Fill n Transition entries at trans with NoState/NoAction/NoGuard. *)
+PROCEDURE ClearTable(trans: ADDRESS; n: CARDINAL);
+
+END Fsm.

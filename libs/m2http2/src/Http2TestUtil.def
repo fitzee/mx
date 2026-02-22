@@ -1,0 +1,53 @@
+DEFINITION MODULE Http2TestUtil;
+(* Test utilities for HTTP/2.
+
+   ByteBuf-based frame builder for constructing test vectors
+   without network I/O.  Deterministic, no heap beyond ByteBuf. *)
+
+FROM ByteBuf IMPORT Buf, BytesView;
+FROM Http2Types IMPORT FrameHeader, Settings;
+
+(* ── Frame builder ─────────────────────────────────────── *)
+
+(* Build a raw frame: header + payload bytes.
+   Writes the 9-byte header then appends payload. *)
+PROCEDURE BuildFrame(VAR b: Buf; ftype: CARDINAL; flags: CARDINAL;
+                     streamId: CARDINAL; payload: BytesView);
+
+(* Build a SETTINGS frame from individual setting values. *)
+PROCEDURE BuildSettingsFrame(VAR b: Buf; s: Settings);
+
+(* Build a SETTINGS ACK frame (no payload). *)
+PROCEDURE BuildSettingsAckFrame(VAR b: Buf);
+
+(* Build a PING frame with 8 bytes of data. *)
+PROCEDURE BuildPingFrame(VAR b: Buf; data: BytesView; isAck: BOOLEAN);
+
+(* Build a GOAWAY frame. *)
+PROCEDURE BuildGoawayFrame(VAR b: Buf; lastStreamId: CARDINAL;
+                           errorCode: CARDINAL);
+
+(* Build a WINDOW_UPDATE frame. *)
+PROCEDURE BuildWindowUpdateFrame(VAR b: Buf; streamId: CARDINAL;
+                                 increment: CARDINAL);
+
+(* Build a RST_STREAM frame. *)
+PROCEDURE BuildRstStreamFrame(VAR b: Buf; streamId: CARDINAL;
+                              errorCode: CARDINAL);
+
+(* ── Frame reader ──────────────────────────────────────── *)
+
+(* Read a frame header from the start of a view.
+   Advances the view past the header.
+   Returns ok=FALSE if fewer than 9 bytes. *)
+PROCEDURE ReadFrameHeader(VAR v: BytesView; VAR hdr: FrameHeader;
+                          VAR ok: BOOLEAN);
+
+(* Extract payload from a view given a frame header.
+   Returns a view of exactly hdr.length bytes.
+   Returns ok=FALSE if insufficient bytes. *)
+PROCEDURE ReadFramePayload(VAR v: BytesView; hdr: FrameHeader;
+                           VAR payload: BytesView;
+                           VAR ok: BOOLEAN);
+
+END Http2TestUtil.

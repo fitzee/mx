@@ -1,0 +1,15 @@
+manifest_version=1
+name=m2http2
+version=0.1.0
+edition=pim4
+entry=src/Http2Conn.mod
+includes=src
+
+[deps]
+m2bytes=path:../m2bytes
+m2fsm=path:../m2fsm
+
+[test]
+entry=tests/h2_tests.mod
+
+[cc]

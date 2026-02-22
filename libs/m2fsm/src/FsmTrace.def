@@ -1,0 +1,22 @@
+DEFINITION MODULE FsmTrace;
+(* Console trace adapter for Fsm.
+
+   Provides a TraceProc that prints transitions to stdout via InOut.
+   Plug into an Fsm with:
+     Fsm.SetTrace(f, ConsoleTrace, NIL);
+
+   Output format:
+     FSM: 0 -> 1 ev=0 act=1 OK
+     FSM: 1 -> 1 ev=2 act=0 NO_TRANS *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM Fsm IMPORT StateId, EventId, ActionId, StepStatus;
+
+(* Print a human-readable trace line to stdout.
+   Compatible with Fsm.TraceProc signature. *)
+PROCEDURE ConsoleTrace(traceCtx: ADDRESS;
+                       fromState, toState: StateId;
+                       ev: EventId; action: ActionId;
+                       status: StepStatus);
+
+END FsmTrace.

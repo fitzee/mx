@@ -1,0 +1,74 @@
+DEFINITION MODULE AuthMiddleware;
+
+  (* HTTP/2 server middleware and RPC auth guard for m2auth.
+
+     AuthMw is an Http2ServerTypes.MiddlewareProc: extracts Bearer
+     token from Authorization header, verifies via Auth.Verifier,
+     authorizes via Auth.Policy, stores the principal for handlers.
+
+     RpcAuthGuard wraps an RpcServer.Handler: expects a length-
+     prefixed token in the request body (first 2 bytes = token
+     length LE, then token bytes, then actual body).
+
+     Single-threaded: module-level variable holds the last verified
+     principal.  Handlers call GetPrincipal(). *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM Http2ServerTypes IMPORT Request, Response;
+  FROM Auth IMPORT Verifier, Policy, Principal, Status;
+
+  TYPE
+    AuditEventKind = (AeAuthOK, AeAuthFail, AeAuthzDeny);
+
+    AuditEvent = RECORD
+      kind:     AuditEventKind;
+      subject:  ARRAY [0..127] OF CHAR;
+      method:   ARRAY [0..15] OF CHAR;
+      path:     ARRAY [0..511] OF CHAR;
+      status:   Status;
+      remoteAddr: ARRAY [0..63] OF CHAR;
+    END;
+
+    AuditProc = PROCEDURE(VAR AuditEvent, ADDRESS);
+
+  (* Configure the middleware's verifier and policy.
+     Must be called before adding AuthMw to the server. *)
+  PROCEDURE Configure(v: Verifier; pol: Policy);
+
+  (* Set audit callback.  ctx is passed through. *)
+  PROCEDURE SetAuditCallback(proc: AuditProc; ctx: ADDRESS);
+
+  (* Http2Server MiddlewareProc.
+     Returns TRUE to continue chain (auth+authz OK),
+     FALSE to short-circuit (sets 401/403 response). *)
+  PROCEDURE AuthMw(VAR req: Request;
+                   VAR resp: Response;
+                   ctx: ADDRESS): BOOLEAN;
+
+  (* Retrieve the principal from the last successful AuthMw call.
+     Returns TRUE if a principal is available. *)
+  PROCEDURE GetPrincipal(VAR p: Principal): BOOLEAN;
+
+  (* RPC auth guard: wraps an existing RpcServer.Handler.
+     Token is extracted from the first bytes of the request body:
+       [2-byte LE token length] [token bytes] [actual body]
+     On auth failure, sets errCode and returns.
+     On success, delegates to the inner handler with trimmed body. *)
+  PROCEDURE SetRpcGuardHandler(
+    innerHandler: PROCEDURE(ADDRESS, CARDINAL,
+                            ADDRESS, CARDINAL,
+                            (*BytesView*) ADDRESS,
+                            VAR (*Buf*) ADDRESS,
+                            VAR CARDINAL,
+                            VAR BOOLEAN));
+
+  PROCEDURE RpcAuthGuard(ctx: ADDRESS;
+                          reqId: CARDINAL;
+                          methodPtr: ADDRESS;
+                          methodLen: CARDINAL;
+                          body: ADDRESS;
+                          VAR outBody: ADDRESS;
+                          VAR errCode: CARDINAL;
+                          VAR ok: BOOLEAN);
+
+END AuthMiddleware.

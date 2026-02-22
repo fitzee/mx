@@ -1,0 +1,102 @@
+DEFINITION MODULE RpcFrame;
+(* Length-prefixed framing over an abstract byte transport.
+
+   Frame wire format (v1):
+     4 bytes  big-endian payload length (0..MaxFrame)
+     N bytes  payload
+
+   The transport is abstracted via ReadFn / WriteFn procedure types,
+   so framing works over TCP streams, TLS sessions, or in-memory
+   pipes without any code changes.
+
+   FrameReader is an incremental state machine: call TryReadFrame
+   repeatedly until it returns FrmOk (complete frame) or an error.
+   Between calls the reader retains partial state, so it handles
+   partial reads from non-blocking transports correctly.
+
+   WriteFrame writes a complete frame in a blocking loop.
+   TryWriteFrame makes a single write attempt for event-loop use.
+
+   No heap allocation in steady state.  The internal payload buffer
+   is reused across frames -- only grows, never shrinks. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM ByteBuf IMPORT Buf, BytesView;
+
+CONST
+  (* Maximum payload size in bytes.  Constrained by ByteBuf.MaxBufCap.
+     Frames claiming a larger payload are rejected with FrmTooLarge. *)
+  MaxFrame = 65531;
+
+  (* Transport status codes returned by ReadFn / WriteFn. *)
+  TsOk        = 0;
+  TsWouldBlock = 1;
+  TsClosed    = 2;
+  TsError     = 3;
+
+TYPE
+  (* Transport read callback.
+     Reads up to max bytes into buf.  Sets got to bytes actually read.
+     Returns TsOk on success, TsWouldBlock if no data available,
+     TsClosed if peer closed, TsError on fatal error. *)
+  ReadFn = PROCEDURE(ADDRESS, ADDRESS, CARDINAL, VAR CARDINAL): CARDINAL;
+
+  (* Transport write callback.
+     Writes up to len bytes from buf.  Sets sent to bytes actually sent.
+     Same return codes as ReadFn. *)
+  WriteFn = PROCEDURE(ADDRESS, ADDRESS, CARDINAL, VAR CARDINAL): CARDINAL;
+
+  (* Frame read status. *)
+  FrameStatus = (FrmOk, FrmNeedMore, FrmClosed, FrmTooLarge, FrmError);
+
+  (* Incremental frame reader.  Accumulates bytes across multiple
+     TryReadFrame calls until a complete frame is assembled. *)
+  FrameReader = RECORD
+    state:      CARDINAL;   (* 0=reading length, 1=reading payload *)
+    lenBuf:     ARRAY [0..3] OF CHAR;
+    lenPos:     CARDINAL;
+    payloadBuf: Buf;
+    payloadLen: CARDINAL;
+    payloadPos: CARDINAL;
+    maxFrame:   CARDINAL;
+    readFn:     ReadFn;
+    readCtx:    ADDRESS;
+  END;
+
+(* ── FrameReader ──────────────────────────────────────── *)
+
+(* Initialize a frame reader.
+   maxFrame: maximum allowed payload size (clamped to MaxFrame).
+   fn/ctx: transport read function and its context pointer. *)
+PROCEDURE InitFrameReader(VAR fr: FrameReader;
+                          maxFrame: CARDINAL;
+                          fn: ReadFn; ctx: ADDRESS);
+
+(* Attempt to read a complete frame.
+   Call repeatedly until FrmOk or an error status.
+     FrmOk       — out is a view of the assembled payload.
+     FrmNeedMore — partial read; call again when data available.
+     FrmClosed   — transport closed cleanly.
+     FrmTooLarge — payload exceeds maxFrame; connection should close.
+     FrmError    — transport error; connection should close.
+   After FrmOk, the internal buffer is reused for the next frame. *)
+PROCEDURE TryReadFrame(VAR fr: FrameReader;
+                       VAR out: BytesView;
+                       VAR status: FrameStatus);
+
+(* Reset the reader to initial state, discarding any partial frame. *)
+PROCEDURE ResetFrameReader(VAR fr: FrameReader);
+
+(* Free the reader's internal buffer. *)
+PROCEDURE FreeFrameReader(VAR fr: FrameReader);
+
+(* ── Frame writing ────────────────────────────────────── *)
+
+(* Write a complete frame (length prefix + payload) in a blocking loop.
+   Loops until all bytes are sent or the transport reports an error.
+   Returns TRUE on success, FALSE on write failure. *)
+PROCEDURE WriteFrame(fn: WriteFn; ctx: ADDRESS;
+                     payload: BytesView;
+                     VAR ok: BOOLEAN);
+
+END RpcFrame.

@@ -1,6 +1,6 @@
 # Stream Usage Examples
 
-Three examples demonstrating Stream in different scenarios: async TCP echo client, async HTTPS GET over TLS, and sync integration with HTTPClient.
+Four examples demonstrating Stream in different scenarios: async TCP echo client, async HTTPS GET over TLS, sync integration with HTTPClient, and async TCP echo server.
 
 ## Example 1: TCP Echo Client (Async API)
 
@@ -336,6 +336,159 @@ END OnSocketEvent;
 | Integration with HTTPClient                 | Sync   | HTTPClient owns the watcher.                     |
 | One-off file transfer or echo client        | Async  | Future-based flow is simpler.                    |
 | Multiple concurrent streams on one loop     | Either | Each stream has its own fd and watcher.          |
+
+## Example 4: TCP Echo Server (Async API)
+
+A TCP server that accepts one connection, reads a message, echoes it back, and closes. Demonstrates server-side Stream usage with the async API.
+
+### Build
+
+```bash
+m2c --m2plus example_apps/echo_server.mod \
+  -I libs/m2stream/src \
+  -I libs/m2evloop/src \
+  -I libs/m2futures/src \
+  -I libs/m2sockets/src \
+  -I libs/m2tls/src \
+  libs/m2evloop/src/poller_bridge.c \
+  libs/m2sockets/src/sockets_bridge.c \
+  libs/m2tls/src/tls_bridge.c \
+  -lssl -lcrypto
+```
+
+### Code
+
+```modula2
+MODULE EchoServer;
+
+FROM SYSTEM IMPORT ADR;
+FROM Sockets IMPORT Socket, AF_INET, SOCK_STREAM, OK,
+                    SocketCreate, Bind, Listen, Accept,
+                    SetNonBlocking, SetReuseAddr, CloseSocket;
+IMPORT Sockets;
+FROM EventLoop IMPORT Loop, Create, GetScheduler, Run, SetInterval, Stop;
+FROM Scheduler IMPORT Scheduler;
+FROM Promise IMPORT Future, Result, GetResultIfSettled;
+IMPORT Promise;
+IMPORT Stream;
+FROM InOut IMPORT WriteString, WriteInt, WriteLn;
+
+CONST
+  Port = 9000;
+
+VAR
+  loop: Loop;
+  sched: Scheduler;
+  listenSock, clientSock: Socket;
+  strm: Stream.Stream;
+  recvFut, sendFut, closeFut: Future;
+  st: Stream.Status;
+  est: EventLoop.Status;
+  sst: Sockets.Status;
+  tid, phase: INTEGER;
+  buf: ARRAY [0..4095] OF CHAR;
+  peer: Sockets.SockAddr;
+  bytesRead: INTEGER;
+
+PROCEDURE OnCheck(user: ADDRESS);
+VAR
+  settled: BOOLEAN;
+  res: Result;
+  pst: Promise.Status;
+BEGIN
+  CASE phase OF
+    0: (* Wait for ReadAsync *)
+       pst := GetResultIfSettled(recvFut, settled, res);
+       IF NOT settled THEN RETURN END;
+       bytesRead := res.v.tag;
+       WriteString("Received "); WriteInt(bytesRead, 0);
+       WriteString(" bytes"); WriteLn;
+       (* Echo back *)
+       st := Stream.WriteAllAsync(strm, ADR(buf), bytesRead, sendFut);
+       IF st # Stream.OK THEN
+         WriteString("WriteAllAsync failed"); WriteLn;
+         Stop(loop); RETURN
+       END;
+       phase := 1 |
+
+    1: (* Wait for WriteAllAsync *)
+       pst := GetResultIfSettled(sendFut, settled, res);
+       IF NOT settled THEN RETURN END;
+       WriteString("Echoed "); WriteInt(res.v.tag, 0);
+       WriteString(" bytes"); WriteLn;
+       (* Close *)
+       st := Stream.CloseAsync(strm, closeFut);
+       phase := 2 |
+
+    2: (* Wait for CloseAsync *)
+       pst := GetResultIfSettled(closeFut, settled, res);
+       IF NOT settled THEN RETURN END;
+       WriteString("Connection closed"); WriteLn;
+       Stop(loop)
+  ELSE
+  END
+END OnCheck;
+
+BEGIN
+  phase := 0;
+
+  est := Create(loop);
+  sched := GetScheduler(loop);
+
+  (* Bind and listen *)
+  sst := SocketCreate(AF_INET, SOCK_STREAM, listenSock);
+  sst := SetReuseAddr(listenSock, TRUE);
+  sst := Bind(listenSock, Port);
+  sst := Listen(listenSock, 5);
+  WriteString("Listening on port "); WriteInt(Port, 0); WriteLn;
+
+  (* Accept one connection (blocking for simplicity) *)
+  sst := Accept(listenSock, clientSock, peer);
+  IF sst # Sockets.OK THEN
+    WriteString("Accept failed"); WriteLn; HALT
+  END;
+  sst := SetNonBlocking(clientSock, TRUE);
+  WriteString("Client connected"); WriteLn;
+
+  (* Wrap accepted socket in a Stream *)
+  st := Stream.CreateTCP(loop, sched, INTEGER(clientSock), strm);
+  IF st # Stream.OK THEN
+    WriteString("CreateTCP failed"); WriteLn; HALT
+  END;
+
+  (* Start reading *)
+  st := Stream.ReadAsync(strm, ADR(buf), 4096, recvFut);
+  IF st # Stream.OK THEN
+    WriteString("ReadAsync failed"); WriteLn; HALT
+  END;
+
+  est := SetInterval(loop, 10, OnCheck, NIL, tid);
+  Run(loop);
+
+  (* Cleanup *)
+  st := Stream.Destroy(strm);
+  CloseSocket(listenSock)
+END EchoServer.
+```
+
+### Key Patterns
+
+- **Accept -> SetNonBlocking -> CreateTCP**: The accepted socket is wrapped in a Stream exactly like a client-side connected socket. Stream doesn't care which end initiated the connection.
+- **Blocking accept, async I/O**: For simplicity, this example uses blocking `Accept`. A production server would use EventLoop to watch the listen socket for incoming connections.
+- **Sequential phases**: Read -> WriteAll -> Close, each waiting for the previous Future to settle.
+- **CloseAsync for graceful shutdown**: Ensures the socket is properly closed through the event loop.
+
+### Testing
+
+```bash
+# Terminal 1: Start the server
+./echo_server
+# Output: Listening on port 9000
+
+# Terminal 2: Connect and send data
+echo "Hello, server!" | nc localhost 9000
+# Output: Hello, server!
+```
 
 ## See Also
 

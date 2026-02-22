@@ -108,6 +108,94 @@ int m2_tls_ctx_set_client_cert(void *ctx,
     return 0;
 }
 
+/* ── Server context ──────────────────────────────────── */
+
+void *m2_tls_ctx_create_server(void) {
+    SSL_CTX *ctx;
+    m2_tls_init();
+    ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) return NULL;
+    /* Servers don't verify clients by default.  TLS 1.2 minimum. */
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    return ctx;
+}
+
+int m2_tls_ctx_set_server_cert(void *ctx,
+                                const char *cert_path,
+                                const char *key_path) {
+    if (!ctx || !cert_path || !key_path) return -1;
+    if (SSL_CTX_use_certificate_file((SSL_CTX *)ctx, cert_path,
+                                      SSL_FILETYPE_PEM) != 1)
+        return -1;
+    if (SSL_CTX_use_PrivateKey_file((SSL_CTX *)ctx, key_path,
+                                     SSL_FILETYPE_PEM) != 1)
+        return -2;
+    if (SSL_CTX_check_private_key((SSL_CTX *)ctx) != 1)
+        return -2;
+    return 0;
+}
+
+/* ── ALPN ────────────────────────────────────────────── */
+
+int m2_tls_ctx_set_alpn(void *ctx,
+                         const unsigned char *protos,
+                         int protos_len) {
+    if (!ctx || !protos || protos_len <= 0) return -1;
+    /* SSL_CTX_set_alpn_protos returns 0 on success. */
+    return SSL_CTX_set_alpn_protos((SSL_CTX *)ctx, protos,
+                                    (unsigned int)protos_len) == 0
+               ? 0 : -1;
+}
+
+/* Static buffer for server ALPN preferred list (one server ctx per process). */
+static unsigned char s_alpn_protos[64];
+static int           s_alpn_protos_len = 0;
+
+static int m2_alpn_select_cb(SSL *ssl,
+                              const unsigned char **out,
+                              unsigned char *outlen,
+                              const unsigned char *in,
+                              unsigned int inlen,
+                              void *arg) {
+    (void)ssl; (void)arg;
+    if (s_alpn_protos_len == 0)
+        return SSL_TLSEXT_ERR_NOACK;
+    if (SSL_select_next_proto((unsigned char **)out, outlen,
+                               s_alpn_protos, (unsigned int)s_alpn_protos_len,
+                               in, inlen) != OPENSSL_NPN_NEGOTIATED)
+        return SSL_TLSEXT_ERR_NOACK;
+    return SSL_TLSEXT_ERR_OK;
+}
+
+int m2_tls_ctx_set_alpn_server(void *ctx,
+                                const unsigned char *protos,
+                                int protos_len) {
+    if (!ctx || !protos || protos_len <= 0 || protos_len > 64)
+        return -1;
+    memcpy(s_alpn_protos, protos, (size_t)protos_len);
+    s_alpn_protos_len = protos_len;
+    SSL_CTX_set_alpn_select_cb((SSL_CTX *)ctx, m2_alpn_select_cb, NULL);
+    return 0;
+}
+
+int m2_tls_get_alpn(void *sess, char *out, int max) {
+    const unsigned char *proto = NULL;
+    unsigned int len = 0;
+    int copy;
+    if (!sess || !out || max <= 0) return 0;
+    SSL_get0_alpn_selected((const SSL *)sess, &proto, &len);
+    if (!proto || len == 0) {
+        out[0] = '\0';
+        return 0;
+    }
+    copy = (int)len;
+    if (copy >= max) copy = max - 1;
+    memcpy(out, proto, (size_t)copy);
+    out[copy] = '\0';
+    return copy;
+}
+
 /* ── Session ─────────────────────────────────────────── */
 
 void *m2_tls_session_create(void *ctx, int fd) {
@@ -120,6 +208,19 @@ void *m2_tls_session_create(void *ctx, int fd) {
         return NULL;
     }
     SSL_set_connect_state(ssl);
+    return ssl;
+}
+
+void *m2_tls_session_create_server(void *ctx, int fd) {
+    SSL *ssl;
+    if (!ctx) return NULL;
+    ssl = SSL_new((SSL_CTX *)ctx);
+    if (!ssl) return NULL;
+    if (SSL_set_fd(ssl, fd) != 1) {
+        SSL_free(ssl);
+        return NULL;
+    }
+    SSL_set_accept_state(ssl);
     return ssl;
 }
 

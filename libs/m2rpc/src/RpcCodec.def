@@ -1,0 +1,105 @@
+DEFINITION MODULE RpcCodec;
+(* RPC message encoding and decoding.
+
+   Wire format (v1) — encoded as a single frame payload:
+
+   All messages share a common header:
+     u8   version     (must be 1)
+     u8   msg_type    (0=Request, 1=Response, 2=Error)
+     u32  request_id  (big-endian, correlates request to response)
+
+   Request (msg_type=0):
+     u16  method_len  (big-endian)
+     [method_len bytes]  method name (UTF-8)
+     u32  body_len    (big-endian)
+     [body_len bytes]    request body
+
+   Response (msg_type=1):
+     u32  body_len    (big-endian)
+     [body_len bytes]    response body
+
+   Error (msg_type=2):
+     u16  err_code    (big-endian, see RpcErrors)
+     u16  err_msg_len (big-endian)
+     [err_msg_len bytes]  error message (UTF-8)
+     u32  body_len    (big-endian)
+     [body_len bytes]    optional error body
+
+   All decode procedures validate bounds strictly and return
+   ok=FALSE on any malformed input.  The cursor is not advanced
+   on failure. *)
+
+FROM ByteBuf IMPORT Buf, BytesView;
+
+CONST
+  Version    = 1;
+  MsgRequest  = 0;
+  MsgResponse = 1;
+  MsgError    = 2;
+
+(* ── Encoding ─────────────────────────────────────────── *)
+
+(* Encode an RPC request into buf.
+   method: method name (open array).
+   methodLen: number of characters in method.
+   body: request body (may be empty, len=0). *)
+PROCEDURE EncodeRequest(VAR buf: Buf;
+                        requestId: CARDINAL;
+                        method: ARRAY OF CHAR;
+                        methodLen: CARDINAL;
+                        body: BytesView);
+
+(* Encode an RPC response into buf. *)
+PROCEDURE EncodeResponse(VAR buf: Buf;
+                         requestId: CARDINAL;
+                         body: BytesView);
+
+(* Encode an RPC error into buf.
+   errMsg: human-readable error message (open array).
+   errMsgLen: number of characters in errMsg.
+   body: optional error body (may be empty). *)
+PROCEDURE EncodeError(VAR buf: Buf;
+                      requestId: CARDINAL;
+                      errCode: CARDINAL;
+                      errMsg: ARRAY OF CHAR;
+                      errMsgLen: CARDINAL;
+                      body: BytesView);
+
+(* ── Decoding ─────────────────────────────────────────── *)
+
+(* Decode the common header from a frame payload.
+   On success: sets version, msgType, requestId, ok=TRUE.
+   Advances an internal cursor past the 6-byte header. *)
+PROCEDURE DecodeHeader(payload: BytesView;
+                       VAR version: CARDINAL;
+                       VAR msgType: CARDINAL;
+                       VAR requestId: CARDINAL;
+                       VAR ok: BOOLEAN);
+
+(* Decode a request message body.
+   payload must be the FULL frame payload (including header).
+   On success: method is a view into payload, body is a view.
+   methodLen is the byte count of the method name. *)
+PROCEDURE DecodeRequest(payload: BytesView;
+                        VAR requestId: CARDINAL;
+                        VAR method: BytesView;
+                        VAR body: BytesView;
+                        VAR ok: BOOLEAN);
+
+(* Decode a response message body.
+   On success: body is a view into payload. *)
+PROCEDURE DecodeResponse(payload: BytesView;
+                         VAR requestId: CARDINAL;
+                         VAR body: BytesView;
+                         VAR ok: BOOLEAN);
+
+(* Decode an error message body.
+   On success: errMsg is a view into payload, body is a view. *)
+PROCEDURE DecodeError(payload: BytesView;
+                      VAR requestId: CARDINAL;
+                      VAR errCode: CARDINAL;
+                      VAR errMsg: BytesView;
+                      VAR body: BytesView;
+                      VAR ok: BOOLEAN);
+
+END RpcCodec.

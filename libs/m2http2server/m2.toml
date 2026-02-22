@@ -1,0 +1,31 @@
+# m2.toml - m2http2server: HTTP/2 server library
+#
+# Composes the full Modula-2+ networking/async/utility stack:
+#   m2http2 (framing, HPACK, stream FSM), m2stream (transport),
+#   m2tls (server TLS + ALPN), m2sockets (accept loop),
+#   m2evloop/m2futures (event-driven async), m2bytes (buffers),
+#   m2alloc (arena/pool memory), m2fsm (lifecycle FSM), m2log (logging).
+manifest_version=1
+name=m2http2server
+version=0.1.0
+edition=pim4
+entry=src/Http2Server.mod
+includes=src
+
+[deps]
+m2http2=path:../m2http2
+m2stream=path:../m2stream
+m2tls=path:../m2tls
+m2sockets=path:../m2sockets
+m2evloop=path:../m2evloop
+m2futures=path:../m2futures
+m2bytes=path:../m2bytes
+m2alloc=path:../m2alloc
+m2fsm=path:../m2fsm
+m2log=path:../m2log
+
+[test]
+entry=tests/h2s_tests.mod
+
+[cc]
+libs=-lssl -lcrypto

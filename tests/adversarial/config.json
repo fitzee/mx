@@ -23,5 +23,10 @@
   ],
   "runtime_extra_ldflags": [
     "-lssl", "-lcrypto"
-  ]
+  ],
+
+  "multi_tu_supported": true,
+  "multi_tu_skip_message": "m2c emits a single amalgamated .c; multi-TU not yet available",
+  "multi_tu_m2c_flags": ["--emit-per-module"],
+  "multi_tu_manifest": "_manifest.txt"
 }

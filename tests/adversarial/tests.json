@@ -271,5 +271,84 @@
     "expected_stdout_contains": ["PASS"],
     "tags": ["local_only"],
     "skip_sanitizers": true
+  },
+  {
+    "name": "ambig_type",
+    "category": "strict_ambiguity",
+    "dir": "programs/strict_ambiguity/ambig_type",
+    "main": "AmbigType.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expect_compile_fail": true,
+    "strict": true,
+    "tags": ["ci"]
+  },
+  {
+    "name": "ambig_enum",
+    "category": "strict_ambiguity",
+    "dir": "programs/strict_ambiguity/ambig_enum",
+    "main": "AmbigEnum.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expect_compile_fail": true,
+    "strict": true,
+    "tags": ["ci"]
+  },
+  {
+    "name": "ambig_proc",
+    "category": "strict_ambiguity",
+    "dir": "programs/strict_ambiguity/ambig_proc",
+    "main": "AmbigProc.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expect_compile_fail": true,
+    "strict": true,
+    "tags": ["ci"]
+  },
+  {
+    "name": "reexport_ambig",
+    "category": "strict_ambiguity",
+    "dir": "programs/strict_ambiguity/reexport_ambig",
+    "main": "ReexportAmbig.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expect_compile_fail": true,
+    "strict": true,
+    "tags": ["ci"]
+  },
+  {
+    "name": "mtu_linkage_trap",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/mtu_linkage_trap",
+    "main": "MTLinkTrap.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "42\n99\n42\n99\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "Multi-TU linkage trap: two modules with same-named exports (value, GetValue). Passes in both single-TU and multi-TU when names are properly module-prefixed. Would fail at link time in multi-TU if codegen emitted bare names."
+  },
+  {
+    "name": "callback_dispatch",
+    "category": "stream_stress",
+    "dir": "programs/stream_stress/callback_dispatch",
+    "main": "CallbackDispatch.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "15\n-3\n49\n8\n18\n",
+    "tags": ["ci"]
+  },
+  {
+    "name": "pointer_chain",
+    "category": "stream_stress",
+    "dir": "programs/stream_stress/pointer_chain",
+    "main": "PointerChain.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "11\n40\n60\n",
+    "tags": ["ci"]
   }
 ]

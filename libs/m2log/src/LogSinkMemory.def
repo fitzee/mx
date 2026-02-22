@@ -1,0 +1,56 @@
+DEFINITION MODULE LogSinkMemory;
+(* In-memory sink for testing.
+
+   Captures formatted log lines in a fixed-size ring buffer.
+   When the buffer is full, oldest entries are overwritten.
+   No heap allocation per log call.
+
+   Usage:
+     VAR ms: Sink; mem: MemorySink;
+     MemorySinkCreate(mem, ms);
+     AddSink(logger, ms);
+     ...
+     GetLine(mem, 0, buf);  (* get first captured line *)
+     GetCount(mem)           (* number of lines captured *) *)
+
+FROM Log IMPORT Sink, Record;
+
+CONST
+  MaxLines  = 64;    (* max lines stored *)
+  LineLen   = 512;   (* max chars per stored line *)
+
+TYPE
+  StoredLine = ARRAY [0..LineLen-1] OF CHAR;
+
+  MemorySink = RECORD
+    lines:     ARRAY [0..MaxLines-1] OF StoredLine;
+    count:     INTEGER;
+    nextSlot:  INTEGER;
+    totalSeen: INTEGER;
+  END;
+
+(* Initialize a MemorySink and return a Sink handle.
+   mem must outlive the Sink (pass a module-level variable). *)
+PROCEDURE Create(VAR mem: MemorySink; VAR out: Sink);
+
+(* Return the number of lines currently stored (up to MaxLines). *)
+PROCEDURE GetCount(VAR mem: MemorySink): INTEGER;
+
+(* Return the total number of log calls seen (may exceed MaxLines). *)
+PROCEDURE GetTotal(VAR mem: MemorySink): INTEGER;
+
+(* Copy stored line at index into buf.
+   index 0 is the oldest stored line.
+   Returns FALSE if index is out of range. *)
+PROCEDURE GetLine(VAR mem: MemorySink; index: INTEGER;
+                  VAR buf: ARRAY OF CHAR): BOOLEAN;
+
+(* Clear all stored lines and reset counters. *)
+PROCEDURE Clear(VAR mem: MemorySink);
+
+(* Check if any stored line contains the substring sub.
+   Returns TRUE if found. *)
+PROCEDURE Contains(VAR mem: MemorySink;
+                   sub: ARRAY OF CHAR): BOOLEAN;
+
+END LogSinkMemory.

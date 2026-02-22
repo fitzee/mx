@@ -1,0 +1,102 @@
+DEFINITION MODULE Http2ServerTestUtil;
+
+  (* Deterministic test harness for the HTTP/2 server.
+     Provides frame builders, a scripted peer, and test connection
+     creation that bypasses TLS and real sockets.
+     Uses ByteBuf for in-memory frame construction and reading. *)
+
+  FROM ByteBuf IMPORT Buf, BytesView;
+  FROM Http2Types IMPORT Settings, FrameHeader, HeaderEntry;
+  FROM Http2Hpack IMPORT DynTable;
+  FROM Http2ServerConn IMPORT ConnPtr;
+  FROM Http2ServerTypes IMPORT Response;
+
+  (* ── Frame builders (client → server) ───────────── *)
+
+  (* Append the 24-byte client connection preface to buf. *)
+  PROCEDURE BuildClientPreface(VAR buf: Buf);
+
+  (* Append a SETTINGS frame with default settings. *)
+  PROCEDURE BuildSettings(VAR buf: Buf; VAR s: Settings);
+
+  (* Append a SETTINGS ACK frame. *)
+  PROCEDURE BuildSettingsAck(VAR buf: Buf);
+
+  (* Append a HEADERS frame with HPACK-encoded headers.
+     Uses the provided encoder dynamic table.
+     streamId must be odd (client-initiated). *)
+  PROCEDURE BuildHeaders(VAR buf: Buf;
+                         VAR dt: DynTable;
+                         streamId: CARDINAL;
+                         VAR headers: ARRAY OF HeaderEntry;
+                         numHeaders: CARDINAL;
+                         endStream: BOOLEAN);
+
+  (* Append a DATA frame. *)
+  PROCEDURE BuildData(VAR buf: Buf;
+                      streamId: CARDINAL;
+                      data: BytesView;
+                      endStream: BOOLEAN);
+
+  (* Append a WINDOW_UPDATE frame. *)
+  PROCEDURE BuildWindowUpdate(VAR buf: Buf;
+                              streamId: CARDINAL;
+                              increment: CARDINAL);
+
+  (* Append a PING frame. *)
+  PROCEDURE BuildPing(VAR buf: Buf; data: BytesView);
+
+  (* Append a GOAWAY frame. *)
+  PROCEDURE BuildGoaway(VAR buf: Buf;
+                        lastStreamId: CARDINAL;
+                        errorCode: CARDINAL);
+
+  (* Append a RST_STREAM frame. *)
+  PROCEDURE BuildRstStream(VAR buf: Buf;
+                           streamId: CARDINAL;
+                           errorCode: CARDINAL);
+
+  (* Append a raw CONTINUATION frame (for violation testing). *)
+  PROCEDURE BuildContinuation(VAR buf: Buf;
+                              streamId: CARDINAL;
+                              data: BytesView;
+                              endHeaders: BOOLEAN);
+
+  (* ── Frame reader (server → client) ────────────── *)
+
+  (* Parse the next frame from a BytesView.
+     Advances view past the consumed frame.
+     Returns FALSE if insufficient data. *)
+  PROCEDURE ReadNextFrame(VAR v: BytesView;
+                          VAR hdr: FrameHeader;
+                          VAR payload: BytesView): BOOLEAN;
+
+  (* ── Test connection helpers ───────────────────── *)
+
+  (* Feed raw bytes into a test connection and process them.
+     Returns the server's output (response frames). *)
+  PROCEDURE FeedAndCollect(cp: ConnPtr;
+                           VAR input: Buf;
+                           VAR output: Buf);
+
+  (* Perform a complete H2 handshake on a test connection:
+     client preface + SETTINGS → server SETTINGS + ACK.
+     Returns FALSE if handshake failed. *)
+  PROCEDURE DoTestHandshake(cp: ConnPtr;
+                            VAR output: Buf): BOOLEAN;
+
+  (* Build a minimal GET request HEADERS frame.
+     Convenience for common test pattern. *)
+  PROCEDURE BuildGET(VAR buf: Buf;
+                     VAR dt: DynTable;
+                     streamId: CARDINAL;
+                     path: ARRAY OF CHAR);
+
+  (* Build a POST request HEADERS frame (no END_STREAM).
+     Body DATA must be sent separately. *)
+  PROCEDURE BuildPOST(VAR buf: Buf;
+                      VAR dt: DynTable;
+                      streamId: CARDINAL;
+                      path: ARRAY OF CHAR);
+
+END Http2ServerTestUtil.

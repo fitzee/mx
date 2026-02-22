@@ -1,0 +1,103 @@
+DEFINITION MODULE Http2Hpack;
+(* HPACK header compression (RFC 7541).
+
+   Implements integer encoding/decoding, static table lookup,
+   dynamic table with FIFO eviction, and header block decode/encode.
+
+   No Huffman encoding/decoding (documented limitation).
+   Uses fixed-size arrays -- no heap allocation.
+
+   Static table: 61 entries (RFC 7541 Appendix A).
+   Dynamic table: ring buffer with configurable max size. *)
+
+FROM Http2Types IMPORT HeaderEntry;
+FROM ByteBuf IMPORT BytesView, Buf;
+
+(* ── Integer codec (RFC 7541 Section 5.1) ──────────────── *)
+
+(* Encode an integer with the given prefix bit width (1..8).
+   mask is OR'd into the first byte's upper bits (e.g. 128 for indexed).
+   Appends one or more bytes to b. *)
+PROCEDURE EncodeInt(VAR b: Buf; value: CARDINAL;
+                    prefixBits: CARDINAL; mask: CARDINAL);
+
+(* Decode an integer with the given prefix bit width.
+   firstByte is the first byte already read (masked to prefix bits).
+   Reads additional bytes from v starting at pos.
+   Returns the decoded value; sets ok=FALSE on overflow or truncation. *)
+PROCEDURE DecodeInt(firstByte: CARDINAL; prefixBits: CARDINAL;
+                    v: BytesView; VAR pos: CARDINAL;
+                    VAR ok: BOOLEAN): CARDINAL;
+
+(* ── Static table ──────────────────────────────────────── *)
+
+(* Look up a static table entry by 1-based index.
+   Returns ok=FALSE if index is 0 or > 61. *)
+PROCEDURE StaticLookup(index: CARDINAL;
+                       VAR entry: HeaderEntry;
+                       VAR ok: BOOLEAN);
+
+(* Find a static table entry matching name (and optionally value).
+   Returns 0 if not found; otherwise the 1-based index.
+   If nameOnly is TRUE, matches name regardless of value. *)
+PROCEDURE StaticFind(name: ARRAY OF CHAR; nameLen: CARDINAL;
+                     value: ARRAY OF CHAR; valLen: CARDINAL;
+                     nameOnly: BOOLEAN): CARDINAL;
+
+(* ── Dynamic table ─────────────────────────────────────── *)
+
+TYPE
+  DynTable = RECORD
+    entries:  ARRAY [0..127] OF HeaderEntry;
+    head:     CARDINAL;   (* index of newest entry *)
+    count:    CARDINAL;   (* number of entries *)
+    byteSize: CARDINAL;   (* current size in octets per RFC 7541 *)
+    maxSize:  CARDINAL;   (* max size in octets *)
+  END;
+
+(* Initialise a dynamic table with the given max size (bytes).
+   Default per RFC: 4096. *)
+PROCEDURE DynInit(VAR dt: DynTable; maxSize: CARDINAL);
+
+(* Insert a header entry at the front of the dynamic table.
+   Evicts oldest entries as needed to stay within maxSize.
+   Entry size = nameLen + valLen + 32 (RFC 7541 Section 4.1). *)
+PROCEDURE DynInsert(VAR dt: DynTable;
+                    name: ARRAY OF CHAR; nameLen: CARDINAL;
+                    value: ARRAY OF CHAR; valLen: CARDINAL);
+
+(* Look up by dynamic table index (0-based relative to head).
+   Returns ok=FALSE if index >= count. *)
+PROCEDURE DynLookup(VAR dt: DynTable; index: CARDINAL;
+                    VAR entry: HeaderEntry; VAR ok: BOOLEAN);
+
+(* Resize the dynamic table.  Evicts as needed. *)
+PROCEDURE DynResize(VAR dt: DynTable; newMaxSize: CARDINAL);
+
+(* Number of entries currently in the dynamic table. *)
+PROCEDURE DynCount(VAR dt: DynTable): CARDINAL;
+
+(* ── Header block decode ───────────────────────────────── *)
+
+(* Decode a complete header block from a BytesView.
+   Fills the headers array with decoded entries.
+   numHeaders returns how many were decoded (max = maxOut).
+   Returns ok=FALSE on any decode error. *)
+PROCEDURE DecodeHeaderBlock(v: BytesView;
+                            VAR dt: DynTable;
+                            VAR headers: ARRAY OF HeaderEntry;
+                            maxOut: CARDINAL;
+                            VAR numHeaders: CARDINAL;
+                            VAR ok: BOOLEAN);
+
+(* ── Header block encode ───────────────────────────────── *)
+
+(* Encode headers into a header block appended to b.
+   Uses incremental indexing for known headers.
+   numHeaders is the count of entries to encode. *)
+PROCEDURE EncodeHeaderBlock(VAR b: Buf;
+                            VAR dt: DynTable;
+                            VAR headers: ARRAY OF HeaderEntry;
+                            numHeaders: CARDINAL);
+
+END Http2Hpack.

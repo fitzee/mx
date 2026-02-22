@@ -1,0 +1,195 @@
+DEFINITION MODULE Http2Types;
+(* HTTP/2 constants, frame types, error codes, settings, and shared types.
+
+   RFC 7540 / RFC 9113 constants.  No procedures, no state.
+   All numeric values match the wire protocol exactly. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* ── Frame types (RFC 7540 Section 6) ──────────────────── *)
+
+CONST
+  FrameData         = 0;
+  FrameHeaders      = 1;
+  FramePriority     = 2;
+  FrameRstStream    = 3;
+  FrameSettings     = 4;
+  FramePushPromise  = 5;
+  FramePing         = 6;
+  FrameGoaway       = 7;
+  FrameWindowUpdate = 8;
+  FrameContinuation = 9;
+  NumFrameTypes     = 10;
+
+(* ── Frame flags ───────────────────────────────────────── *)
+
+CONST
+  FlagEndStream  = 1;    (* 0x01 *)
+  FlagAck        = 1;    (* 0x01 - for SETTINGS/PING *)
+  FlagEndHeaders = 4;    (* 0x04 *)
+  FlagPadded     = 8;    (* 0x08 *)
+  FlagPriority   = 32;   (* 0x20 *)
+
+(* ── Error codes (RFC 7540 Section 7) ──────────────────── *)
+
+CONST
+  ErrNoError            = 0;
+  ErrProtocol           = 1;
+  ErrInternal           = 2;
+  ErrFlowControl        = 3;
+  ErrSettingsTimeout    = 4;
+  ErrStreamClosed       = 5;
+  ErrFrameSize          = 6;
+  ErrRefusedStream      = 7;
+  ErrCancel             = 8;
+  ErrCompression        = 9;
+  ErrConnect            = 10;
+  ErrEnhanceYourCalm    = 11;
+  ErrInadequateSecurity = 12;
+  ErrHttp11Required     = 13;
+
+(* ── Settings identifiers (RFC 7540 Section 6.5.2) ────── *)
+
+CONST
+  SetHeaderTableSize      = 1;
+  SetEnablePush           = 2;
+  SetMaxConcurrentStreams  = 3;
+  SetInitialWindowSize    = 4;
+  SetMaxFrameSize         = 5;
+  SetMaxHeaderListSize    = 6;
+  NumSettingsIds           = 7;  (* 1..6, index 0 unused *)
+
+(* ── Settings defaults ─────────────────────────────────── *)
+
+CONST
+  DefaultHeaderTableSize     = 4096;
+  DefaultEnablePush          = 1;
+  DefaultMaxConcurrentStreams = 4294967295;  (* unlimited *)
+  DefaultInitialWindowSize   = 65535;
+  DefaultMaxFrameSize        = 16384;
+  DefaultMaxHeaderListSize   = 4294967295;  (* unlimited *)
+
+(* ── Frame size limits ─────────────────────────────────── *)
+
+CONST
+  FrameHeaderSize = 9;
+  MaxFramePayload = 16777215;  (* 2^24 - 1 *)
+  MinFrameSize    = 16384;
+  MaxFrameSizeMax = 16777215;
+
+(* ── Flow control ──────────────────────────────────────── *)
+
+CONST
+  DefaultWindowSize   = 65535;
+  MaxWindowSize       = 2147483647;  (* 2^31 - 1 *)
+  ConnectionStreamId  = 0;
+
+(* ── Connection preface ────────────────────────────────── *)
+
+CONST
+  PrefaceLen = 24;
+
+(* ── Frame header record ──────────────────────────────── *)
+
+TYPE
+  FrameHeader = RECORD
+    length:   CARDINAL;   (* 24-bit payload length *)
+    ftype:    CARDINAL;   (* frame type 0..255 *)
+    flags:    CARDINAL;   (* frame flags 0..255 *)
+    streamId: CARDINAL;   (* 31-bit stream identifier *)
+  END;
+
+(* ── Settings record ──────────────────────────────────── *)
+
+TYPE
+  Settings = RECORD
+    headerTableSize:     CARDINAL;
+    enablePush:          CARDINAL;
+    maxConcurrentStreams: CARDINAL;
+    initialWindowSize:   CARDINAL;
+    maxFrameSize:        CARDINAL;
+    maxHeaderListSize:   CARDINAL;
+  END;
+
+(* ── Stream FSM states ─────────────────────────────────── *)
+
+CONST
+  StIdle             = 0;
+  StReservedLocal    = 1;
+  StReservedRemote   = 2;
+  StOpen             = 3;
+  StHalfClosedLocal  = 4;
+  StHalfClosedRemote = 5;
+  StClosed           = 6;
+  NumStreamStates    = 7;
+
+(* ── Stream FSM events ─────────────────────────────────── *)
+
+CONST
+  EvSendH    = 0;  (* send HEADERS *)
+  EvSendHES  = 1;  (* send HEADERS with END_STREAM *)
+  EvSendES   = 2;  (* send END_STREAM on DATA *)
+  EvSendRst  = 3;  (* send RST_STREAM *)
+  EvRecvH    = 4;  (* recv HEADERS *)
+  EvRecvHES  = 5;  (* recv HEADERS with END_STREAM *)
+  EvRecvES   = 6;  (* recv END_STREAM on DATA *)
+  EvRecvRst  = 7;  (* recv RST_STREAM *)
+  EvRecvPP   = 8;  (* recv PUSH_PROMISE *)
+  NumStreamEvents = 9;
+
+(* ── Connection FSM states ─────────────────────────────── *)
+
+CONST
+  ConnIdle         = 0;
+  ConnWaitPreface  = 1;
+  ConnWaitSettings = 2;
+  ConnOpen         = 3;
+  ConnGoingAway    = 4;
+  ConnClosed       = 5;
+  NumConnStates    = 6;
+
+(* ── Connection FSM events ─────────────────────────────── *)
+
+CONST
+  CEvSendPreface     = 0;
+  CEvRecvSettings    = 1;
+  CEvSendSettingsAck = 2;
+  CEvRecvSettingsAck = 3;
+  CEvRecvPing        = 4;
+  CEvSendPingAck     = 5;
+  CEvRecvGoaway      = 6;
+  CEvSendGoaway      = 7;
+  CEvConnError       = 8;
+  NumConnEvents      = 9;
+
+(* ── HPACK constants ───────────────────────────────────── *)
+
+CONST
+  HpackStaticTableSize = 61;
+  HpackMaxDynEntries   = 128;
+  HpackMaxNameLen      = 128;
+  HpackMaxValueLen     = 4096;
+
+(* ── Header entry ──────────────────────────────────────── *)
+
+CONST
+  MaxHeaderName  = 128;
+  MaxHeaderValue = 4096;
+  MaxHeaders     = 64;
+
+TYPE
+  HeaderName  = ARRAY [0..127] OF CHAR;
+  HeaderValue = ARRAY [0..4095] OF CHAR;
+
+  HeaderEntry = RECORD
+    name:    HeaderName;
+    nameLen: CARDINAL;
+    value:   HeaderValue;
+    valLen:  CARDINAL;
+  END;
+
+(* ── Helper to initialise default settings ─────────────── *)
+
+PROCEDURE InitDefaultSettings(VAR s: Settings);
+
+END Http2Types.

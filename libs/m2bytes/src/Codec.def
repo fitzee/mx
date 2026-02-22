@@ -1,0 +1,89 @@
+DEFINITION MODULE Codec;
+(* Binary reader/writer with endian support and varint codec.
+
+   Reader provides cursor-based sequential reading from a BytesView.
+   Writer provides sequential writing to a Buf.
+
+   All multi-byte reads/writes come in LE (little-endian) and BE
+   (big-endian) variants.  Each operation takes a VAR ok: BOOLEAN
+   parameter; on failure (insufficient bytes or overflow), ok is
+   set to FALSE and the cursor does not advance.
+
+   Varint uses the standard LEB128 encoding for unsigned values
+   and ZigZag encoding for signed values.  Maximum encoded length
+   is 5 bytes for 32-bit and 10 bytes for 64-bit values.
+
+   All operations are deterministic.  No heap allocation. *)
+
+FROM ByteBuf IMPORT BytesView, Buf;
+
+TYPE
+  Reader = RECORD
+    v:   BytesView;
+    pos: CARDINAL;
+  END;
+
+  Writer = RECORD
+    buf: POINTER TO Buf;
+  END;
+
+(* ── Reader ─────────────────────────────────────────── *)
+
+PROCEDURE InitReader(VAR r: Reader; v: BytesView);
+
+(* Bytes remaining from current position. *)
+PROCEDURE Remaining(VAR r: Reader): CARDINAL;
+
+(* Read a single unsigned byte (0..255). *)
+PROCEDURE ReadU8(VAR r: Reader; VAR ok: BOOLEAN): CARDINAL;
+
+(* Read 16-bit unsigned, little-endian / big-endian. *)
+PROCEDURE ReadU16LE(VAR r: Reader; VAR ok: BOOLEAN): CARDINAL;
+PROCEDURE ReadU16BE(VAR r: Reader; VAR ok: BOOLEAN): CARDINAL;
+
+(* Read 32-bit unsigned, little-endian / big-endian.
+   Returns CARDINAL (unsigned 32-bit). *)
+PROCEDURE ReadU32LE(VAR r: Reader; VAR ok: BOOLEAN): CARDINAL;
+PROCEDURE ReadU32BE(VAR r: Reader; VAR ok: BOOLEAN): CARDINAL;
+
+(* Read 32-bit signed, little-endian / big-endian. *)
+PROCEDURE ReadI32LE(VAR r: Reader; VAR ok: BOOLEAN): INTEGER;
+PROCEDURE ReadI32BE(VAR r: Reader; VAR ok: BOOLEAN): INTEGER;
+
+(* Skip n bytes.  Sets ok=FALSE if insufficient remaining. *)
+PROCEDURE Skip(VAR r: Reader; n: CARDINAL; VAR ok: BOOLEAN);
+
+(* Read n bytes as a zero-copy sub-view.
+   Sets ok=FALSE if insufficient remaining. *)
+PROCEDURE ReadSlice(VAR r: Reader; n: CARDINAL;
+                    VAR out: BytesView; VAR ok: BOOLEAN);
+
+(* ── Writer ─────────────────────────────────────────── *)
+
+PROCEDURE InitWriter(VAR w: Writer; VAR b: Buf);
+
+PROCEDURE WriteU8(VAR w: Writer; val: CARDINAL);
+PROCEDURE WriteU16LE(VAR w: Writer; val: CARDINAL);
+PROCEDURE WriteU16BE(VAR w: Writer; val: CARDINAL);
+PROCEDURE WriteU32LE(VAR w: Writer; val: CARDINAL);
+PROCEDURE WriteU32BE(VAR w: Writer; val: CARDINAL);
+PROCEDURE WriteI32LE(VAR w: Writer; val: INTEGER);
+PROCEDURE WriteI32BE(VAR w: Writer; val: INTEGER);
+PROCEDURE WriteChars(VAR w: Writer; a: ARRAY OF CHAR; n: CARDINAL);
+
+(* ── Varint (LEB128 / ZigZag) ───────────────────────── *)
+
+(* Encode unsigned 32-bit as LEB128 varint. *)
+PROCEDURE WriteVarU32(VAR w: Writer; val: CARDINAL);
+
+(* Decode unsigned 32-bit varint.  ok=FALSE on malformed input
+   (more than 5 bytes) or insufficient data. *)
+PROCEDURE ReadVarU32(VAR r: Reader; VAR ok: BOOLEAN): CARDINAL;
+
+(* Encode signed 32-bit as ZigZag + LEB128. *)
+PROCEDURE WriteVarI32(VAR w: Writer; val: INTEGER);
+
+(* Decode signed 32-bit ZigZag varint. *)
+PROCEDURE ReadVarI32(VAR r: Reader; VAR ok: BOOLEAN): INTEGER;
+
+END Codec.

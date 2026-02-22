@@ -9,9 +9,11 @@ Stress tests for the m2c Modula-2 -> C transpiler, targeting:
 - **Procedure values** -- proc vars, cross-module proc vars, same-name disambiguation
 - **ABI / layout** -- record field access, nested arrays/records, VAR param passing
 - **UB detection** -- ASan+UBSan on generated C code
-- **Metamorphic testing** -- O0 vs O2 output equivalence, source transforms
-- **Fuzzing** -- parser crash testing, well-typed program generation, corpus persistence
+- **Metamorphic testing** -- O0 vs O2 output equivalence, 4 source transforms
+- **Fuzzing** -- parser crash testing, well-typed program generation (VAR params + records), corpus persistence
 - **Runtime edge cases** -- EventLoop timers, Stream partial I/O
+- **Strict ambiguity** -- emulated strict mode catches duplicate-import ambiguities
+- **Stream stress** -- proc vars through complex selectors, pointer chains, parallel arrays
 
 ## Quick Start
 
@@ -27,6 +29,15 @@ python3 tests/adversarial/run_adversarial.py --category symbol_namespace
 
 # Multiple categories:
 python3 tests/adversarial/run_adversarial.py --category resolution,import_chain,proc_values
+
+# Multi-TU mode (per-module .c files, separate compile + link):
+python3 tests/adversarial/run_adversarial.py --link-mode multi_tu
+
+# Strict ambiguity checking:
+python3 tests/adversarial/run_adversarial.py --strict on --category strict_ambiguity
+
+# Full CI with strict + sanitizers:
+python3 tests/adversarial/run_adversarial.py --mode ci --sanitizers on --strict on
 ```
 
 ## Requirements
@@ -44,6 +55,8 @@ python3 tests/adversarial/run_adversarial.py --category resolution,import_chain,
 | `--category` | `all` | Comma-separated (see categories below) |
 | `--compiler` | `all` | `clang`, `gcc`, or `all` |
 | `--sanitizers` | `on` | `on` or `off` -- ASan+UBSan on generated C |
+| `--link-mode` | `single_tu` | `single_tu` or `multi_tu` -- per-module C compilation + link |
+| `--strict` | `off` | `on` or `off` -- emulated strict ambiguity checking |
 | `--seed` | `20260221` | Deterministic seed for fuzz tests |
 | `--config` | `config.json` | Path to config file |
 | `--tests` | `tests.json` | Path to test catalog |
@@ -61,9 +74,13 @@ when multiple modules define types with the same name (e.g. `Status`).
 | `stress_collision` | Six modules (EventLoop, Sockets, TLS, Promise, Scheduler, Stream) each defining `Status` |
 | `unqualified_variant` | `s := OK` resolves correctly in single-module programs |
 | `qualified_variant` | `QA.MakeOK()` resolves through correct module's enum |
+| `mtu_linkage_trap` | Two modules with same-named exports (`value`, `GetValue`) -- proves multi-TU linkage is correct |
 
 Each test also runs a **post-transpile C scan** that checks the generated `.c` file for
 duplicate typedef names, enumerator names, and non-static function definitions.
+
+An enhanced **missing-static scan** also flags non-static function definitions at file scope
+(warning only, does not fail tests). This will be critical when multi-TU mode is implemented.
 
 ### B) Semantics (`semantics`)
 
@@ -129,7 +146,11 @@ Programs that SHOULD be safe -- if ASan/UBSan triggers, the codegen has a bug.
 
 Verifies the same program produces identical output across:
 - `-O0` vs `-O2` compilation
-- Source-to-source transforms (dead code insertion, alpha rename)
+- 4 source-to-source transforms:
+  - **dead_code** -- insert `IF FALSE THEN ... END` after BEGIN
+  - **alpha_rename** -- rename single-letter variables to `zz_` prefixed names
+  - **decl_reorder** -- reverse order of top-level PROCEDURE declarations
+  - **temp_intro** -- introduce a temp variable for the first `WriteInt(Func(...), w)` call
 
 ### I) Fuzzing (`fuzz`)
 
@@ -137,8 +158,11 @@ Time-bounded, seeded, reproducible:
 
 1. **Corpus replay** -- Previously-failing inputs are re-tested; passing ones auto-removed
 2. **Parser crash fuzzer** -- random token sequences; transpiler may reject but must not crash
-3. **Well-typed program fuzzer** -- generates valid M2 programs with integer arithmetic;
-   transpile + compile + run must not crash
+3. **Well-typed program fuzzer** -- generates valid M2 programs with:
+   - Integer arithmetic
+   - VAR parameter procedures (50% chance)
+   - Swap procedures (30% chance)
+   - Record types with field access (40% chance)
 
 Failing inputs are saved to:
 - `out/<timestamp>/fuzz/failures/` -- per-run artifacts
@@ -155,10 +179,57 @@ Network/EventLoop tests over loopback TCP. **Marked `local_only`** -- skipped in
 | `timer_cancel` | Timer creation, firing, cancellation via EventLoop |
 | `stream_partial` | Partial read/write reassembly over loopback TCP |
 
+### K) Strict Ambiguity (`strict_ambiguity`)
+
+Emulated strict mode -- only runs when `--strict on`. The runner parses `FROM M IMPORT` lines
+and detects names imported from 2+ modules that are used unqualified. Tests are marked with
+`"strict": true` and `"expect_compile_fail": true`.
+
+| Test | What it catches |
+|------|-----------------|
+| `ambig_type` | `Status` imported from both `SA_A` and `SA_B`, used bare as type |
+| `ambig_enum` | `State` and `OK` imported from both `SE_A` and `SE_B`, used bare |
+| `ambig_proc` | `Init` imported from both `SP_A` and `SP_B`, assigned to proc var |
+| `reexport_ambig` | `Compute` re-exported through `RA_A` and `RA_C`, used bare |
+
+### L) Stream Stress (`stream_stress`)
+
+CI-safe, deterministic, no networking. Targets historically fragile codegen paths: procedure
+references through complex selectors, pointer chains, parallel arrays of records + proc vars.
+
+| Test | What it catches |
+|------|-----------------|
+| `callback_dispatch` | Array of proc vars called with record field arguments |
+| `pointer_chain` | Linked list traversal + indexed proc var call on `p^.id` |
+
+## Multi-TU Mode
+
+The `--link-mode` flag supports `single_tu` (default) and `multi_tu`.
+
+**Single-TU** (default): m2c emits one amalgamated `.c` file. The runner compiles it directly
+with `cc -O0/-O2`, optionally with ASan+UBSan.
+
+**Multi-TU**: m2c uses `--emit-per-module` to emit separate C files per module:
+- `_common.h` -- runtime header + all module type/prototype/extern declarations
+- `<Module>.c` -- module variable definitions, procedure bodies, init function
+- `_main.c` -- the main module
+- `_manifest.txt` -- list of all `.c` files to compile
+
+The runner compiles each `.c` independently (`-c` to `.o`), then links all `.o` files into
+one executable. This tests that:
+- Exported symbols have correct external linkage (no stale `static`)
+- `extern` declarations in `_common.h` match the actual definitions
+- Module-prefixed names prevent symbol collisions across translation units
+- Init functions are properly declared and called
+
+The `mtu_linkage_trap` test specifically validates this: two modules export identically-named
+symbols (`value`, `GetValue`). If the codegen emitted bare C names, multi-TU would fail at
+link time with duplicate symbol errors.
+
 ## Output
 
 All artifacts are written to `tests/adversarial/out/<timestamp>/`:
-- `report.json` -- machine-readable results
+- `report.json` -- machine-readable results (includes `link_mode` and `strict` fields)
 - `<category>/<test>/output.c` -- generated C files
 - `<category>/<test>/exe_*` -- compiled executables
 - `fuzz/failures/` -- any inputs that crashed the parser/compiler
@@ -203,6 +274,7 @@ All artifacts are written to `tests/adversarial/out/<timestamp>/`:
 | `extra_cflags` | no | Additional C compiler flags |
 | `extra_ldflags` | no | Additional linker flags |
 | `skip_sanitizers` | no | `true` to skip ASan/UBSan for this test |
+| `strict` | no | `true` = test only runs when `--strict on`; skipped otherwise |
 | `tags` | no | `["ci"]` = runs in CI; `["local_only"]` = skipped in CI mode |
 
 ## CI Integration

@@ -48,11 +48,49 @@ int  m2_tls_ctx_set_client_cert(void *ctx,
                                  const char *cert_path,
                                  const char *key_path);
 
+/* ── Server context ─────────────────────────────────── */
+
+/* Returns opaque server ctx handle, or NULL on failure.
+   Uses TLS_server_method().  Defaults: no peer verify, TLS 1.2 min. */
+void *m2_tls_ctx_create_server(void);
+
+/* Load server certificate + private key from PEM files.
+   Returns 0 on success, -1 on cert error, -2 on key error. */
+int  m2_tls_ctx_set_server_cert(void *ctx,
+                                 const char *cert_path,
+                                 const char *key_path);
+
+/* ── ALPN ───────────────────────────────────────────── */
+
+/* Client-side ALPN: set protocol list in wire format
+   (length-prefixed, e.g. "\x02h2").
+   Returns 0 on success, -1 on failure. */
+int  m2_tls_ctx_set_alpn(void *ctx,
+                          const unsigned char *protos,
+                          int protos_len);
+
+/* Server-side ALPN: set preferred protocol list in wire format.
+   Installs a select callback.  Max 64 bytes of protos.
+   Returns 0 on success, -1 on failure. */
+int  m2_tls_ctx_set_alpn_server(void *ctx,
+                                 const unsigned char *protos,
+                                 int protos_len);
+
+/* Query negotiated ALPN after handshake.
+   Copies protocol string (e.g. "h2") into out.
+   Returns length, or 0 if no ALPN negotiated. */
+int  m2_tls_get_alpn(void *sess, char *out, int max);
+
 /* ── Session (SSL) ───────────────────────────────────── */
 
 /* Create SSL from ctx, attach to fd, set connect state.
    Returns opaque session handle or NULL. */
 void *m2_tls_session_create(void *ctx, int fd);
+
+/* Create SSL from ctx, attach to fd, set accept state (server).
+   Returns opaque session handle or NULL. */
+void *m2_tls_session_create_server(void *ctx, int fd);
+
 void  m2_tls_session_destroy(void *sess);
 
 /* Set SNI hostname for the session.

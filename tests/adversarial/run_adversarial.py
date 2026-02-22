@@ -6,14 +6,18 @@ Tests for:
   A) Symbol namespace collisions across modules (esp. enums)
   B) Semantic correctness (short-circuit, aliasing, init order, ...)
   C) UB detection via ASan/UBSan on generated C
-  D) Metamorphic properties (O0 vs O2 output equivalence)
-  E) Fuzzing (parser crash, well-typed program generation)
+  D) Metamorphic properties (O0 vs O2 output equivalence, 4 transforms)
+  E) Fuzzing (parser crash, well-typed program generation w/ VAR params + records)
   F) Runtime / network edge cases (EventLoop, Sockets, Stream, ...)
+  G) Strict ambiguity checking (emulated --strict mode)
+  H) Stream stress (proc vars, pointer chains, complex selectors)
 
 Usage:
   python3 run_adversarial.py --mode ci
   python3 run_adversarial.py --mode local --category symbol_namespace
   python3 run_adversarial.py --compiler clang --sanitizers on --seed 42
+  python3 run_adversarial.py --link-mode multi_tu
+  python3 run_adversarial.py --strict on --category strict_ambiguity
 """
 
 import argparse
@@ -186,6 +190,113 @@ def scan_c_for_collisions(c_path: str) -> List[str]:
 
     return collisions
 
+
+def scan_c_for_missing_static(c_path: str) -> List[str]:
+    """
+    Best-effort check: non-main function definitions at file scope without
+    'static' are flagged as warnings. These are not necessarily bugs in
+    single-TU mode, but will cause ODR violations if multi-TU is enabled.
+    """
+    with open(c_path, "r") as f:
+        c_src = f.read()
+
+    warnings: List[str] = []
+    # Match function definitions at column 0 that are NOT static and NOT main
+    for m in re.finditer(
+        r'^(?!static\b)(\w[\w\s\*]*?)\s+(\w+)\s*\([^)]*\)\s*\{',
+        c_src, re.MULTILINE,
+    ):
+        fname = m.group(2)
+        if fname in ("main", "if", "while", "for", "switch", "return"):
+            continue
+        # Skip common generated helpers that are intentionally non-static
+        if fname.startswith("M2_"):
+            continue
+        warnings.append(f"non-static function at file scope: '{fname}'")
+    return warnings
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Strict ambiguity emulator
+# ═══════════════════════════════════════════════════════════════════
+
+def strip_m2_comments(source: str) -> str:
+    """Strip Modula-2 comments (* ... *), handling nesting."""
+    result = []
+    i = 0
+    depth = 0
+    while i < len(source):
+        if i + 1 < len(source) and source[i] == '(' and source[i+1] == '*':
+            depth += 1
+            i += 2
+        elif i + 1 < len(source) and source[i] == '*' and source[i+1] == ')':
+            if depth > 0:
+                depth -= 1
+            i += 2
+        elif depth == 0:
+            result.append(source[i])
+            i += 1
+        else:
+            i += 1
+    return ''.join(result)
+
+
+def emulate_strict_ambiguity(source: str) -> List[str]:
+    """
+    Emulate strict ambiguity checking on a Modula-2 source file.
+    Returns a list of ambiguity error strings (empty = no ambiguities).
+
+    1. Strip comments
+    2. Parse FROM <Module> IMPORT <name>, ...; lines
+    3. Build name -> set of origin modules
+    4. For names imported from 2+ modules, check unqualified use in the body
+    """
+    clean = strip_m2_comments(source)
+
+    # Parse imports: FROM Module IMPORT name1, name2, ...;
+    import_origins: Dict[str, set] = {}
+    for m in re.finditer(
+        r'FROM\s+(\w+)\s+IMPORT\s+([^;]+);', clean
+    ):
+        module = m.group(1)
+        names_str = m.group(2)
+        for name in re.split(r'\s*,\s*', names_str.strip()):
+            name = name.strip()
+            if name:
+                if name not in import_origins:
+                    import_origins[name] = set()
+                import_origins[name].add(module)
+
+    # Find names imported from 2+ modules
+    ambiguous_names = {
+        name: modules
+        for name, modules in import_origins.items()
+        if len(modules) >= 2
+    }
+
+    if not ambiguous_names:
+        return []
+
+    # Find the body: everything after the last import line, before final END
+    # Simple heuristic: after last FROM...IMPORT...;
+    last_import_end = 0
+    for m in re.finditer(r'FROM\s+\w+\s+IMPORT\s+[^;]+;', clean):
+        last_import_end = m.end()
+
+    body = clean[last_import_end:]
+
+    errors = []
+    for name, modules in sorted(ambiguous_names.items()):
+        # Check if name is used unqualified in the body
+        if re.search(rf'\b{re.escape(name)}\b', body):
+            mods = ' and '.join(sorted(modules))
+            errors.append(
+                f"strict: '{name}' imported from {mods}, used unqualified"
+            )
+
+    return errors
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Fuzzer: parser crash
 # ═══════════════════════════════════════════════════════════════════
@@ -271,30 +382,62 @@ class WellTypedFuzzer:
         self.m2c_cmd = m2c_cmd
 
     def gen_program(self) -> str:
-        """Generate a valid M2 program with integer arithmetic."""
+        """Generate a valid M2 program with integer arithmetic,
+        optionally including VAR-param procs, swap procs, and record types."""
         name = f"WTFuzz{self.rng.randint(0, 99999)}"
         num_vars = self.rng.randint(1, 5)
         var_names = [f"v{i}" for i in range(num_vars)]
 
-        var_decls = ", ".join(var_names) + ": INTEGER;"
+        type_section = ""
+        proc_section = ""
+        extra_var_decls = ""
+        has_var_proc = self.rng.random() < 0.5
+        has_swap = self.rng.random() < 0.3
+        has_record = self.rng.random() < 0.4
+
+        # Record type (40% chance)
+        if has_record:
+            type_section += "TYPE\n  FuzzRec = RECORD f0, f1: INTEGER END;\n"
+            extra_var_decls += "  rec: FuzzRec;\n"
+
+        # VAR parameter procedure (50% chance)
+        if has_var_proc:
+            proc_section += (
+                "PROCEDURE IncByVal(VAR x: INTEGER; delta: INTEGER);\n"
+                "BEGIN x := x + delta END IncByVal;\n\n"
+            )
+
+        # Swap procedure (30% chance)
+        if has_swap:
+            proc_section += (
+                "PROCEDURE SwapTwo(VAR a, b: INTEGER);\n"
+                "VAR tmp: INTEGER;\n"
+                "BEGIN tmp := a; a := b; b := tmp END SwapTwo;\n\n"
+            )
+
+        var_decls = "  " + ", ".join(var_names) + ": INTEGER;\n"
 
         stmts = []
         # Initialize variables
         for v in var_names:
             stmts.append(f"  {v} := {self.rng.randint(-100, 100)};")
 
+        # Initialize record fields if present
+        if has_record:
+            stmts.append(f"  rec.f0 := {self.rng.randint(-50, 50)};")
+            stmts.append(f"  rec.f1 := {self.rng.randint(-50, 50)};")
+
         # Generate some assignments
         num_stmts = self.rng.randint(2, 10)
         for _ in range(num_stmts):
             dst = self.rng.choice(var_names)
-            kind = self.rng.randint(0, 3)
+            kind = self.rng.randint(0, 5)
             if kind == 0:
                 # binary op
                 a = self.rng.choice(var_names)
                 b = self.rng.choice(var_names)
                 op = self.rng.choice(["+", "-", "*"])
                 if op == "*":
-                    # keep multiplications small to avoid overflow
                     stmts.append(f"  IF ({a} > -100) AND ({a} < 100) THEN {dst} := {a} {op} {b} END;")
                 else:
                     stmts.append(f"  {dst} := {a} {op} {b};")
@@ -306,21 +449,39 @@ class WellTypedFuzzer:
             elif kind == 2:
                 # loop
                 stmts.append(f"  FOR {dst} := 0 TO {self.rng.randint(1, 5)} DO END;")
+            elif kind == 3 and has_var_proc:
+                # call VAR param proc
+                target = self.rng.choice(var_names)
+                delta = self.rng.randint(-10, 10)
+                stmts.append(f"  IncByVal({target}, {delta});")
+            elif kind == 4 and has_swap and len(var_names) >= 2:
+                # call swap
+                a_var, b_var = self.rng.sample(var_names, 2)
+                stmts.append(f"  SwapTwo({a_var}, {b_var});")
+            elif kind == 5 and has_record:
+                # read from record field
+                field = self.rng.choice(["f0", "f1"])
+                stmts.append(f"  {dst} := rec.{field};")
             else:
                 # literal assignment
                 stmts.append(f"  {dst} := {self.rng.randint(-1000, 1000)};")
 
-        # Print a checksum of all vars
+        # Print all vars
         prints = []
         for v in var_names:
             prints.append(f"  WriteInt({v}, 0); WriteLn;")
+        if has_record:
+            prints.append(f"  WriteInt(rec.f0, 0); WriteLn;")
+            prints.append(f"  WriteInt(rec.f1, 0); WriteLn;")
 
         body = "\n".join(stmts) + "\n" + "\n".join(prints)
 
         return (
             f"MODULE {name};\n"
             f"FROM InOut IMPORT WriteInt, WriteLn;\n"
-            f"VAR {var_decls}\n"
+            f"{type_section}"
+            f"{proc_section}"
+            f"VAR\n{var_decls}{extra_var_decls}"
             f"BEGIN\n{body}\n"
             f"END {name}.\n"
         )
@@ -378,6 +539,91 @@ def apply_alpha_rename(source: str) -> str:
         new_name = f"zz_{old_name}"
         # Word-boundary rename (crude but effective for small test programs)
         result = re.sub(rf'\b{old_name}\b', new_name, result)
+    return result
+
+
+def apply_decl_reorder(source: str) -> str:
+    """
+    Reverse the order of top-level PROCEDURE declarations.
+    Semantics-preserving when procedures are independent (no forward refs).
+    Returns unchanged source if fewer than 2 procedures found.
+    """
+    # Find all top-level PROCEDURE blocks: PROCEDURE Name(...) ... END Name;
+    proc_pattern = re.compile(
+        r'^(PROCEDURE\s+(\w+)\b.*?^END\s+\2\s*;)',
+        re.MULTILINE | re.DOTALL,
+    )
+    matches = list(proc_pattern.finditer(source))
+    if len(matches) < 2:
+        return source
+
+    # Extract procedure texts and their positions
+    procs = [(m.start(), m.end(), m.group(1)) for m in matches]
+
+    # Build result: everything before first proc, then procs in reverse, then rest
+    result = source[:procs[0][0]]
+    reversed_procs = [p[2] for p in reversed(procs)]
+    result += "\n\n".join(reversed_procs)
+    result += source[procs[-1][1]:]
+    return result
+
+
+def apply_temp_introduction(source: str) -> str:
+    """
+    Rewrite the first module-body WriteInt(Func(args), width) into:
+      tmpMetaVar := Func(args); WriteInt(tmpMetaVar, width)
+    and add tmpMetaVar: INTEGER to the module-level VAR section.
+    """
+    # Find the module-level BEGIN (the one that starts the module body, after all procs)
+    # Heuristic: find the last BEGIN that isn't inside a PROCEDURE
+    # We search for all WriteInt calls and pick one that's after the last "END ProcName;"
+    last_end_proc = 0
+    for m in re.finditer(r'^END\s+\w+\s*;', source, re.MULTILINE):
+        last_end_proc = m.end()
+
+    # Search for WriteInt(Func(args), width) only in the module body
+    body_source = source[last_end_proc:]
+    call_match = re.search(
+        r'WriteInt\((\w+)\(([^)]*)\),\s*(\d+)\)',
+        body_source,
+    )
+    if not call_match:
+        return source
+
+    func_name = call_match.group(1)
+    func_args = call_match.group(2)
+    width = call_match.group(3)
+
+    # Replace the call (in the full source) with a temp variable
+    old_call = call_match.group(0)
+    new_stmts = f"tmpMetaVar := {func_name}({func_args});\n    WriteInt(tmpMetaVar, {width})"
+    # Only replace in the module body portion
+    new_body = body_source.replace(old_call, new_stmts, 1)
+    result = source[:last_end_proc] + new_body
+
+    # Add tmpMetaVar to the module-level VAR section
+    # Find the last VAR line before the module-level BEGIN
+    # Module-level BEGIN: the last BEGIN in the source (after all procs)
+    module_begin = result.rfind("\nBEGIN\n")
+    if module_begin < 0:
+        module_begin = result.rfind("\nBEGIN")
+
+    # Search backwards from module BEGIN for the nearest VAR
+    var_region = result[:module_begin]
+    var_pos = var_region.rfind("\nVAR ")
+    if var_pos < 0:
+        var_pos = var_region.rfind("\nVAR\n")
+
+    if var_pos >= 0:
+        # Find the end of this VAR line
+        var_line_end = result.index("\n", var_pos + 1)
+        old_var_line = result[var_pos + 1:var_line_end]
+        result = result[:var_line_end] + "\n  tmpMetaVar: INTEGER;" + result[var_line_end:]
+    else:
+        # No module-level VAR — insert before BEGIN
+        if module_begin >= 0:
+            result = result[:module_begin] + "\nVAR tmpMetaVar: INTEGER;" + result[module_begin:]
+
     return result
 
 
@@ -445,6 +691,19 @@ class AdversarialRunner:
             for name in self.compilers:
                 self.sanitizer_support[name] = False
 
+        # Multi-TU config
+        self.link_mode = args.link_mode
+        self.multi_tu_supported = self.config.get("multi_tu_supported", False)
+        self.multi_tu_skip_message = self.config.get(
+            "multi_tu_skip_message",
+            "multi-TU not supported",
+        )
+        self.multi_tu_m2c_flags = self.config.get("multi_tu_m2c_flags", [])
+        self.multi_tu_manifest = self.config.get("multi_tu_manifest", "_manifest.txt")
+
+        # Strict mode
+        self.strict = args.strict == "on"
+
         # Budget
         mode = args.mode
         self.fuzz_parser_count, self.fuzz_typed_count, self.fuzz_time_sec = BUDGETS.get(mode, BUDGETS["ci"])
@@ -460,6 +719,214 @@ class AdversarialRunner:
             return str(self.project_root / p[6:])
         else:
             return str((test_dir / p).resolve())
+
+    def transpile_multi_tu(self, test_def: dict, test_dir: Path,
+                          out_dir: Path) -> Tuple[bool, str, List[str]]:
+        """Run m2c --emit-per-module. Returns (success, stderr, list_of_c_files)."""
+        main_file = test_dir / test_def["main"]
+        cmd = list(self.m2c_cmd)
+        cmd.extend(self.multi_tu_m2c_flags)
+        cmd.extend(["--out-dir", str(out_dir)])
+
+        if test_def.get("m2plus", False):
+            cmd.append("--m2plus")
+
+        for inc in test_def.get("include_dirs", ["."]):
+            cmd.extend(["-I", self.resolve_path(test_dir, inc)])
+
+        cmd.append(str(main_file))
+
+        rc, stdout, stderr = run_cmd(cmd, timeout=30, cwd=str(self.project_root))
+        if rc != 0:
+            return False, stderr, []
+
+        # Read manifest to get list of .c files
+        manifest_path = out_dir / self.multi_tu_manifest
+        if not manifest_path.exists():
+            return False, f"manifest not found at {manifest_path}", []
+        c_files = [
+            f.strip() for f in manifest_path.read_text().strip().split("\n") if f.strip()
+        ]
+        return True, stderr, c_files
+
+    def run_multi_tu_test(self, test_def: dict) -> List[TestResult]:
+        """Run a test in multi-TU mode: transpile to per-module .c files, compile each, link."""
+        results = []
+        name = test_def["name"]
+        category = test_def["category"]
+        test_dir = (SCRIPT_DIR / test_def["dir"]).resolve()
+        test_out = self.out_dir / category / name
+        mtu_dir = test_out / "mtu"
+        ensure_dir(mtu_dir)
+
+        # ── Phase 1: Transpile to per-module files ──
+        t0 = time.time()
+        ok, stderr, c_files = self.transpile_multi_tu(test_def, test_dir, mtu_dir)
+        transpile_ms = (time.time() - t0) * 1000
+
+        expect_fail = test_def.get("expect_compile_fail", False)
+
+        if expect_fail:
+            r = TestResult(name, category, "multi_tu-transpile")
+            r.duration_ms = transpile_ms
+            if not ok:
+                r.passed = True
+            else:
+                r.phase = "transpile"
+                r.error = "Expected compile failure but transpile succeeded"
+            r.stderr = stderr
+            results.append(r)
+            return results
+
+        if not ok:
+            r = TestResult(name, category, "multi_tu-transpile")
+            r.phase = "transpile"
+            r.error = f"Transpile (per-module) failed: {stderr[:300]}"
+            r.stderr = stderr
+            r.duration_ms = transpile_ms
+            results.append(r)
+            return results
+
+        # ── Phase 2: C scan on individual files ──
+        if test_def.get("c_scan", False):
+            # Scan each .c file for collisions (now meaningful in multi-TU)
+            for c_file in c_files:
+                c_path = mtu_dir / c_file
+                if c_path.exists():
+                    collisions = scan_c_for_collisions(str(c_path))
+                    if collisions:
+                        r = TestResult(name, category, f"c_scan-{c_file}")
+                        r.phase = "c_scan"
+                        r.error = "; ".join(collisions)
+                        r.artifacts["c_file"] = str(c_path)
+                        results.append(r)
+
+        # ── Phase 3: Compile each .c → .o, then link ──
+        expected_exit = test_def.get("expected_exit", 0)
+        expected_stdout = test_def.get("expected_stdout", None)
+        expected_contains = test_def.get("expected_stdout_contains", None)
+
+        extra_c_files = [
+            self.resolve_path(test_dir, f)
+            for f in test_def.get("extra_c_files", [])
+        ]
+        extra_cflags = list(test_def.get("extra_cflags", []))
+        extra_ldflags = list(test_def.get("extra_ldflags", []))
+
+        for cc_name, cc_path in self.compilers.items():
+            for opt in ["-O0", "-O2"]:
+                variant = f"mtu-{cc_name}{opt}"
+                r = self._compile_link_run_multi_tu(
+                    name, category, variant, cc_path, opt, False,
+                    mtu_dir, c_files, test_out, expected_exit,
+                    expected_stdout, expected_contains,
+                    extra_c_files, extra_cflags, extra_ldflags,
+                )
+                results.append(r)
+
+                # With sanitizers
+                if self.sanitizer_support.get(cc_name, False):
+                    skip_san = test_def.get("skip_sanitizers", False)
+                    if not skip_san:
+                        variant_san = f"mtu-{cc_name}{opt}-asan"
+                        r = self._compile_link_run_multi_tu(
+                            name, category, variant_san, cc_path, opt, True,
+                            mtu_dir, c_files, test_out, expected_exit,
+                            expected_stdout, expected_contains,
+                            extra_c_files, extra_cflags, extra_ldflags,
+                        )
+                        results.append(r)
+
+        return results
+
+    def _compile_link_run_multi_tu(
+        self, name, category, variant, cc_path, opt, use_san,
+        mtu_dir, c_files, test_out, expected_exit, expected_stdout,
+        expected_contains, extra_c_files, extra_cflags, extra_ldflags,
+    ) -> TestResult:
+        """Compile each .c to .o, link, and run."""
+        r = TestResult(name, category, variant)
+        t0 = time.time()
+
+        # Compile each .c → .o
+        obj_files = []
+        for c_file in c_files:
+            c_path = mtu_dir / c_file
+            o_path = test_out / f"{c_file}_{variant}.o"
+            cmd = [cc_path, opt, "-w", "-c", str(c_path), "-o", str(o_path)]
+            if use_san:
+                cmd[2:2] = SANITIZER_FLAGS
+            if extra_cflags:
+                cmd[2:2] = extra_cflags
+            # Add the mtu_dir as include path so #include "_common.h" resolves
+            cmd[2:2] = ["-I", str(mtu_dir)]
+
+            rc, _, stderr = run_cmd(cmd, timeout=30)
+            if rc != 0:
+                r.phase = "compile"
+                r.error = f"C compile failed for {c_file} ({variant}): {stderr[:300]}"
+                r.stderr = stderr
+                r.duration_ms = (time.time() - t0) * 1000
+                return r
+            obj_files.append(str(o_path))
+
+        # Link
+        exe = test_out / f"exe_{variant}"
+        link_cmd = [cc_path, opt] + obj_files
+        if extra_c_files:
+            link_cmd += extra_c_files
+        link_cmd += ["-o", str(exe)]
+        if use_san:
+            link_cmd += SANITIZER_FLAGS
+        if extra_ldflags:
+            link_cmd += extra_ldflags
+
+        rc, _, stderr = run_cmd(link_cmd, timeout=30)
+        if rc != 0:
+            r.phase = "link"
+            r.error = f"Link failed ({variant}): {stderr[:300]}"
+            r.stderr = stderr
+            r.duration_ms = (time.time() - t0) * 1000
+            return r
+
+        compile_ms = (time.time() - t0) * 1000
+
+        # Run
+        t1 = time.time()
+        rc, stdout, stderr = self.run_exe(exe)
+        run_ms = (time.time() - t1) * 1000
+        r.exit_code = rc
+        r.stdout = stdout
+        r.stderr = stderr
+        r.duration_ms = compile_ms + run_ms
+
+        # Check exit code
+        if rc != expected_exit:
+            r.phase = "run"
+            r.error = f"Exit code {rc}, expected {expected_exit}"
+            if stderr:
+                r.error += f"\nstderr: {stderr[:200]}"
+            return r
+
+        # Check stdout
+        if expected_stdout is not None and stdout != expected_stdout:
+            r.phase = "check"
+            r.error = (
+                f"Stdout mismatch:\n"
+                f"  expected: {expected_stdout!r}\n"
+                f"  actual:   {stdout!r}"
+            )
+            return r
+
+        if expected_contains is not None:
+            for s in expected_contains:
+                if s not in stdout:
+                    r.phase = "check"
+                    r.error = f"Stdout missing substring: {s!r}\n  actual: {stdout[:200]!r}"
+                    return r
+
+        r.passed = True
+        return r
 
     def transpile(self, test_def: dict, test_dir: Path, out_c: Path) -> Tuple[bool, str]:
         """Run m2c --emit-c. Returns (success, stderr)."""
@@ -519,6 +986,41 @@ class AdversarialRunner:
         test_out = self.out_dir / category / name
         ensure_dir(test_out)
 
+        # ── Multi-TU mode ──
+        if self.link_mode == "multi_tu":
+            if not self.multi_tu_supported:
+                r = TestResult(name, category, "multi_tu")
+                r.skipped = True
+                r.error = self.multi_tu_skip_message
+                results.append(r)
+                return results
+            return self.run_multi_tu_test(test_def)
+
+        # ── Strict ambiguity check ──
+        if test_def.get("strict", False) and self.strict:
+            main_file = test_dir / test_def["main"]
+            source = main_file.read_text()
+            ambiguities = emulate_strict_ambiguity(source)
+            expect_fail = test_def.get("expect_compile_fail", False)
+            if ambiguities:
+                r = TestResult(name, category, "strict")
+                if expect_fail:
+                    r.passed = True
+                    r.stdout = "; ".join(ambiguities)
+                else:
+                    r.phase = "strict"
+                    r.error = "; ".join(ambiguities)
+                results.append(r)
+                return results
+            # No ambiguities found — proceed normally if not expect_fail
+            if expect_fail:
+                # Strict test expects ambiguity but none found — that's a failure
+                r = TestResult(name, category, "strict")
+                r.phase = "strict"
+                r.error = "Expected ambiguity but none detected"
+                results.append(r)
+                return results
+
         out_c = test_out / "output.c"
 
         # ── Phase 1: Transpile ──
@@ -567,6 +1069,14 @@ class AdversarialRunner:
             else:
                 r.passed = True
             results.append(r)
+
+            # Enhanced: check for missing static qualifiers (warning only)
+            static_warnings = scan_c_for_missing_static(str(out_c))
+            if static_warnings:
+                r = TestResult(name, category, "c_scan_static")
+                r.passed = True  # warnings don't fail the test
+                r.stdout = "; ".join(static_warnings[:5])  # cap at 5
+                results.append(r)
 
         # ── Phase 3: Compile + Run matrix ──
         opt_levels = ["-O0", "-O2"]
@@ -741,6 +1251,20 @@ class AdversarialRunner:
             r = self._run_transform(name, "alpha_rename", transformed, test_def, test_out,
                                      cc_path, outputs.get("-O0"))
             results.append(r)
+
+            # Transform 3: declaration reorder
+            transformed = apply_decl_reorder(source)
+            if transformed != source:
+                r = self._run_transform(name, "decl_reorder", transformed, test_def, test_out,
+                                         cc_path, outputs.get("-O0"))
+                results.append(r)
+
+            # Transform 4: temp variable introduction
+            transformed = apply_temp_introduction(source)
+            if transformed != source:
+                r = self._run_transform(name, "temp_intro", transformed, test_def, test_out,
+                                         cc_path, outputs.get("-O0"))
+                results.append(r)
 
         return results
 
@@ -946,6 +1470,8 @@ class AdversarialRunner:
         print(f"  Mode:       {self.args.mode}")
         print(f"  Compilers:  {', '.join(self.compilers.keys())}")
         print(f"  Sanitizers: {self.args.sanitizers}")
+        print(f"  Link mode:  {self.link_mode}")
+        print(f"  Strict:     {'on' if self.strict else 'off'}")
         print(f"  Seed:       {self.seed}")
         print(f"  Output:     {self.out_dir}")
         print()
@@ -957,10 +1483,11 @@ class AdversarialRunner:
                 return True
             return cat in categories_filter
 
-        # ── Standard tests ──
+        # ── Standard tests (includes strict_ambiguity + stream_stress) ──
         std_categories = [
             "symbol_namespace", "semantics", "ub_sanitizer", "runtime",
             "resolution", "import_chain", "proc_values", "abi_layout",
+            "strict_ambiguity", "stream_stress",
         ]
         if any(should_run(c) for c in std_categories):
             std_tests = [
@@ -971,6 +1498,13 @@ class AdversarialRunner:
             for test_def in std_tests:
                 tag = test_def.get("tags", [])
                 if self.args.mode == "ci" and "local_only" in tag:
+                    continue
+                # Skip strict tests when --strict is off
+                if test_def.get("strict", False) and not self.strict:
+                    r = TestResult(test_def["name"], test_def["category"], "strict-off")
+                    r.skipped = True
+                    r.error = "strict mode off; skipping strict test"
+                    self.results.append(r)
                     continue
                 print(f"  Running: {test_def['category']}/{test_def['name']}...")
                 test_results = self.run_standard_test(test_def)
@@ -1024,6 +1558,8 @@ class AdversarialRunner:
         report = {
             "timestamp": datetime.now().isoformat(),
             "mode": self.args.mode,
+            "link_mode": self.link_mode,
+            "strict": self.strict,
             "seed": self.seed,
             "compilers": list(self.compilers.keys()),
             "total": len(self.results),
@@ -1078,7 +1614,16 @@ Examples:
         "--category", default="all",
         help="Comma-separated categories to run (default: all). "
              "Options: symbol_namespace, semantics, ub_sanitizer, metamorphic, fuzz, runtime, "
-             "resolution, import_chain, proc_values, abi_layout",
+             "resolution, import_chain, proc_values, abi_layout, strict_ambiguity, stream_stress",
+    )
+    parser.add_argument(
+        "--link-mode", choices=["single_tu", "multi_tu"], default="single_tu",
+        dest="link_mode",
+        help="Link mode: single_tu (default) or multi_tu (skips if not supported)",
+    )
+    parser.add_argument(
+        "--strict", choices=["on", "off"], default="off",
+        help="Strict ambiguity checking: on or off (default: off)",
     )
     parser.add_argument(
         "--compiler", choices=["clang", "gcc", "all"], default="all",

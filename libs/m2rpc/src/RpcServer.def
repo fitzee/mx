@@ -1,0 +1,72 @@
+DEFINITION MODULE RpcServer;
+(* Single-threaded RPC server with handler dispatch.
+
+   Accepts decoded requests via a FrameReader, dispatches to
+   registered handler procedures, and writes responses/errors
+   back through a FrameWriter.
+
+   Handlers are pure procedure values registered per method name.
+   Dispatch is linear scan over the registry -- O(N) for N methods,
+   which is fast for the typical small N of an RPC service.
+
+   Handlers run inline (synchronous).  The server does not spawn
+   threads or use promises internally.
+
+   Handler signature:
+     handler(ctx, reqId, methodPtr, methodLen, body, outBody, errCode, ok)
+   Where methodPtr is the ADDRESS of the method name bytes and
+   methodLen is the byte count.  Use ViewGetByte to read method
+   characters if needed, or ignore if you register one handler
+   per method and already know which was matched. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM ByteBuf IMPORT Buf, BytesView;
+FROM RpcFrame IMPORT ReadFn, WriteFn, FrameReader;
+
+CONST
+  MaxHandlers = 32;
+  MaxMethodLen = 64;
+
+TYPE
+  (* Handler callback.
+     Parameters: ctx, requestId, methodPtr, methodLen, body,
+                 VAR outBody, VAR errCode, VAR ok.
+     Set ok=TRUE + fill outBody for success (RESP).
+     Set ok=FALSE + errCode for error (ERR). *)
+  Handler = PROCEDURE(ADDRESS, CARDINAL,
+                      ADDRESS, CARDINAL, BytesView,
+                      VAR Buf, VAR CARDINAL, VAR BOOLEAN);
+
+  HandlerEntry = RECORD
+    method: ARRAY [0..MaxMethodLen-1] OF CHAR;
+    methodLen: CARDINAL;
+    handler: Handler;
+    ctx: ADDRESS;
+    active: BOOLEAN;
+  END;
+
+  Server = RECORD
+    frameReader: FrameReader;
+    writeFn: WriteFn;
+    writeCtx: ADDRESS;
+    handlers: ARRAY [0..MaxHandlers-1] OF HandlerEntry;
+    handlerCount: CARDINAL;
+    outBuf: Buf;
+    respBuf: Buf;
+  END;
+
+PROCEDURE InitServer(VAR s: Server;
+                     readFn: ReadFn; readCtx: ADDRESS;
+                     writeFn: WriteFn; writeCtx: ADDRESS);
+
+PROCEDURE RegisterHandler(VAR s: Server;
+                          method: ARRAY OF CHAR;
+                          methodLen: CARDINAL;
+                          handler: Handler;
+                          ctx: ADDRESS): BOOLEAN;
+
+PROCEDURE ServeOnce(VAR s: Server): BOOLEAN;
+
+PROCEDURE FreeServer(VAR s: Server);
+
+END RpcServer.

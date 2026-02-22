@@ -1,0 +1,86 @@
+DEFINITION MODULE ByteBuf;
+(* Growable byte buffer and zero-copy view.
+
+   BytesView is a lightweight reference to a contiguous byte range.
+   Buf is a heap-allocated growable buffer with geometric growth.
+
+   Bytes are stored as CHAR internally; use GetByte/SetByte or the
+   Reader/Writer modules for typed access.  Values 0..255 are
+   represented via ORD/CHR with MOD 256 masking.
+
+   No heap allocation except Init/Reserve/Free. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+CONST
+  MaxBufCap = 65535;  (* max indexable capacity *)
+
+TYPE
+  (* Zero-copy view into a byte range. *)
+  BytesView = RECORD
+    base: ADDRESS;
+    len:  CARDINAL;
+  END;
+
+  (* Internal backing array type. *)
+  BufArray = ARRAY [0..MaxBufCap] OF CHAR;
+  BufPtr   = POINTER TO BufArray;
+
+  (* Growable byte buffer. *)
+  Buf = RECORD
+    data: BufPtr;
+    len:  CARDINAL;
+    cap:  CARDINAL;
+  END;
+
+(* ── Buffer lifecycle ────────────────────────────────── *)
+
+(* Allocate a buffer with the given initial capacity.
+   cap is clamped to MaxBufCap. *)
+PROCEDURE Init(VAR b: Buf; initialCap: CARDINAL);
+
+(* Free the buffer's backing memory. Sets len/cap to 0. *)
+PROCEDURE Free(VAR b: Buf);
+
+(* Reset length to 0, keep allocated capacity. *)
+PROCEDURE Clear(VAR b: Buf);
+
+(* ── Capacity management ────────────────────────────── *)
+
+(* Ensure at least len+extra bytes of capacity.
+   Grows geometrically if needed.  Returns FALSE if
+   allocation fails or would exceed MaxBufCap. *)
+PROCEDURE Reserve(VAR b: Buf; extra: CARDINAL): BOOLEAN;
+
+(* ── Append operations ──────────────────────────────── *)
+
+(* Append a single byte (0..255). *)
+PROCEDURE AppendByte(VAR b: Buf; x: CARDINAL);
+
+(* Append bytes from an open CHAR array. *)
+PROCEDURE AppendChars(VAR b: Buf; a: ARRAY OF CHAR; n: CARDINAL);
+
+(* Append contents of a BytesView. *)
+PROCEDURE AppendView(VAR b: Buf; v: BytesView);
+
+(* ── Access ─────────────────────────────────────────── *)
+
+(* Get byte at index as 0..255.  Returns 0 if out of bounds. *)
+PROCEDURE GetByte(VAR b: Buf; idx: CARDINAL): CARDINAL;
+
+(* Set byte at index.  No-op if out of bounds. *)
+PROCEDURE SetByte(VAR b: Buf; idx: CARDINAL; val: CARDINAL);
+
+(* Return a view of the buffer's current contents.
+   Valid only while the buffer is not grown or freed. *)
+PROCEDURE AsView(VAR b: Buf): BytesView;
+
+(* Truncate the buffer to newLen.  If newLen >= len, no-op. *)
+PROCEDURE Truncate(VAR b: Buf; newLen: CARDINAL);
+
+(* ── View helpers ───────────────────────────────────── *)
+
+(* Get byte at index from a view. Returns 0 if out of bounds. *)
+PROCEDURE ViewGetByte(v: BytesView; idx: CARDINAL): CARDINAL;
+
+END ByteBuf.

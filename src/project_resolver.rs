@@ -4,6 +4,7 @@
 //! compiler-driver integration can resolve project context without
 //! depending on the `lsp` module.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 // ── Manifest ────────────────────────────────────────────────────────
@@ -127,7 +128,7 @@ impl Manifest {
                     "cc" => match key {
                         "cflags" => cc.cflags = val.split_whitespace().map(|s| s.to_string()).collect(),
                         "ldflags" => cc.ldflags = val.split_whitespace().map(|s| s.to_string()).collect(),
-                        "libs" => cc.libs = val.split_whitespace().map(|s| s.to_string()).collect(),
+                        "libs" => cc.libs = val.split_whitespace().map(|s| s.strip_prefix("-l").unwrap_or(s).to_string()).collect(),
                         "extra-c" => cc.extra_c = val.split_whitespace().map(|s| s.to_string()).collect(),
                         "frameworks" => cc.frameworks = val.split_whitespace().map(|s| s.to_string()).collect(),
                         _ => {}
@@ -271,6 +272,158 @@ pub fn find_project_root(file_path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Add include paths from a dependency's m2.toml (or fallback to dep_root/src).
+fn add_dep_includes(dep_root: &Path, paths: &mut Vec<PathBuf>) {
+    let dep_manifest_path = dep_root.join("m2.toml");
+    if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
+        if let Some(dep_manifest) = Manifest::parse(&dep_content) {
+            for inc in &dep_manifest.includes {
+                let p = dep_root.join(inc);
+                if p.is_dir() && !paths.contains(&p) {
+                    paths.push(p);
+                }
+            }
+            return;
+        }
+    }
+    // Fallback: dep_root/src if it exists
+    let src_dir = dep_root.join("src");
+    if src_dir.is_dir() && !paths.contains(&src_dir) {
+        paths.push(src_dir);
+    }
+}
+
+/// Resolve path: deps directly from manifest (no lockfile), with transitive resolution.
+fn resolve_deps_from_manifest(
+    root: &Path,
+    manifest: &Manifest,
+    paths: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
+) {
+    for dep in &manifest.deps {
+        if let DepSource::Local(ref rel_path) = dep.source {
+            let dep_root = root.join(rel_path);
+            let dep_root = match dep_root.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !visited.insert(dep_root.clone()) {
+                continue; // already visited, prevent cycles
+            }
+            add_dep_includes(&dep_root, paths);
+            // Recurse into the dep's own deps
+            let dep_manifest_path = dep_root.join("m2.toml");
+            if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
+                if let Some(dep_manifest) = Manifest::parse(&dep_content) {
+                    resolve_deps_from_manifest(&dep_root, &dep_manifest, paths, visited);
+                }
+            }
+        }
+    }
+}
+
+/// Collect [cc] sections from all transitive path: dependencies.
+/// Extra-c paths are resolved to absolute paths relative to each dep's root.
+fn collect_dep_cc(
+    root: &Path,
+    manifest: &Manifest,
+    cc: &mut CcSection,
+    visited: &mut HashSet<PathBuf>,
+) {
+    for dep in &manifest.deps {
+        if let DepSource::Local(ref rel_path) = dep.source {
+            let dep_root = root.join(rel_path);
+            let dep_root = match dep_root.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !visited.insert(dep_root.clone()) {
+                continue;
+            }
+            let dep_manifest_path = dep_root.join("m2.toml");
+            if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
+                if let Some(dep_manifest) = Manifest::parse(&dep_content) {
+                    // Merge this dep's [cc] section
+                    for f in &dep_manifest.cc.cflags {
+                        if !cc.cflags.contains(f) {
+                            cc.cflags.push(f.clone());
+                        }
+                    }
+                    for f in &dep_manifest.cc.ldflags {
+                        if !cc.ldflags.contains(f) {
+                            cc.ldflags.push(f.clone());
+                        }
+                    }
+                    for f in &dep_manifest.cc.libs {
+                        if !cc.libs.contains(f) {
+                            cc.libs.push(f.clone());
+                        }
+                    }
+                    for f in &dep_manifest.cc.extra_c {
+                        // Resolve relative to the dep's root
+                        let abs = dep_root.join(f).to_string_lossy().into_owned();
+                        if !cc.extra_c.contains(&abs) {
+                            cc.extra_c.push(abs);
+                        }
+                    }
+                    for f in &dep_manifest.cc.frameworks {
+                        if !cc.frameworks.contains(f) {
+                            cc.frameworks.push(f.clone());
+                        }
+                    }
+                    // Recurse into transitive deps
+                    collect_dep_cc(&dep_root, &dep_manifest, cc, visited);
+                }
+            }
+        }
+    }
+}
+
+/// Collect merged [cc] sections from all transitive path: dependencies.
+/// Works with both lockfile and lockfile-free resolution.
+pub fn collect_transitive_cc(
+    root: &Path,
+    manifest: &Manifest,
+    lockfile: Option<&Lockfile>,
+) -> CcSection {
+    let mut cc = CcSection::default();
+
+    if let Some(lock) = lockfile {
+        for dep in &lock.deps {
+            if dep.path.is_empty() {
+                continue;
+            }
+            let dep_root = root.join(&dep.path);
+            let dep_manifest_path = dep_root.join("m2.toml");
+            if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
+                if let Some(dep_manifest) = Manifest::parse(&dep_content) {
+                    for f in &dep_manifest.cc.cflags {
+                        if !cc.cflags.contains(f) { cc.cflags.push(f.clone()); }
+                    }
+                    for f in &dep_manifest.cc.ldflags {
+                        if !cc.ldflags.contains(f) { cc.ldflags.push(f.clone()); }
+                    }
+                    for f in &dep_manifest.cc.libs {
+                        if !cc.libs.contains(f) { cc.libs.push(f.clone()); }
+                    }
+                    for f in &dep_manifest.cc.extra_c {
+                        let abs = dep_root.join(f).to_string_lossy().into_owned();
+                        if !cc.extra_c.contains(&abs) { cc.extra_c.push(abs); }
+                    }
+                    for f in &dep_manifest.cc.frameworks {
+                        if !cc.frameworks.contains(f) { cc.frameworks.push(f.clone()); }
+                    }
+                }
+            }
+        }
+    } else if !manifest.deps.is_empty() {
+        let mut visited = HashSet::new();
+        collect_dep_cc(root, manifest, &mut cc, &mut visited);
+    }
+
+    cc
+}
+
 /// Resolve all include paths: manifest includes, dep includes, CLI fallback.
 pub fn resolve_include_paths(
     root: &Path,
@@ -288,32 +441,20 @@ pub fn resolve_include_paths(
         }
     }
 
-    // 2. Dep includes from lockfile
+    // 2. Dep includes
     if let Some(lock) = lockfile {
+        // From lockfile (already flattened)
         for dep in &lock.deps {
             if dep.path.is_empty() {
                 continue;
             }
             let dep_root = root.join(&dep.path);
-            // Try to read the dep's own m2.toml for its includes
-            let dep_manifest_path = dep_root.join("m2.toml");
-            if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
-                if let Some(dep_manifest) = Manifest::parse(&dep_content) {
-                    for inc in &dep_manifest.includes {
-                        let p = dep_root.join(inc);
-                        if p.is_dir() {
-                            paths.push(p);
-                        }
-                    }
-                    continue;
-                }
-            }
-            // Fallback: dep_root/src if it exists
-            let src_dir = dep_root.join("src");
-            if src_dir.is_dir() {
-                paths.push(src_dir);
-            }
+            add_dep_includes(&dep_root, &mut paths);
         }
+    } else if !manifest.deps.is_empty() {
+        // No lockfile — resolve path: deps directly from manifest
+        let mut visited = HashSet::new();
+        resolve_deps_from_manifest(root, manifest, &mut paths, &mut visited);
     }
 
     // 3. CLI fallback paths (append any not already present)

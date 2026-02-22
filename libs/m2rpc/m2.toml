@@ -1,0 +1,18 @@
+# m2.toml - m2rpc: RPC framework over byte streams
+#
+# Length-prefixed framing, request/response codec, promise-based client,
+# handler-dispatched server. Transport-agnostic via procedure variables.
+# Includes in-memory PipeStream for deterministic testing.
+manifest_version=1
+name=m2rpc
+version=0.1.0
+edition=pim4
+entry=src/RpcClient.mod
+includes=src
+
+[deps]
+m2bytes=path:../m2bytes
+m2futures=path:../m2futures
+m2evloop=path:../m2evloop
+
+[cc]

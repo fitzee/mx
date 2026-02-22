@@ -1,0 +1,77 @@
+DEFINITION MODULE Arena;
+(* Bump allocator with mark/reset and optional poisoning.
+
+   Operates entirely within a caller-provided backing store.
+   No heap allocation, no OS syscalls.
+
+   Usage:
+     VAR buf: ARRAY [0..4095] OF CHAR;
+         a: Arena;
+         p: ADDRESS;
+         ok: BOOLEAN;
+     Init(a, ADR(buf), SIZE(buf));
+     Alloc(a, 64, 8, p, ok);  -- 64 bytes, 8-byte aligned
+
+   Poisoning (opt-in):
+     PoisonOn(a);
+     Alloc fills allocated bytes with 0CDH.
+     ResetTo fills freed bytes with 0. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  Arena = RECORD
+    base:      ADDRESS;
+    size:      CARDINAL;
+    pos:       CARDINAL;
+    highwater: CARDINAL;
+    failed:    CARDINAL;
+    poison:    BOOLEAN;
+  END;
+
+(* ── Lifecycle ───────────────────────────────────────── *)
+
+(* Initialise an arena over the backing store [base..base+size).
+   Sets pos=0, highwater=0, failed=0, poison=FALSE. *)
+PROCEDURE Init(VAR a: Arena; base: ADDRESS; size: CARDINAL);
+
+(* ── Allocation ──────────────────────────────────────── *)
+
+(* Allocate n bytes with the given alignment (must be power-of-two).
+   On success: p points to the allocated region, ok=TRUE.
+   On failure: p=NIL, ok=FALSE, FailedAllocs incremented. *)
+PROCEDURE Alloc(VAR a: Arena; n: CARDINAL; align: CARDINAL;
+                VAR p: ADDRESS; VAR ok: BOOLEAN);
+
+(* ── Mark / Reset ────────────────────────────────────── *)
+
+(* Return the current position (for later ResetTo). *)
+PROCEDURE Mark(VAR a: Arena): CARDINAL;
+
+(* Reset pos to mark.  If mark > pos, this is a no-op.
+   If poison is on, freed bytes are filled with 0. *)
+PROCEDURE ResetTo(VAR a: Arena; mark: CARDINAL);
+
+(* Reset pos to 0. *)
+PROCEDURE Clear(VAR a: Arena);
+
+(* ── Queries ─────────────────────────────────────────── *)
+
+(* Bytes remaining in the arena. *)
+PROCEDURE Remaining(VAR a: Arena): CARDINAL;
+
+(* Peak allocation position ever reached. *)
+PROCEDURE HighWater(VAR a: Arena): CARDINAL;
+
+(* Number of failed Alloc calls. *)
+PROCEDURE FailedAllocs(VAR a: Arena): CARDINAL;
+
+(* ── Poisoning ───────────────────────────────────────── *)
+
+(* Enable poison: alloc fills 0CDH, reset fills 0. *)
+PROCEDURE PoisonOn(VAR a: Arena);
+
+(* Disable poison. *)
+PROCEDURE PoisonOff(VAR a: Arena);
+
+END Arena.

@@ -1,0 +1,58 @@
+DEFINITION MODULE FOR "C" AuthBridge;
+
+  (* Thin FFI binding to auth_bridge.c (OpenSSL backend).
+     All pointers are ADDRESS; the C side casts appropriately.
+     See auth_bridge.h for return-code conventions. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  (* Initialisation — idempotent. *)
+  PROCEDURE m2_auth_init;
+
+  (* Current Unix timestamp (seconds since epoch). *)
+  PROCEDURE m2_auth_get_unix_time(): LONGINT;
+
+  (* Base64url encode src[0..srcLen-1] into dst.
+     Returns bytes written, or -1 on error. *)
+  PROCEDURE m2_auth_b64url_encode(src: ADDRESS; srcLen: INTEGER;
+                                   dst: ADDRESS; dstMax: INTEGER): INTEGER;
+
+  (* Base64url decode src[0..srcLen-1] into dst.
+     Returns bytes written, or -1 on invalid input. *)
+  PROCEDURE m2_auth_b64url_decode(src: ADDRESS; srcLen: INTEGER;
+                                   dst: ADDRESS; dstMax: INTEGER): INTEGER;
+
+  (* HMAC-SHA256(key, data) -> 32-byte out.
+     Returns 0 on success, -1 on failure. *)
+  PROCEDURE m2_auth_hmac_sha256(key: ADDRESS; keyLen: INTEGER;
+                                 data: ADDRESS; dataLen: INTEGER;
+                                 out: ADDRESS): INTEGER;
+
+  (* Constant-time compare a[0..len-1] vs b[0..len-1].
+     Returns 0 if equal, non-zero otherwise. *)
+  PROCEDURE m2_auth_ct_compare(a: ADDRESS; b: ADDRESS;
+                                len: INTEGER): INTEGER;
+
+  (* Returns 1 if Ed25519 is available, 0 otherwise. *)
+  PROCEDURE m2_auth_has_ed25519(): INTEGER;
+
+  (* Generate Ed25519 key pair.
+     pubOut must be 32 bytes, privOut must be 64 bytes.
+     Returns 0 on success, -1 if unsupported. *)
+  PROCEDURE m2_auth_ed25519_keygen(pubOut: ADDRESS;
+                                    privOut: ADDRESS): INTEGER;
+
+  (* Sign msg[0..msgLen-1] with priv (64 bytes).
+     sigOut must be 64 bytes.
+     Returns 0 on success, -1 if unsupported. *)
+  PROCEDURE m2_auth_ed25519_sign(priv: ADDRESS;
+                                  msg: ADDRESS; msgLen: INTEGER;
+                                  sigOut: ADDRESS): INTEGER;
+
+  (* Verify sig (64 bytes) over msg[0..msgLen-1] with pub (32 bytes).
+     Returns 0 if valid, -1 if invalid or unsupported. *)
+  PROCEDURE m2_auth_ed25519_verify(pub: ADDRESS;
+                                    msg: ADDRESS; msgLen: INTEGER;
+                                    sig: ADDRESS): INTEGER;
+
+END AuthBridge.

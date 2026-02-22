@@ -1,0 +1,43 @@
+DEFINITION MODULE Http2ServerMetrics;
+
+  (* Server-wide counters for observability.
+     All fields are simple CARDINALs — no heap, no locks. *)
+
+  FROM Log IMPORT Logger;
+
+  TYPE
+    Metrics = RECORD
+      connsAccepted:   CARDINAL;
+      connsActive:     CARDINAL;
+      connsClosed:     CARDINAL;
+      tlsHandshakeFail: CARDINAL;
+      alpnReject:      CARDINAL;
+      streamsOpened:   CARDINAL;
+      reqTotal:        CARDINAL;
+      resp2xx:         CARDINAL;
+      resp4xx:         CARDINAL;
+      resp5xx:         CARDINAL;
+      protoErrors:     CARDINAL;
+      bytesIn:         CARDINAL;
+      bytesOut:        CARDINAL;
+    END;
+
+  PROCEDURE MetricsInit(VAR m: Metrics);
+
+  PROCEDURE IncConnsAccepted(VAR m: Metrics);
+  PROCEDURE IncConnsActive(VAR m: Metrics);
+  PROCEDURE DecConnsActive(VAR m: Metrics);
+  PROCEDURE IncConnsClosed(VAR m: Metrics);
+  PROCEDURE IncTLSFail(VAR m: Metrics);
+  PROCEDURE IncALPNReject(VAR m: Metrics);
+  PROCEDURE IncStreamsOpened(VAR m: Metrics);
+  PROCEDURE IncReqTotal(VAR m: Metrics);
+  PROCEDURE IncResp(VAR m: Metrics; statusCode: CARDINAL);
+  PROCEDURE IncProtoErrors(VAR m: Metrics);
+  PROCEDURE AddBytesIn(VAR m: Metrics; n: CARDINAL);
+  PROCEDURE AddBytesOut(VAR m: Metrics; n: CARDINAL);
+
+  (* Log all counters at INFO level *)
+  PROCEDURE MetricsLog(VAR m: Metrics; VAR lg: Logger);
+
+END Http2ServerMetrics.

@@ -1,0 +1,53 @@
+# Library documentation category index.
+# The LSP reads this at startup to discover library docs.
+#
+# Each section key is a subdirectory of docs/libs/.
+# Only .md files whose stem starts with an uppercase letter
+# (matching a Modula-2 module name) become doc entries.
+#
+# category must be one of: Graphics, Transport, HTTP, Services, Async, Helpers
+
+[m2gfx]
+category = "Graphics"
+
+[m2sockets]
+category = "Transport"
+
+[m2futures]
+category = "Async"
+
+[m2evloop]
+category = "Async"
+
+[m2http]
+category = "HTTP"
+
+[m2tls]
+category = "Transport"
+
+[m2stream]
+category = "Transport"
+
+[m2log]
+category = "Helpers"
+
+[m2bytes]
+category = "Helpers"
+
+[m2rpc]
+category = "Services"
+
+[m2alloc]
+category = "Helpers"
+
+[m2fsm]
+category = "Helpers"
+
+[m2http2]
+category = "HTTP"
+
+[m2http2server]
+category = "HTTP"
+
+[m2auth]
+category = "Services"

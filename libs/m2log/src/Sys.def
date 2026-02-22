@@ -1,0 +1,11 @@
+DEFINITION MODULE FOR "C" Sys;
+(* Minimal m2sys FFI subset for file I/O.
+   Links against libs/m2sys/m2sys.c *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE m2sys_fopen(path: ADDRESS; mode: ADDRESS): INTEGER;
+PROCEDURE m2sys_fclose(handle: INTEGER): INTEGER;
+PROCEDURE m2sys_fwrite_str(handle: INTEGER; data: ADDRESS): INTEGER;
+
+END Sys.

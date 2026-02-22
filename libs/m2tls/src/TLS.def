@@ -24,6 +24,7 @@ DEFINITION MODULE TLS;
 
   CONST
     MaxSummaryLen = 512;
+    MaxALPNLen    = 64;
 
   TYPE
     TLSContext = ADDRESS;    (* opaque: wraps SSL_CTX* *)
@@ -75,9 +76,36 @@ DEFINITION MODULE TLS;
   PROCEDURE SetClientCert(ctx: TLSContext;
                           VAR certPath, keyPath: ARRAY OF CHAR): Status;
 
+  (* ── Server context ──────────────────────────────────── *)
+
+  (* Create a TLS server context.
+     Defaults: NoVerify (servers don't verify clients), TLS 1.2 minimum.
+     Post: out is a valid context handle on OK. *)
+  PROCEDURE ContextCreateServer(VAR out: TLSContext): Status;
+
+  (* Load server certificate and private key from PEM files.
+     Both are required for server operation.
+     Returns SysError on cert or key error. *)
+  PROCEDURE SetServerCert(ctx: TLSContext;
+                          VAR certPath, keyPath: ARRAY OF CHAR): Status;
+
+  (* ── ALPN (Application-Layer Protocol Negotiation) ── *)
+
+  (* Set client-side ALPN protocol list.
+     protos is wire format (length-prefixed strings, e.g. \002h2).
+     protosLen must be <= MaxALPNLen. *)
+  PROCEDURE SetALPN(ctx: TLSContext;
+                    protos: ADDRESS; protosLen: INTEGER): Status;
+
+  (* Set server-side ALPN preferred protocol list.
+     protos is wire format.  Installs a select callback.
+     protosLen must be <= MaxALPNLen. *)
+  PROCEDURE SetALPNServer(ctx: TLSContext;
+                          protos: ADDRESS; protosLen: INTEGER): Status;
+
   (* ── Session lifecycle ─────────────────────────────── *)
 
-  (* Create a TLS session over a connected, non-blocking socket.
+  (* Create a TLS client session over a connected, non-blocking socket.
      The fd must already be connected (TCP handshake complete).
      loop and sched are stored for async operations.
      Pre:  ctx is a configured TLS context; fd is a valid socket.
@@ -85,6 +113,14 @@ DEFINITION MODULE TLS;
   PROCEDURE SessionCreate(lp: Loop; sched: Scheduler;
                           ctx: TLSContext; fd: INTEGER;
                           VAR out: TLSSession): Status;
+
+  (* Create a TLS server session over an accepted, non-blocking socket.
+     The fd must come from Sockets.Accept with a completed TCP handshake.
+     Pre:  ctx is a configured server context with cert loaded; fd is valid.
+     Post: out is a valid session handle on OK. *)
+  PROCEDURE SessionCreateServer(lp: Loop; sched: Scheduler;
+                                ctx: TLSContext; fd: INTEGER;
+                                VAR out: TLSSession): Status;
 
   (* Destroy a session.  Does NOT close the underlying fd.
      Caller must close the socket separately.
@@ -174,6 +210,13 @@ DEFINITION MODULE TLS;
      Returns Invalid if no peer certificate is available. *)
   PROCEDURE GetPeerSummary(s: TLSSession;
                            VAR out: ARRAY OF CHAR): Status;
+
+  (* Query the negotiated ALPN protocol after handshake.
+     Copies the protocol string (e.g. "h2") into out.
+     got receives the string length, or 0 if no ALPN negotiated. *)
+  PROCEDURE GetALPN(s: TLSSession;
+                    VAR out: ARRAY OF CHAR;
+                    VAR got: INTEGER): Status;
 
   (* Return the X509 verification result code.
      0 = X509_V_OK (success).

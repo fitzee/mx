@@ -76,6 +76,9 @@ pub struct LspServer {
 
     /// Messages buffered while waiting for a specific response (e.g. progress create).
     buffered_messages: Vec<Json>,
+
+    /// Library documentation loaded from disk at startup.
+    library_docs: crate::lang_docs::LibraryDocs,
 }
 
 impl LspServer {
@@ -89,6 +92,11 @@ impl LspServer {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_DEBOUNCE_MS);
+
+        let library_docs = match crate::lang_docs::resolve_docs_root() {
+            Some(docs_root) => crate::lang_docs::LibraryDocs::load(&docs_root),
+            None => crate::lang_docs::LibraryDocs::empty(),
+        };
 
         Self {
             docs: DocumentStore::new(),
@@ -110,6 +118,7 @@ impl LspServer {
             client_supports_progress: false,
             event_rx: None,
             buffered_messages: Vec::new(),
+            library_docs,
         }
     }
 
@@ -1353,7 +1362,7 @@ impl LspServer {
             .unwrap_or("");
 
         if key.is_empty() {
-            // List all available documentation entries
+            // List all available documentation entries — core + library + stdlib procs
             let mut entries: Vec<Json> = crate::lang_docs::all_keys()
                 .iter()
                 .map(|k| {
@@ -1365,7 +1374,17 @@ impl LspServer {
                 })
                 .collect();
 
-            // Add individual stdlib procedure/variable entries
+            // Library docs (loaded from disk)
+            for k in self.library_docs.all_keys() {
+                if let Some(entry) = self.library_docs.get(k) {
+                    entries.push(Json::obj(vec![
+                        ("key", Json::str_val(&entry.key)),
+                        ("category", Json::str_val(&entry.category)),
+                    ]));
+                }
+            }
+
+            // Individual stdlib procedure/variable entries
             let mut seen = std::collections::HashSet::new();
             for (module, name, _sig, _doc) in crate::stdlib::stdlib_all_proc_docs() {
                 let display_key = format!("{}.{}", module, name);
@@ -1383,12 +1402,22 @@ impl LspServer {
             return;
         }
 
-        // Lookup specific doc entry — first try embedded lang docs
+        // Lookup specific doc entry — first try embedded core docs
         if let Some(entry) = crate::lang_docs::get_doc(key) {
             transport::send_response(id, Json::obj(vec![
                 ("key", Json::str_val(entry.key)),
                 ("category", Json::str_val(&format!("{:?}", entry.category))),
                 ("markdown", Json::str_val(entry.markdown)),
+            ]));
+            return;
+        }
+
+        // Then try library docs (loaded from disk)
+        if let Some(entry) = self.library_docs.get(key) {
+            transport::send_response(id, Json::obj(vec![
+                ("key", Json::str_val(&entry.key)),
+                ("category", Json::str_val(&entry.category)),
+                ("markdown", Json::str_val(&entry.markdown)),
             ]));
             return;
         }

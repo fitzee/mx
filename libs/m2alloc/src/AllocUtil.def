@@ -1,0 +1,48 @@
+DEFINITION MODULE AllocUtil;
+(* Shared helpers for pointer arithmetic, alignment, and byte access.
+
+   No state, no side effects.  All procedures are pure functions or
+   simple memory read/write operations.
+
+   BytePtr enables indexed byte access on arbitrary ADDRESS values.
+   AddrPtr enables reading/writing ADDRESS-sized values at any location. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  (* Overlay for indexed byte access on any ADDRESS. *)
+  ByteArray = ARRAY [0..65535] OF CHAR;
+  BytePtr = POINTER TO ByteArray;
+
+  (* Overlay for reading/writing an ADDRESS at any location. *)
+  AddrPtr = POINTER TO ADDRESS;
+
+(* ── Alignment ───────────────────────────────────────── *)
+
+(* Returns TRUE if x is a power of two (x > 0). *)
+PROCEDURE IsPowerOfTwo(x: CARDINAL): BOOLEAN;
+
+(* Round x up to the next multiple of align.
+   align must be a power of two and > 0; otherwise returns x unchanged. *)
+PROCEDURE AlignUp(x, align: CARDINAL): CARDINAL;
+
+(* ── Pointer arithmetic ──────────────────────────────── *)
+
+(* Return base + offset as an ADDRESS. *)
+PROCEDURE PtrAdd(base: ADDRESS; offset: CARDINAL): ADDRESS;
+
+(* Return a - b as a CARDINAL.  Returns 0 if b >= a. *)
+PROCEDURE PtrDiff(a, b: ADDRESS): CARDINAL;
+
+(* ── Byte access ─────────────────────────────────────── *)
+
+(* Fill count bytes starting at base with val (0..255). *)
+PROCEDURE FillBytes(base: ADDRESS; count: CARDINAL; val: CARDINAL);
+
+(* Read an ADDRESS from the memory location loc. *)
+PROCEDURE ReadAddr(loc: ADDRESS): ADDRESS;
+
+(* Write val as an ADDRESS at the memory location loc. *)
+PROCEDURE WriteAddr(loc: ADDRESS; val: ADDRESS);
+
+END AllocUtil.

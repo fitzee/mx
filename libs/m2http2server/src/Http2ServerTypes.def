@@ -1,0 +1,100 @@
+DEFINITION MODULE Http2ServerTypes;
+
+  (* Shared types for the HTTP/2 server library.
+     All public-facing types live here to avoid circular imports. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM ByteBuf IMPORT Buf;
+
+  CONST
+    MaxConns        = 16;     (* max concurrent connections *)
+    MaxStreamSlots  = 32;     (* max concurrent streams per connection *)
+    MaxRoutes       = 64;     (* max registered routes *)
+    MaxMiddleware   = 8;      (* max middleware in chain *)
+    MaxReqHeaders   = 32;     (* max headers per request *)
+    MaxRespHeaders  = 32;     (* max headers per response *)
+    MaxMethodLen    = 15;
+    MaxPathLen      = 511;
+    MaxSchemeLen    = 7;
+    MaxAuthorityLen = 127;
+    MaxRemoteLen    = 63;
+    MaxReqNameLen   = 63;     (* header name max *)
+    MaxReqValueLen  = 255;    (* header value max *)
+    ConnBufSize     = 16384;  (* 16 KB read/write buffers *)
+
+    (* Server lifecycle FSM states *)
+    SrvInit     = 0;
+    SrvRunning  = 1;
+    SrvDraining = 2;
+    SrvStopped  = 3;
+    NumSrvStates = 4;
+
+    (* Server lifecycle FSM events *)
+    SrvEvStart   = 0;
+    SrvEvDrain   = 1;
+    SrvEvDrained = 2;
+    SrvEvStop    = 3;
+    NumSrvEvents = 4;
+
+  TYPE
+    (* Request header — smaller than Http2Types.HeaderEntry for memory *)
+    ReqHeader = RECORD
+      name:    ARRAY [0..MaxReqNameLen] OF CHAR;
+      nameLen: CARDINAL;
+      value:   ARRAY [0..MaxReqValueLen] OF CHAR;
+      valLen:  CARDINAL;
+    END;
+
+    (* Server configuration *)
+    ServerOpts = RECORD
+      port:           CARDINAL;
+      certPath:       ARRAY [0..255] OF CHAR;
+      keyPath:        ARRAY [0..255] OF CHAR;
+      maxConns:       CARDINAL;
+      maxStreams:      CARDINAL;
+      idleTimeoutMs:  INTEGER;
+      hsTimeoutMs:    INTEGER;
+      drainTimeoutMs: INTEGER;
+    END;
+
+    (* Incoming request — populated from decoded HEADERS + DATA *)
+    Request = RECORD
+      method:     ARRAY [0..MaxMethodLen] OF CHAR;
+      path:       ARRAY [0..MaxPathLen] OF CHAR;
+      scheme:     ARRAY [0..MaxSchemeLen] OF CHAR;
+      authority:  ARRAY [0..MaxAuthorityLen] OF CHAR;
+      headers:    ARRAY [0..MaxReqHeaders-1] OF ReqHeader;
+      numHeaders: CARDINAL;
+      body:       Buf;
+      bodyLen:    CARDINAL;
+      streamId:   CARDINAL;
+      connId:     CARDINAL;
+      startTick:  INTEGER;
+      remoteAddr: ARRAY [0..MaxRemoteLen] OF CHAR;
+    END;
+
+    (* Outgoing response *)
+    Response = RECORD
+      status:     CARDINAL;
+      headers:    ARRAY [0..MaxRespHeaders-1] OF ReqHeader;
+      numHeaders: CARDINAL;
+      body:       Buf;
+      bodyLen:    CARDINAL;
+    END;
+
+    (* Handler: called for each request *)
+    HandlerProc = PROCEDURE(VAR Request, VAR Response, ADDRESS);
+
+    (* Middleware: returns TRUE to continue chain, FALSE to short-circuit *)
+    MiddlewareProc = PROCEDURE(VAR Request, VAR Response, ADDRESS): BOOLEAN;
+
+    Status = (OK, Invalid, SysError, TLSFailed, ALPNFailed,
+              OutOfMemory, PoolExhausted, Stopped, ProtoError);
+
+  PROCEDURE InitDefaultOpts(VAR opts: ServerOpts);
+  PROCEDURE InitRequest(VAR req: Request);
+  PROCEDURE InitResponse(VAR resp: Response);
+  PROCEDURE FreeRequest(VAR req: Request);
+  PROCEDURE FreeResponse(VAR resp: Response);
+
+END Http2ServerTypes.

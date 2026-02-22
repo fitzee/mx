@@ -7,7 +7,11 @@ FROM TlsBridge IMPORT m2_tls_init,
     m2_tls_ctx_set_verify, m2_tls_ctx_set_min_version,
     m2_tls_ctx_load_system_roots, m2_tls_ctx_load_ca_file,
     m2_tls_ctx_set_client_cert,
-    m2_tls_session_create, m2_tls_session_destroy,
+    m2_tls_ctx_create_server, m2_tls_ctx_set_server_cert,
+    m2_tls_ctx_set_alpn, m2_tls_ctx_set_alpn_server,
+    m2_tls_get_alpn,
+    m2_tls_session_create, m2_tls_session_create_server,
+    m2_tls_session_destroy,
     m2_tls_session_set_sni,
     m2_tls_handshake, m2_tls_read, m2_tls_write, m2_tls_shutdown,
     m2_tls_get_verify_result, m2_tls_get_peer_summary,
@@ -276,6 +280,47 @@ BEGIN
   RETURN OK
 END SetClientCert;
 
+(* ── Server context ──────────────────────────────────────────────── *)
+
+PROCEDURE ContextCreateServer(VAR out: TLSContext): Status;
+BEGIN
+  out := m2_tls_ctx_create_server();
+  IF out = NIL THEN RETURN OutOfMemory END;
+  RETURN OK
+END ContextCreateServer;
+
+PROCEDURE SetServerCert(ctx: TLSContext;
+                        VAR certPath, keyPath: ARRAY OF CHAR): Status;
+VAR rc: INTEGER;
+BEGIN
+  IF ctx = NIL THEN RETURN Invalid END;
+  rc := m2_tls_ctx_set_server_cert(ctx, ADR(certPath), ADR(keyPath));
+  IF rc < 0 THEN RETURN SysError END;
+  RETURN OK
+END SetServerCert;
+
+(* ── ALPN ────────────────────────────────────────────────────────── *)
+
+PROCEDURE SetALPN(ctx: TLSContext;
+                  protos: ADDRESS; protosLen: INTEGER): Status;
+VAR rc: INTEGER;
+BEGIN
+  IF ctx = NIL THEN RETURN Invalid END;
+  rc := m2_tls_ctx_set_alpn(ctx, protos, protosLen);
+  IF rc < 0 THEN RETURN SysError END;
+  RETURN OK
+END SetALPN;
+
+PROCEDURE SetALPNServer(ctx: TLSContext;
+                        protos: ADDRESS; protosLen: INTEGER): Status;
+VAR rc: INTEGER;
+BEGIN
+  IF ctx = NIL THEN RETURN Invalid END;
+  rc := m2_tls_ctx_set_alpn_server(ctx, protos, protosLen);
+  IF rc < 0 THEN RETURN SysError END;
+  RETURN OK
+END SetALPNServer;
+
 (* ── Session lifecycle ───────────────────────────────────────────── *)
 
 PROCEDURE SessionCreate(lp: Loop; sched: Scheduler.Scheduler;
@@ -312,6 +357,41 @@ BEGIN
   out := sp;
   RETURN OK
 END SessionCreate;
+
+PROCEDURE SessionCreateServer(lp: Loop; sched: Scheduler.Scheduler;
+                              ctx: TLSContext; fd: INTEGER;
+                              VAR out: TLSSession): Status;
+VAR sp: SessPtr; ssl: ADDRESS;
+BEGIN
+  IF (ctx = NIL) OR (lp = NIL) OR (sched = NIL) THEN
+    out := NIL;
+    RETURN Invalid
+  END;
+  ssl := m2_tls_session_create_server(ctx, fd);
+  IF ssl = NIL THEN
+    out := NIL;
+    RETURN SysError
+  END;
+  ALLOCATE(sp, TSIZE(SessRec));
+  IF sp = NIL THEN
+    m2_tls_session_destroy(ssl);
+    out := NIL;
+    RETURN OutOfMemory
+  END;
+  sp^.ssl := ssl;
+  sp^.lp := lp;
+  sp^.sched := sched;
+  sp^.fd := fd;
+  sp^.op := OpNone;
+  sp^.rdBuf := NIL;
+  sp^.rdMax := 0;
+  sp^.wrBuf := NIL;
+  sp^.wrLen := 0;
+  sp^.wrSent := 0;
+  sp^.watching := FALSE;
+  out := sp;
+  RETURN OK
+END SessionCreateServer;
 
 PROCEDURE SessionDestroy(VAR s: TLSSession): Status;
 VAR sp: SessPtr;
@@ -628,6 +708,17 @@ BEGIN
   IF rc < 0 THEN RETURN Invalid END;
   RETURN OK
 END GetPeerSummary;
+
+PROCEDURE GetALPN(s: TLSSession;
+                  VAR out: ARRAY OF CHAR;
+                  VAR got: INTEGER): Status;
+VAR sp: SessPtr;
+BEGIN
+  IF s = NIL THEN RETURN Invalid END;
+  sp := s;
+  got := m2_tls_get_alpn(sp^.ssl, ADR(out), HIGH(out) + 1);
+  RETURN OK
+END GetALPN;
 
 PROCEDURE GetVerifyResult(s: TLSSession): INTEGER;
 VAR sp: SessPtr;

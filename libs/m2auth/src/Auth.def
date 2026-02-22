@@ -1,0 +1,171 @@
+DEFINITION MODULE Auth;
+
+  (* Authentication and authorization for Modula-2+ services.
+
+     Provides JWT HS256 (universal) and Ed25519 PASETO-like tokens,
+     keyring management, token verification, policy-based authorization,
+     and replay detection.
+
+     All pointer types use Storage.ALLOCATE/DEALLOCATE.
+     All procedures return Status. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  CONST
+    MaxClaims    = 32;
+    MaxKeys      = 8;
+    MaxScopes    = 16;
+    MaxScopeLen  = 63;
+    MaxSubLen    = 127;
+    MaxIssLen    = 127;
+    MaxAudLen    = 127;
+    MaxKidLen    = 63;
+    MaxJtiLen    = 63;
+    MaxClaimKey  = 31;
+    MaxClaimVal  = 255;
+    MaxTokenLen  = 2048;
+    MaxReplay    = 256;
+
+  TYPE
+    Status = (OK, Invalid, OutOfMemory, VerifyFailed,
+              Expired, NotYetValid, BadSignature,
+              Unsupported, Denied);
+
+    VerifyMode = (VerifyOn, VerifyOff);
+
+    TokenKind = (PasetoV4Public, JwtHS256, JwtES256);
+
+    Decision = (Allow, Deny);
+
+    ClaimType = (Str, Int, Bool);
+
+    Claim = RECORD
+      key:   ARRAY [0..MaxClaimKey] OF CHAR;
+      vtype: ClaimType;
+      s:     ARRAY [0..MaxClaimVal] OF CHAR;
+      i:     LONGINT;
+      b:     BOOLEAN;
+    END;
+
+    Claims = RECORD
+      count: CARDINAL;
+      items: ARRAY [0..MaxClaims-1] OF Claim;
+    END;
+
+    Principal = RECORD
+      subject:  ARRAY [0..MaxSubLen] OF CHAR;
+      issuer:   ARRAY [0..MaxIssLen] OF CHAR;
+      audience: ARRAY [0..MaxAudLen] OF CHAR;
+      scopes:   ARRAY [0..MaxScopes-1] OF
+                  ARRAY [0..MaxScopeLen] OF CHAR;
+      scopeCount: CARDINAL;
+      claims:   Claims;
+      expUnix:  LONGINT;
+      nbfUnix:  LONGINT;
+      iatUnix:  LONGINT;
+      kid:      ARRAY [0..MaxKidLen] OF CHAR;
+      jti:      ARRAY [0..MaxJtiLen] OF CHAR;
+    END;
+
+    KeyId     = ARRAY [0..MaxKidLen] OF CHAR;
+    PublicKey = ARRAY [0..63] OF CHAR;
+    SymKey    = ARRAY [0..31] OF CHAR;
+
+    Method = RECORD
+      service: ARRAY [0..63] OF CHAR;
+      method:  ARRAY [0..63] OF CHAR;
+    END;
+
+    Keyring      = ADDRESS;  (* opaque handle *)
+    Verifier     = ADDRESS;  (* opaque handle *)
+    Policy       = ADDRESS;  (* opaque handle *)
+    ReplayCache  = ADDRESS;  (* opaque handle *)
+
+  (* ── Status helpers ──────────────────────────────── *)
+
+  PROCEDURE StatusToStr(s: Status; VAR out: ARRAY OF CHAR);
+
+  PROCEDURE InitPrincipal(VAR p: Principal);
+
+  (* ── Keyring ─────────────────────────────────────── *)
+
+  PROCEDURE KeyringCreate(VAR kr: Keyring): Status;
+  PROCEDURE KeyringDestroy(VAR kr: Keyring): Status;
+
+  PROCEDURE KeyringAddEd25519Public(kr: Keyring;
+                                     kid: ARRAY OF CHAR;
+                                     VAR key: PublicKey): Status;
+
+  PROCEDURE KeyringAddHS256(kr: Keyring;
+                             kid: ARRAY OF CHAR;
+                             VAR key: SymKey): Status;
+
+  PROCEDURE KeyringRemove(kr: Keyring;
+                           kid: ARRAY OF CHAR): Status;
+
+  PROCEDURE KeyringSetActive(kr: Keyring;
+                              kid: ARRAY OF CHAR): Status;
+
+  PROCEDURE KeyringList(kr: Keyring;
+                         VAR kids: ARRAY OF KeyId;
+                         VAR count: CARDINAL): Status;
+
+  (* ── Verifier ────────────────────────────────────── *)
+
+  PROCEDURE VerifierCreate(VAR v: Verifier;
+                            kr: Keyring): Status;
+  PROCEDURE VerifierDestroy(VAR v: Verifier): Status;
+
+  PROCEDURE VerifierSetClockSkewSeconds(v: Verifier;
+                                         secs: CARDINAL): Status;
+
+  PROCEDURE VerifierSetAudience(v: Verifier;
+                                 aud: ARRAY OF CHAR): Status;
+
+  PROCEDURE VerifierSetIssuer(v: Verifier;
+                               iss: ARRAY OF CHAR): Status;
+
+  (* Verify a bearer token string.
+     On OK, principal is populated. *)
+  PROCEDURE VerifyBearerToken(v: Verifier;
+                               token: ARRAY OF CHAR;
+                               VAR principal: Principal): Status;
+
+  (* Sign a principal into a token string.
+     kind selects the algorithm.  kid selects the signing key.
+     On OK, token is populated. *)
+  PROCEDURE SignToken(kr: Keyring;
+                       kind: TokenKind;
+                       kid: ARRAY OF CHAR;
+                       VAR principal: Principal;
+                       VAR token: ARRAY OF CHAR;
+                       VAR tokenLen: CARDINAL): Status;
+
+  (* ── Replay cache ────────────────────────────────── *)
+
+  PROCEDURE ReplayCacheCreate(VAR rc: ReplayCache): Status;
+  PROCEDURE ReplayCacheDestroy(VAR rc: ReplayCache): Status;
+
+  (* Returns OK if jti is new, VerifyFailed if already seen. *)
+  PROCEDURE ReplayCacheSeenOrAdd(rc: ReplayCache;
+                                  jti: ARRAY OF CHAR;
+                                  expUnix: LONGINT): Status;
+
+  (* ── Policy ──────────────────────────────────────── *)
+
+  PROCEDURE PolicyCreate(VAR pol: Policy): Status;
+  PROCEDURE PolicyDestroy(VAR pol: Policy): Status;
+
+  PROCEDURE PolicyAllowScope(pol: Policy;
+                              scope: ARRAY OF CHAR): Status;
+
+  PROCEDURE PolicyAllowClaimEquals(pol: Policy;
+                                    key: ARRAY OF CHAR;
+                                    value: ARRAY OF CHAR): Status;
+
+  (* Authorize a principal against the policy.
+     Returns OK if allowed, Denied if not. *)
+  PROCEDURE Authorize(pol: Policy;
+                       VAR principal: Principal): Status;
+
+END Auth.

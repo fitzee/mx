@@ -1,0 +1,190 @@
+DEFINITION MODULE Log;
+(* Structured logging library for Modula-2.
+
+   Provides level-filtered, sink-dispatched logging with structured
+   key/value fields.  Designed for single-threaded event-loop programs.
+
+   Two usage modes:
+
+     1. Default logger:  Call InitDefault, then use InfoD/WarnD/ErrorD
+        etc.  The default logger writes to stdout via a console sink.
+
+     2. Custom loggers:  Declare a Logger variable, call Init, add
+        sinks, then use LogMsg/LogKV with an explicit logger.
+
+   Fast path: if a message's level is below the logger's minimum,
+   no formatting or allocation occurs.
+
+   Recursion guard: if a sink triggers a log call, the inner call
+   is suppressed and a drop counter is incremented.
+
+   No threads.  No heap allocation in the log path.  Fixed buffers
+   throughout; long messages and field values are truncated safely.
+
+   Output format (deterministic, single-line):
+
+     LEVEL msg="message text" category="cat" key1=val1 key2=val2
+
+   Rules:
+     - Level name first (uppercase)
+     - Message always as msg="..."
+     - Category next if non-empty
+     - Fields sorted by key lexicographically (stable insertion sort)
+     - String values quoted and escaped
+     - Integer values unquoted
+     - Boolean values as true/false unquoted *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+CONST
+  MaxMsg      = 255;   (* max message length *)
+  MaxKey      = 31;    (* max field key length *)
+  MaxStrVal   = 127;   (* max field string value length *)
+  MaxFields   = 16;    (* max fields per log call *)
+  MaxSinks    = 8;     (* max sinks per logger *)
+  MaxCategory = 63;    (* max category string length *)
+  MaxLine     = 2048;  (* max formatted output line length *)
+
+TYPE
+  (* Log severity levels, ordered by increasing severity. *)
+  Level = (TRACE, DEBUG, INFO, WARN, ERROR, FATAL);
+
+  (* Field value discriminator. *)
+  FieldKind = (FkStr, FkInt, FkBool);
+
+  (* A single key/value field.  Fixed-size, stack-allocatable. *)
+  Field = RECORD
+    key:     ARRAY [0..MaxKey] OF CHAR;
+    kind:    FieldKind;
+    intVal:  INTEGER;
+    boolVal: BOOLEAN;
+    strVal:  ARRAY [0..MaxStrVal] OF CHAR;
+  END;
+
+  (* Formatted line buffer type. *)
+  LineBuf = ARRAY [0..MaxLine-1] OF CHAR;
+
+  (* A log record passed to sinks.  Fully self-contained. *)
+  Record = RECORD
+    level:    Level;
+    msg:      ARRAY [0..MaxMsg] OF CHAR;
+    category: ARRAY [0..MaxCategory] OF CHAR;
+    fields:   ARRAY [0..MaxFields-1] OF Field;
+    nFields:  INTEGER;
+  END;
+
+  (* Sink callback.  ctx is user data from sink registration.
+     rec is the populated log record (read-only by convention). *)
+  SinkProc = PROCEDURE(ADDRESS, VAR Record);
+
+  (* A registered sink with optional level override. *)
+  Sink = RECORD
+    proc:     SinkProc;
+    ctx:      ADDRESS;
+    minLevel: Level;
+  END;
+
+  (* Logger state.  Declare as a module-level or local variable.
+     Always call Init or InitDefault before use. *)
+  Logger = RECORD
+    minLevel:  Level;
+    sinks:     ARRAY [0..MaxSinks-1] OF Sink;
+    sinkCount: INTEGER;
+    category:  ARRAY [0..MaxCategory] OF CHAR;
+    inSink:    BOOLEAN;
+    dropCount: INTEGER;
+  END;
+
+(* ── Initialization ──────────────────────────────────── *)
+
+(* Initialize a logger with level INFO and no sinks.
+   Call AddSink to attach one or more sinks before logging. *)
+PROCEDURE Init(VAR l: Logger);
+
+(* Initialize the module-level default logger with a console sink
+   (stdout) at level INFO.  Safe to call multiple times. *)
+PROCEDURE InitDefault;
+
+(* ── Configuration ───────────────────────────────────── *)
+
+(* Set the minimum level.  Messages below this are discarded. *)
+PROCEDURE SetLevel(VAR l: Logger; level: Level);
+
+(* Add a sink.  Returns FALSE if the sink list is full. *)
+PROCEDURE AddSink(VAR l: Logger; s: Sink): BOOLEAN;
+
+(* Set the category string.  Included in all records. *)
+PROCEDURE SetCategory(VAR l: Logger; cat: ARRAY OF CHAR);
+
+(* Create a copy of src with a different category.
+   Sinks are copied, not shared. *)
+PROCEDURE WithCategory(VAR src: Logger; cat: ARRAY OF CHAR;
+                        VAR out: Logger);
+
+(* ── Logging ─────────────────────────────────────────── *)
+
+(* Log a plain message at the given level. *)
+PROCEDURE LogMsg(VAR l: Logger; level: Level;
+                 msg: ARRAY OF CHAR);
+
+(* Log a structured message with key/value fields.
+   fields is an open array; nFields is the number of valid
+   entries (must be <= HIGH(fields)+1 and <= MaxFields). *)
+PROCEDURE LogKV(VAR l: Logger; level: Level;
+                msg: ARRAY OF CHAR;
+                fields: ARRAY OF Field; nFields: INTEGER);
+
+(* ── Convenience (explicit logger) ───────────────────── *)
+
+PROCEDURE Trace(VAR l: Logger; msg: ARRAY OF CHAR);
+PROCEDURE Debug(VAR l: Logger; msg: ARRAY OF CHAR);
+PROCEDURE Info(VAR l: Logger; msg: ARRAY OF CHAR);
+PROCEDURE Warn(VAR l: Logger; msg: ARRAY OF CHAR);
+PROCEDURE Error(VAR l: Logger; msg: ARRAY OF CHAR);
+PROCEDURE Fatal(VAR l: Logger; msg: ARRAY OF CHAR);
+
+(* ── Convenience (default logger) ────────────────────── *)
+
+PROCEDURE TraceD(msg: ARRAY OF CHAR);
+PROCEDURE DebugD(msg: ARRAY OF CHAR);
+PROCEDURE InfoD(msg: ARRAY OF CHAR);
+PROCEDURE WarnD(msg: ARRAY OF CHAR);
+PROCEDURE ErrorD(msg: ARRAY OF CHAR);
+PROCEDURE FatalD(msg: ARRAY OF CHAR);
+
+(* ── Field constructors ──────────────────────────────── *)
+
+(* Build a string field.  key and val are truncated if too long. *)
+PROCEDURE KVStr(key: ARRAY OF CHAR; val: ARRAY OF CHAR;
+                VAR out: Field);
+
+(* Build an integer field. *)
+PROCEDURE KVInt(key: ARRAY OF CHAR; val: INTEGER;
+                VAR out: Field);
+
+(* Build a boolean field. *)
+PROCEDURE KVBool(key: ARRAY OF CHAR; val: BOOLEAN;
+                 VAR out: Field);
+
+(* ── Diagnostics ─────────────────────────────────────── *)
+
+(* Return the number of log calls suppressed by the recursion guard. *)
+PROCEDURE GetDropCount(VAR l: Logger): INTEGER;
+
+(* ── Formatting ──────────────────────────────────────── *)
+
+(* Format a log record into buf.  len is set to the number of
+   characters written (excluding NUL terminator).
+   Sink implementations should call this to produce output.
+   If the formatted output exceeds MaxLine, it is truncated. *)
+PROCEDURE Format(VAR rec: Record; VAR buf: LineBuf;
+                 VAR len: INTEGER);
+
+(* ── Sink helpers ────────────────────────────────────── *)
+
+(* Create a sink that writes formatted lines to stdout.
+   Level override set to TRACE so the logger's own minLevel
+   controls filtering. *)
+PROCEDURE MakeConsoleSink(VAR out: Sink);
+
+END Log.

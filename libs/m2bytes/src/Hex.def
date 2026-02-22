@@ -1,0 +1,40 @@
+DEFINITION MODULE Hex;
+(* Hexadecimal encoding and decoding.
+
+   Encoding produces lowercase hex characters (0-9, a-f).
+   Decoding accepts both uppercase and lowercase.
+
+   HexEncode writes 2 chars per input byte.
+   HexDecode reads 2 chars per output byte; odd-length input
+   or invalid hex characters cause ok=FALSE.
+
+   No heap allocation.  Output buffers are caller-provided. *)
+
+FROM ByteBuf IMPORT Buf;
+
+(* Encode bytes from a Buf into hex characters.
+   out must be large enough for 2 * nBytes characters.
+   outLen is set to the number of characters written.
+   ok=FALSE if out is too small. *)
+PROCEDURE Encode(VAR src: Buf; nBytes: CARDINAL;
+                 VAR out: ARRAY OF CHAR;
+                 VAR outLen: CARDINAL;
+                 VAR ok: BOOLEAN);
+
+(* Decode hex string into a Buf (appends to existing contents).
+   sLen is the number of hex characters to decode.
+   ok=FALSE if sLen is odd or contains invalid hex characters. *)
+PROCEDURE Decode(s: ARRAY OF CHAR; sLen: CARDINAL;
+                 VAR dst: Buf;
+                 VAR ok: BOOLEAN);
+
+(* Encode a single byte (0..255) into 2 hex chars.
+   Returns the 2 characters via hi and lo. *)
+PROCEDURE ByteToHex(val: CARDINAL; VAR hi, lo: CHAR);
+
+(* Decode 2 hex chars to a byte value (0..255).
+   ok=FALSE if either char is not a valid hex digit. *)
+PROCEDURE HexToByte(hi, lo: CHAR; VAR val: CARDINAL;
+                    VAR ok: BOOLEAN);
+
+END Hex.

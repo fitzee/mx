@@ -271,6 +271,40 @@ pub fn build_project(
         }
     }
 
+    // Merge transitive [cc] sections from path: dependencies
+    let dep_cc = crate::project_resolver::collect_transitive_cc(root, manifest, None);
+    for f in &dep_cc.cflags {
+        if !opts.extra_cflags.contains(f) {
+            opts.extra_cflags.push(f.clone());
+        }
+    }
+    for f in &dep_cc.frameworks {
+        if !opts.frameworks.contains(f) {
+            opts.frameworks.push(f.clone());
+        }
+    }
+    for extra in &dep_cc.extra_c {
+        // Already absolute paths from collect_transitive_cc
+        let p = PathBuf::from(extra);
+        if !opts.extra_c_files.contains(&p) {
+            opts.extra_c_files.push(p);
+        }
+    }
+    for lib in &dep_cc.libs {
+        if !opts.link_libs.contains(lib) {
+            opts.link_libs.push(lib.clone());
+        }
+    }
+    for ldflag in &dep_cc.ldflags {
+        if let Some(path) = ldflag.strip_prefix("-L") {
+            if !opts.link_paths.contains(&path.to_string()) {
+                opts.link_paths.push(path.to_string());
+            }
+        } else if !opts.link_paths.contains(ldflag) {
+            opts.link_paths.push(ldflag.clone());
+        }
+    }
+
     if config.verbose {
         eprintln!("m2c: building {} → {}", entry, artifact.display());
     }

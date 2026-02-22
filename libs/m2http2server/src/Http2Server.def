@@ -1,0 +1,60 @@
+DEFINITION MODULE Http2Server;
+
+  (* Top-level HTTP/2 server.
+     Binds a socket, accepts TLS connections, and dispatches
+     HTTP/2 requests through a router and middleware chain.
+
+     Composes: m2tls (server TLS + ALPN), m2sockets (accept),
+     m2evloop (event loop + timers), m2futures (scheduler),
+     m2fsm (lifecycle FSM), m2log (structured logging),
+     Http2ServerConn (per-connection driver),
+     Http2Router (method+path dispatch),
+     Http2Middleware (pre-handler chain),
+     Http2ServerMetrics (counters). *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM Http2ServerTypes IMPORT ServerOpts, Status,
+                                HandlerProc, MiddlewareProc;
+
+  TYPE
+    Server = ADDRESS;   (* opaque handle *)
+
+  (* Create a server with the given options.
+     Allocates TLS context, binds socket, initialises router
+     and middleware chain.
+     Pre:  opts.certPath and opts.keyPath point to PEM files.
+     Post: on OK, out is a valid server handle. *)
+  PROCEDURE Create(VAR opts: ServerOpts;
+                   VAR out: Server): Status;
+
+  (* Register a route: exact match on (method, path).
+     Must be called before Start. *)
+  PROCEDURE AddRoute(s: Server;
+                     method, path: ARRAY OF CHAR;
+                     handler: HandlerProc;
+                     ctx: ADDRESS): BOOLEAN;
+
+  (* Add middleware to the pre-handler chain.
+     Runs in insertion order before the handler. *)
+  PROCEDURE AddMiddleware(s: Server;
+                          mw: MiddlewareProc;
+                          ctx: ADDRESS): BOOLEAN;
+
+  (* Start the server: enters the event loop.
+     Blocks until Stop or Drain completes.
+     The listen socket is watched for accept readiness. *)
+  PROCEDURE Start(s: Server): Status;
+
+  (* Initiate graceful shutdown.
+     Sends GOAWAY to all connections, waits drainTimeoutMs,
+     then closes remaining connections and stops the event loop. *)
+  PROCEDURE Drain(s: Server): Status;
+
+  (* Force-stop the server immediately.
+     Closes all connections and stops the event loop. *)
+  PROCEDURE Stop(s: Server): Status;
+
+  (* Destroy the server and free all resources. *)
+  PROCEDURE Destroy(VAR s: Server): Status;
+
+END Http2Server.

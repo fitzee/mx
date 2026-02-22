@@ -1,0 +1,30 @@
+DEFINITION MODULE Http2ServerLog;
+
+  (* Structured logging adapter for the HTTP/2 server.
+     Wraps m2Log with server-specific convenience procedures. *)
+
+  FROM Log IMPORT Logger;
+  FROM Http2ServerTypes IMPORT Request, Response;
+
+  (* Initialise a logger with "h2server" category and console sink. *)
+  PROCEDURE LogInit(VAR lg: Logger);
+
+  (* Log request completion: conn_id, stream_id, method, path,
+     status, bodyLen, duration ticks. *)
+  PROCEDURE LogRequest(VAR lg: Logger;
+                       VAR req: Request;
+                       VAR resp: Response;
+                       durationTicks: INTEGER);
+
+  (* Log protocol event: SETTINGS negotiated, GOAWAY sent/received. *)
+  PROCEDURE LogProtocol(VAR lg: Logger;
+                        connId: CARDINAL;
+                        event: ARRAY OF CHAR;
+                        detail: ARRAY OF CHAR);
+
+  (* Log connection event: accepted, closed, error. *)
+  PROCEDURE LogConn(VAR lg: Logger;
+                    connId: CARDINAL;
+                    event: ARRAY OF CHAR);
+
+END Http2ServerLog.

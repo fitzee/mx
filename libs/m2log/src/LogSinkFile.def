@@ -1,0 +1,23 @@
+DEFINITION MODULE LogSinkFile;
+(* File sink for Log.  Appends formatted log lines to a file.
+
+   Uses m2sys file I/O (no new C bridge code).
+   The file is opened on Create and held open until Close.
+   Each log call formats the record and writes one line.
+
+   If the write fails, the error is silently ignored (logging
+   must never crash).  Use the logger's drop count for diagnostics.
+
+   For stderr output on Unix, pass "/dev/stderr" as the path. *)
+
+FROM Log IMPORT Sink;
+
+(* Open a file for append and return a configured Sink.
+   Returns FALSE if the file cannot be opened. *)
+PROCEDURE Create(path: ARRAY OF CHAR; VAR out: Sink): BOOLEAN;
+
+(* Close the file handle associated with a file sink.
+   The sink becomes a no-op after this call. *)
+PROCEDURE Close(VAR s: Sink);
+
+END LogSinkFile.

@@ -1,0 +1,128 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Modula-2",
+  "scopeName": "source.modula2",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.modula2",
+          "begin": "\\(\\*",
+          "end": "\\*\\)",
+          "patterns": [
+            { "include": "#comments" }
+          ]
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.modula2",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.modula2", "match": "\\\\." }
+          ]
+        },
+        {
+          "name": "string.quoted.single.modula2",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "name": "constant.character.escape.modula2", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.modula2",
+          "match": "\\b[0-9][0-9A-Fa-f]*H\\b"
+        },
+        {
+          "name": "constant.numeric.octal.modula2",
+          "match": "\\b[0-7]+B\\b"
+        },
+        {
+          "name": "constant.numeric.char.modula2",
+          "match": "\\b[0-9][0-9A-Fa-f]*C\\b"
+        },
+        {
+          "name": "constant.numeric.float.modula2",
+          "match": "\\b[0-9]+\\.[0-9]+([Ee][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.modula2",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.modula2",
+          "match": "\\b(IF|THEN|ELSE|ELSIF|END|WHILE|DO|REPEAT|UNTIL|FOR|TO|BY|LOOP|EXIT|CASE|OF|WITH|RETURN|BEGIN)\\b"
+        },
+        {
+          "name": "keyword.declaration.modula2",
+          "match": "\\b(MODULE|PROCEDURE|VAR|CONST|TYPE|DEFINITION|IMPLEMENTATION|FROM|IMPORT|EXPORT|QUALIFIED|POINTER|RECORD|ARRAY|SET)\\b"
+        },
+        {
+          "name": "keyword.control.m2plus",
+          "match": "\\b(TRY|EXCEPT|FINALLY|RAISE|EXCEPTION|LOCK|TYPECASE|SAFE|UNSAFE|BRANDED|OBJECT|METHODS|OVERRIDES|REF|REFANY)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.modula2",
+          "match": "\\b(INTEGER|CARDINAL|REAL|LONGREAL|BOOLEAN|CHAR|BITSET|WORD|BYTE|ADDRESS|LONGINT|LONGCARD|PROC)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.modula2",
+          "match": "\\b(TRUE|FALSE|NIL|MAX|MIN|ABS|ODD|CAP|ORD|CHR|VAL|INC|DEC|INCL|EXCL|HIGH|SIZE|ADR|NEW|DISPOSE|HALT)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.modula2",
+          "match": "\\b(AND|OR|NOT|MOD|DIV|IN)\\b"
+        },
+        {
+          "name": "keyword.operator.assignment.modula2",
+          "match": ":="
+        },
+        {
+          "name": "keyword.operator.comparison.modula2",
+          "match": "(<=|>=|<>|<|>|=|#)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.modula2",
+          "match": "[+\\-*/]"
+        },
+        {
+          "name": "keyword.operator.range.modula2",
+          "match": "\\.\\."
+        }
+      ]
+    }
+  }
+}

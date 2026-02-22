@@ -222,6 +222,36 @@ Local variables map 1:1 to their Modula-2 names. Module-level variables appear a
 - The `.dSYM` bundle may be missing — rebuild with `m2c clean && m2c build -g`
 - Ensure the `.mod` source files haven't moved since the last build
 
+## Libraries
+
+Standard libraries shipped in `libs/`. Add them to your project via `m2.toml` deps or `-I` paths.
+
+### Async / Networking
+
+| Library | Path | Description |
+|---------|------|-------------|
+| m2futures | `libs/m2futures/` | Promises/Futures for single-threaded async |
+| m2stream | `libs/m2stream/` | Transport-agnostic byte streams (TCP, TLS) |
+| m2evloop | `libs/m2evloop/` | Event loop with poll/kqueue backend |
+| m2sockets | `libs/m2sockets/` | BSD socket bindings |
+| m2tls | `libs/m2tls/` | TLS via system libraries |
+| m2http | `libs/m2http/` | HTTP client over m2stream |
+
+### Graphics
+
+| Library | Path | Description |
+|---------|------|-------------|
+| m2gfx | `libs/m2gfx/` | Graphics bridge (SDL2), canvas, pixel buffers, fonts |
+
+### Helpers
+
+| Library | Path | Description |
+|---------|------|-------------|
+| m2log | `libs/m2log/` | Structured logging with pluggable sinks |
+| m2bytes | `libs/m2bytes/` | Byte buffers, binary codec (endian, varint, hex) |
+| m2cli | `libs/m2cli/` | CLI argument parser (flags, options) |
+| m2sys | `libs/m2sys/` | C shim for file I/O, exec, SHA256, paths |
+
 ## Output and logs
 
 - **Output panel**: Select "Modula-2+ Language Server" from the Output panel dropdown to see LSP server stderr output (errors, warnings, debug messages).

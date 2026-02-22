@@ -1,0 +1,84 @@
+DEFINITION MODULE Http2ServerStream;
+
+  (* Per-stream request assembly and response sending.
+     Operates on StreamSlot records within a connection.
+     Uses Http2Hpack for header encoding, Http2Frame for framing,
+     Http2Stream for per-stream FSM and flow control. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM ByteBuf IMPORT Buf, BytesView;
+  FROM Http2Types IMPORT HeaderEntry, MaxHeaders, Settings;
+  FROM Http2Hpack IMPORT DynTable;
+  FROM Http2Stream IMPORT H2Stream, StreamTransTable;
+  FROM Http2ServerTypes IMPORT Request, Response, MaxStreamSlots;
+
+  CONST
+    (* Stream slot phases *)
+    PhIdle       = 0;
+    PhHeaders    = 1;
+    PhData       = 2;
+    PhDispatched = 3;
+    PhResponding = 4;
+    PhDone       = 5;
+
+  TYPE
+    StreamSlot = RECORD
+      active:     BOOLEAN;
+      stream:     H2Stream;
+      req:        Request;
+      phase:      CARDINAL;
+      endRecvd:   BOOLEAN;
+      endSent:    BOOLEAN;
+    END;
+
+  PROCEDURE SlotInit(VAR slot: StreamSlot);
+
+  (* Extract pseudo-headers (:method, :path, :scheme, :authority) and
+     regular headers from decoded HPACK entries into the request.
+     Returns FALSE if required pseudo-headers are missing. *)
+  PROCEDURE AssembleHeaders(VAR slot: StreamSlot;
+                            VAR decoded: ARRAY OF HeaderEntry;
+                            numDecoded: CARDINAL;
+                            endStream: BOOLEAN): BOOLEAN;
+
+  (* Accumulate DATA frame payload into request body.
+     Returns FALSE if body exceeds limit or stream is in wrong phase. *)
+  PROCEDURE AccumulateData(VAR slot: StreamSlot;
+                           data: BytesView;
+                           endStream: BOOLEAN): BOOLEAN;
+
+  (* Encode response as HEADERS + DATA frames into outBuf.
+     Respects maxFrameSize from remote settings.
+     Returns total bytes appended to outBuf.
+     connWindow is checked; unsent DATA stays in resp.body for later. *)
+  PROCEDURE SendResponse(VAR slot: StreamSlot;
+                         VAR resp: Response;
+                         VAR dynEnc: DynTable;
+                         VAR outBuf: Buf;
+                         maxFrameSize: CARDINAL;
+                         VAR connWindow: INTEGER): CARDINAL;
+
+  (* Flush any remaining buffered response DATA for this slot.
+     Called after WINDOW_UPDATE restores flow control budget. *)
+  PROCEDURE FlushData(VAR slot: StreamSlot;
+                      VAR resp: Response;
+                      VAR outBuf: Buf;
+                      maxFrameSize: CARDINAL;
+                      VAR connWindow: INTEGER): CARDINAL;
+
+  (* Find an unused slot and initialise it for the given stream ID.
+     Returns slot index, or MaxStreamSlots if full. *)
+  PROCEDURE AllocSlot(VAR slots: ARRAY OF StreamSlot;
+                      streamId: CARDINAL;
+                      initWindowSize: CARDINAL;
+                      tablePtr: ADDRESS): CARDINAL;
+
+  (* Find slot by stream ID.
+     Returns slot index, or MaxStreamSlots if not found. *)
+  PROCEDURE FindSlot(VAR slots: ARRAY OF StreamSlot;
+                     streamId: CARDINAL): CARDINAL;
+
+  (* Release a slot after response is complete. *)
+  PROCEDURE SlotFree(VAR slot: StreamSlot);
+
+END Http2ServerStream.

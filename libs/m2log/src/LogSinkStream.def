@@ -1,0 +1,23 @@
+DEFINITION MODULE LogSinkStream;
+(* Stream sink for Log.  Writes formatted log lines to an existing
+   Stream handle (TCP or TLS).
+
+   Uses Stream.TryWrite for synchronous, non-blocking output.
+   If the write would block or fails, the line is silently dropped.
+
+   This module requires the m2stream library and its transitive
+   dependencies (m2futures, m2evloop, m2sockets, m2tls).
+   Only import it if your program already uses networking.
+
+   The Stream handle is NOT owned by the sink; the caller is
+   responsible for its lifecycle. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM Log IMPORT Sink;
+
+(* Create a stream sink that writes to an existing Stream.
+   streamHandle must be a valid Stream (from Stream.CreateTCP or
+   Stream.CreateTLS).  The stream must be in Open state. *)
+PROCEDURE Create(streamHandle: ADDRESS; VAR out: Sink);
+
+END LogSinkStream.

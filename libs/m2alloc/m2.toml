@@ -1,0 +1,17 @@
+# m2.toml - m2alloc: Pure Modula-2 memory allocation library
+#
+# Arena (bump) allocator and fixed-block pool, operating entirely
+# within caller-provided backing stores.  No OS syscalls, no C bridge.
+manifest_version=1
+name=m2alloc
+version=0.1.0
+edition=pim4
+entry=src/Arena.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/alloc_tests.mod
+
+[cc]

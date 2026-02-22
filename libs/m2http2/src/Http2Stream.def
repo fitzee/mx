@@ -1,0 +1,69 @@
+DEFINITION MODULE Http2Stream;
+(* HTTP/2 per-stream state machine.
+
+   Uses m2Fsm for table-driven stream state transitions
+   per RFC 7540 Section 5.1.
+
+   Each stream tracks its ID, flow control windows, and FSM state.
+   The transition table is shared across all streams. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM Fsm IMPORT Fsm, Transition, StepStatus;
+FROM Http2Types IMPORT Settings;
+
+(* ── Stream table (shared) ─────────────────────────────── *)
+
+CONST
+  StreamTableSize = 63;  (* NumStreamStates * NumStreamEvents = 7 * 9 *)
+
+TYPE
+  StreamTransTable = ARRAY [0..62] OF Transition;
+
+(* Initialise the shared stream transition table per RFC 7540. *)
+PROCEDURE InitStreamTable(VAR table: StreamTransTable);
+
+(* ── Per-stream record ─────────────────────────────────── *)
+
+TYPE
+  H2Stream = RECORD
+    id:         CARDINAL;
+    fsm:        Fsm;
+    sendWindow: INTEGER;
+    recvWindow: INTEGER;
+    rstCode:    CARDINAL;   (* error code if RST received *)
+  END;
+
+(* Initialise a stream.
+   table must point to a StreamTransTable initialised by InitStreamTable. *)
+PROCEDURE InitStream(VAR s: H2Stream; streamId: CARDINAL;
+                     initWindowSize: CARDINAL;
+                     table: ADDRESS);
+
+(* Process a stream event. Returns the step status. *)
+PROCEDURE StreamStep(VAR s: H2Stream; ev: CARDINAL;
+                     VAR status: StepStatus);
+
+(* ── Flow control ──────────────────────────────────────── *)
+
+(* Consume bytes from the send window.  Returns FALSE if
+   n exceeds the available window. *)
+PROCEDURE ConsumeSendWindow(VAR s: H2Stream; n: CARDINAL): BOOLEAN;
+
+(* Add increment to the send window (from WINDOW_UPDATE). *)
+PROCEDURE UpdateSendWindow(VAR s: H2Stream; increment: CARDINAL);
+
+(* Consume bytes from the recv window. *)
+PROCEDURE ConsumeRecvWindow(VAR s: H2Stream; n: CARDINAL): BOOLEAN;
+
+(* Add increment to the recv window (local decision). *)
+PROCEDURE UpdateRecvWindow(VAR s: H2Stream; increment: CARDINAL);
+
+(* ── Queries ───────────────────────────────────────────── *)
+
+(* Current FSM state as a StateId. *)
+PROCEDURE StreamState(VAR s: H2Stream): CARDINAL;
+
+(* Check if the stream is in Closed state. *)
+PROCEDURE IsClosed(VAR s: H2Stream): BOOLEAN;
+
+END Http2Stream.

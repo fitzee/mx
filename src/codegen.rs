@@ -117,6 +117,8 @@ pub struct CodeGen {
     generating_for_module: Option<String>,
     /// Tracks module-prefixed enum type names (e.g., "EventLoop_Status") for type resolution
     embedded_enum_types: HashSet<String>,
+    /// Multi-TU mode: emit per-module markers and non-static linkage for cross-module symbols
+    pub multi_tu: bool,
 }
 
 // ── Free variable analysis helpers ─────────────────────────────────────
@@ -366,6 +368,7 @@ impl CodeGen {
             last_line_num: 0,
             generating_for_module: None,
             embedded_enum_types: HashSet::new(),
+            multi_tu: false,
         }
     }
 
@@ -654,8 +657,14 @@ impl CodeGen {
             }
         }
 
+        if self.multi_tu {
+            self.emit("/* M2C_HEADER_BEGIN */\n");
+        }
         // Generate header
         self.emit(&stdlib::generate_runtime_header());
+        if self.multi_tu {
+            self.emit("/* M2C_HEADER_END */\n");
+        }
 
         match unit {
             CompilationUnit::ProgramModule(m) => self.gen_program_module(m),
@@ -750,6 +759,9 @@ impl CodeGen {
             }
         }
 
+        if self.multi_tu {
+            self.emit(&format!("/* M2C_MODULE_BEGIN {} */\n", imp.name));
+        }
         self.emitln(&format!("/* Imported Module {} */", imp.name));
         self.newline();
 
@@ -878,6 +890,8 @@ impl CodeGen {
                 };
                 if let Some(ref ecn) = p.heading.export_c_name {
                     self.emit(&format!("{} {}", ret_type, ecn));
+                } else if self.multi_tu {
+                    self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
                 } else {
                     self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
                 }
@@ -908,7 +922,33 @@ impl CodeGen {
                 self.emit(");\n");
             }
         }
+
+        // In multi-TU mode, emit extern declarations for exported vars and init function.
+        // This allows other TUs (including main) to reference these symbols.
+        if self.multi_tu {
+            if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+                for d in &def_mod.definitions {
+                    if let Definition::Var(v) = d {
+                        let ctype = self.type_to_c(&v.typ);
+                        let array_suffix = self.type_array_suffix(&v.typ);
+                        for name in &v.names {
+                            let c_name = format!("{}_{}", imp.name, name);
+                            self.emitln(&format!("extern {} {}{};", ctype, c_name, array_suffix));
+                        }
+                    }
+                }
+            }
+            // Always emit init prototype — harmless if module has no body
+            self.emitln(&format!("extern void {}_init(void);", imp.name));
+        }
+
         self.newline();
+
+        // Emit the MODULE_DEFS marker — everything below here is the module "body"
+        // (var definitions, proc bodies, init function) that goes into this module's TU.
+        if self.multi_tu {
+            self.emit(&format!("/* M2C_MODULE_DEFS {} */\n", imp.name));
+        }
 
         // Variable declarations from definition module (exported VARs)
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
@@ -937,6 +977,8 @@ impl CodeGen {
                 };
                 if let Some(ref ecn) = p.heading.export_c_name {
                     self.emit(&format!("{} {}", ret_type, ecn));
+                } else if self.multi_tu {
+                    self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
                 } else {
                     self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
                 }
@@ -997,7 +1039,11 @@ impl CodeGen {
 
         // Module initialization body
         if let Some(stmts) = &imp.block.body {
-            self.emitln(&format!("static void {}_init(void) {{", imp.name));
+            if self.multi_tu {
+                self.emitln(&format!("void {}_init(void) {{", imp.name));
+            } else {
+                self.emitln(&format!("static void {}_init(void) {{", imp.name));
+            }
             self.indent += 1;
             for stmt in stmts {
                 self.gen_statement(stmt);
@@ -1006,6 +1052,10 @@ impl CodeGen {
             self.emitln("}");
             self.newline();
             self.embedded_init_modules.push(imp.name.clone());
+        }
+
+        if self.multi_tu {
+            self.emit(&format!("/* M2C_MODULE_END {} */\n", imp.name));
         }
 
         // Restore state, but preserve module-prefixed proc params
@@ -1125,6 +1175,9 @@ impl CodeGen {
             }
         }
 
+        if self.multi_tu {
+            self.emit(&format!("/* M2C_MAIN_BEGIN {} */\n", m.name));
+        }
         self.emitln(&format!("/* Module {} */", m.name));
         self.newline();
 
@@ -1211,6 +1264,9 @@ impl CodeGen {
         self.emitln("return 0;");
         self.indent -= 1;
         self.emitln("}");
+        if self.multi_tu {
+            self.emit("/* M2C_MAIN_END */\n");
+        }
     }
 
     fn gen_definition_module(&mut self, m: &DefinitionModule) {

@@ -230,6 +230,41 @@ PROCEDURE SetClientCert(ctx: TLSContext;
 
 Load client certificate and private key from PEM files. Returns `SysError` on cert or key error. API present; not commonly needed for v1 use cases.
 
+### ContextCreateServer
+
+```modula2
+PROCEDURE ContextCreateServer(VAR out: TLSContext): Status;
+```
+
+Create a TLS server context. Defaults: `NoVerify` (servers don't verify clients by default), TLS 1.2 minimum. Returns `OutOfMemory` if OpenSSL allocation fails.
+
+### SetServerCert
+
+```modula2
+PROCEDURE SetServerCert(ctx: TLSContext;
+                        VAR certPath, keyPath: ARRAY OF CHAR): Status;
+```
+
+Load server certificate and private key from PEM files. Both are **required** for server operation. Returns `SysError` on cert or key error.
+
+### SetALPN
+
+```modula2
+PROCEDURE SetALPN(ctx: TLSContext;
+                  protos: ADDRESS; protosLen: INTEGER): Status;
+```
+
+Set client-side ALPN protocol list. `protos` is wire format (length-prefixed strings, e.g. `\002h2`). `protosLen` must be <= `MaxALPNLen` (64).
+
+### SetALPNServer
+
+```modula2
+PROCEDURE SetALPNServer(ctx: TLSContext;
+                        protos: ADDRESS; protosLen: INTEGER): Status;
+```
+
+Set server-side ALPN preferred protocol list. `protos` is wire format. Installs a select callback that matches client-offered protocols against the server's list. `protosLen` must be <= `MaxALPNLen` (64). One server context per process.
+
 ### SessionCreate
 
 ```modula2
@@ -239,6 +274,16 @@ PROCEDURE SessionCreate(lp: Loop; sched: Scheduler;
 ```
 
 Create a TLS session over a connected, non-blocking socket. The `fd` must already have completed its TCP handshake. `lp` and `sched` are stored for async operations.
+
+### SessionCreateServer
+
+```modula2
+PROCEDURE SessionCreateServer(lp: Loop; sched: Scheduler;
+                              ctx: TLSContext; fd: INTEGER;
+                              VAR out: TLSSession): Status;
+```
+
+Create a TLS server session over an accepted, non-blocking socket. The `fd` must come from `Sockets.Accept` with a completed TCP handshake. `ctx` must be a configured server context with cert loaded. `lp` and `sched` are stored for async operations.
 
 ### SessionDestroy
 
@@ -333,6 +378,16 @@ PROCEDURE GetPeerSummary(s: TLSSession; VAR out: ARRAY OF CHAR): Status;
 
 Copy the peer certificate subject into `out` (one-line format). Must be called after a successful handshake.
 
+### GetALPN
+
+```modula2
+PROCEDURE GetALPN(s: TLSSession;
+                  VAR out: ARRAY OF CHAR;
+                  VAR got: INTEGER): Status;
+```
+
+Query the negotiated ALPN protocol after handshake. Copies the protocol string (e.g. "h2") into `out`. `got` receives the string length, or 0 if no ALPN was negotiated.
+
 ### GetVerifyResult
 
 ```modula2
@@ -351,9 +406,8 @@ Copy the last TLS engine error string into `out`.
 
 ## Limitations
 
-- **No ALPN/HTTP/2**: Application-layer protocol negotiation not exposed.
 - **No session resumption**: Each connection performs a full handshake.
-- **No client certificates**: `SetClientCert` API present but not tested in v1.
+- **No client certificates**: `SetClientCert` API present but not tested.
 - **No custom crypto**: Uses whatever cipher suites OpenSSL negotiates.
 - **No full PEM parser**: CA loading delegates to OpenSSL's PEM reader.
 - **No OCSP stapling**: Certificate revocation checking not implemented.
@@ -364,6 +418,7 @@ Copy the last TLS engine error string into `out`.
 
 - [TLS-Architecture](TLS-Architecture.md) -- Internal design, state machines, and layering
 - [https_get_example](https_get_example.md) -- HTTPS GET example walkthrough
+- [https_server_example](https_server_example.md) -- HTTPS server example walkthrough
 - [../m2http/HTTPClient](../m2http/HTTPClient.md) -- HTTP client with HTTPS support
 - [../m2evloop/EventLoop](../m2evloop/EventLoop.md) -- Event loop integration
 - [../m2futures/Promise](../m2futures/Promise.md) -- Future/Promise types

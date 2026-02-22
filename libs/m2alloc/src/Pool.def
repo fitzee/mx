@@ -1,0 +1,75 @@
+DEFINITION MODULE Pool;
+(* Fixed-size block allocator with intrusive free list.
+
+   Operates entirely within a caller-provided backing store.
+   No heap allocation, no OS syscalls.
+
+   Usage:
+     VAR buf: ARRAY [0..4095] OF CHAR;
+         p: Pool;
+         ok: BOOLEAN;
+         blk: ADDRESS;
+     Init(p, ADR(buf), SIZE(buf), 64, ok);  -- 64-byte blocks
+     Alloc(p, blk, ok);
+     Free(p, blk, ok);
+
+   Free list is LIFO: first Alloc returns the lowest address.
+   Double-free is not detected; caller's responsibility.
+   Poison patterns (0CDH on alloc, 0DDH on free) help debugging. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  Pool = RECORD
+    base:        ADDRESS;
+    size:        CARDINAL;
+    blockSize:   CARDINAL;
+    blockCount:  CARDINAL;
+    freeHead:    ADDRESS;
+    inUse:       CARDINAL;
+    highwater:   CARDINAL;
+    invalidFree: CARDINAL;
+    poison:      BOOLEAN;
+  END;
+
+(* ── Lifecycle ───────────────────────────────────────── *)
+
+(* Initialise a pool over the backing store [base..base+size).
+   blockSize is rounded up to ADDRESS alignment.
+   On success: ok=TRUE, free list built.
+   On failure (blockSize too small or zero blocks fit): ok=FALSE. *)
+PROCEDURE Init(VAR p: Pool; base: ADDRESS; size: CARDINAL;
+               blockSize: CARDINAL; VAR ok: BOOLEAN);
+
+(* ── Allocation ──────────────────────────────────────── *)
+
+(* Allocate one block.
+   On success: out points to the block, ok=TRUE.
+   On failure (pool exhausted): out=NIL, ok=FALSE. *)
+PROCEDURE Alloc(VAR p: Pool; VAR out: ADDRESS; VAR ok: BOOLEAN);
+
+(* Return a block to the pool.
+   Validates: addr not NIL, within pool range, aligned to blockSize.
+   On success: ok=TRUE.  On failure: ok=FALSE, InvalidFrees incremented. *)
+PROCEDURE Free(VAR p: Pool; addr: ADDRESS; VAR ok: BOOLEAN);
+
+(* ── Queries ─────────────────────────────────────────── *)
+
+(* Number of blocks currently allocated. *)
+PROCEDURE InUse(VAR p: Pool): CARDINAL;
+
+(* Peak number of blocks ever allocated simultaneously. *)
+PROCEDURE HighWater(VAR p: Pool): CARDINAL;
+
+(* Number of invalid Free calls. *)
+PROCEDURE InvalidFrees(VAR p: Pool): CARDINAL;
+
+(* ── Poisoning ───────────────────────────────────────── *)
+
+(* Enable poison: alloc fills 0CDH, free fills 0DDH. *)
+PROCEDURE PoisonOn(VAR p: Pool);
+
+(* Disable poison. *)
+PROCEDURE PoisonOff(VAR p: Pool);
+
+END Pool.

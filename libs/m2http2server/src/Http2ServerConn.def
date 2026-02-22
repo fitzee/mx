@@ -1,0 +1,125 @@
+DEFINITION MODULE Http2ServerConn;
+
+  (* Per-connection HTTP/2 driver.
+     Manages TLS handshake, H2 preface validation, frame parsing,
+     HPACK decode, settings negotiation, and stream dispatch.
+     Uses m2Stream for transport, Http2Frame/Http2Hpack/Http2Stream
+     for protocol, Arena for per-request scratch, and EventLoop
+     for I/O readiness. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM ByteBuf IMPORT Buf;
+  FROM Http2Types IMPORT Settings, FrameHeader;
+  FROM Http2Hpack IMPORT DynTable;
+  FROM Http2Stream IMPORT StreamTransTable;
+  FROM Http2ServerTypes IMPORT MaxStreamSlots;
+  FROM Http2ServerStream IMPORT StreamSlot;
+  FROM Arena IMPORT Arena;
+  FROM Sockets IMPORT SockAddr;
+
+  CONST
+    (* Connection phases *)
+    CpPreface   = 0;    (* waiting for client preface *)
+    CpSettings  = 1;    (* waiting for client SETTINGS *)
+    CpOpen      = 2;    (* operational *)
+    CpGoaway    = 3;    (* GOAWAY sent, draining *)
+    CpClosed    = 4;    (* done *)
+
+    ArenaSize = 32768;  (* 32 KB per-connection arena *)
+
+  TYPE
+    ConnRec = RECORD
+      id:              CARDINAL;
+      server:          ADDRESS;       (* back-pointer to ServerRec *)
+      fd:              INTEGER;
+      phase:           CARDINAL;      (* CpPreface..CpClosed *)
+
+      (* TLS — session only; context shared via server *)
+      tlsSess:         ADDRESS;       (* TLS.TLSSession *)
+      tlsCtx:          ADDRESS;       (* per-conn TLS context *)
+
+      (* m2Stream handle *)
+      strm:            ADDRESS;       (* Stream.Stream *)
+
+      (* H2 protocol state *)
+      localSettings:   Settings;
+      remoteSettings:  Settings;
+      connSendWindow:  INTEGER;
+      connRecvWindow:  INTEGER;
+      lastPeerStream:  CARDINAL;
+      goawaySent:      BOOLEAN;
+      goawayRecvd:     BOOLEAN;
+      prefaceRecvd:    BOOLEAN;
+      settingsAckRecvd: BOOLEAN;
+      numActive:       CARDINAL;
+
+      (* HPACK tables *)
+      dynEnc:          DynTable;
+      dynDec:          DynTable;
+
+      (* Shared stream FSM table *)
+      streamTable:     StreamTransTable;
+
+      (* Stream slots *)
+      slots:           ARRAY [0..MaxStreamSlots-1] OF StreamSlot;
+
+      (* I/O buffers *)
+      readBuf:         Buf;
+      writeBuf:        Buf;
+      writeOff:        CARDINAL;     (* flush offset *)
+
+      (* Frame parse state *)
+      haveHeader:      BOOLEAN;
+      curHeader:       FrameHeader;
+
+      (* Per-connection arena *)
+      arenaBase:       ADDRESS;
+      arena:           Arena;
+
+      (* Timers *)
+      idleTimerId:     INTEGER;
+      hsTimerId:       INTEGER;
+
+      (* Remote address *)
+      remoteAddr:      ARRAY [0..63] OF CHAR;
+      startTick:       INTEGER;
+      lastActive:      INTEGER;
+
+      (* Watching state *)
+      watching:        BOOLEAN;
+    END;
+
+    ConnPtr = POINTER TO ConnRec;
+
+  (* Create a new connection from an accepted socket.
+     Initiates TLS handshake asynchronously.
+     serverPtr is the back-pointer to ServerRec. *)
+  PROCEDURE ConnCreate(serverPtr: ADDRESS;
+                       connId: CARDINAL;
+                       clientFd: INTEGER;
+                       peer: SockAddr;
+                       VAR cp: ConnPtr): BOOLEAN;
+
+  (* EventLoop watcher callback for connection I/O. *)
+  PROCEDURE ConnOnEvent(fd, events: INTEGER; user: ADDRESS);
+
+  (* Initiate graceful shutdown: send GOAWAY. *)
+  PROCEDURE ConnDrain(cp: ConnPtr);
+
+  (* Close and destroy connection, freeing all resources. *)
+  PROCEDURE ConnClose(cp: ConnPtr);
+
+  (* Flush any pending write data. *)
+  PROCEDURE ConnFlush(cp: ConnPtr);
+
+  (* Feed raw bytes for testing (bypasses Stream/TLS). *)
+  PROCEDURE ConnFeedBytes(cp: ConnPtr;
+                          data: ADDRESS;
+                          len: CARDINAL);
+
+  (* Create a test connection with no TLS/Stream (in-memory). *)
+  PROCEDURE ConnCreateTest(serverPtr: ADDRESS;
+                           connId: CARDINAL;
+                           VAR cp: ConnPtr): BOOLEAN;
+
+END Http2ServerConn.

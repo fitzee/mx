@@ -1,0 +1,28 @@
+# m2.toml - m2auth: Authentication & authorization for Modula-2+ services
+#
+# Provides JWT HS256 (universal) and Ed25519 (OpenSSL >= 1.1.1) tokens,
+# keyring management, token verification, policy-based authorization,
+# replay detection, Http2Server middleware, and RPC auth guard.
+#
+# Requires OpenSSL (or LibreSSL) development headers and libraries.
+#   macOS:  brew install openssl@3
+#   Linux:  apt install libssl-dev  (or equivalent)
+manifest_version=1
+name=m2auth
+version=0.1.0
+edition=pim4
+entry=src/Auth.mod
+includes=src
+
+[deps]
+m2bytes=path:../m2bytes
+m2http2server=path:../m2http2server
+
+[test]
+entry=tests/auth_tests.mod
+
+[cc]
+extra-c=src/auth_bridge.c
+cflags=-I/opt/homebrew/opt/openssl@3/include
+ldflags=-L/opt/homebrew/opt/openssl@3/lib
+libs=ssl crypto
