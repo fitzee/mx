@@ -1,5 +1,8 @@
 DEFINITION MODULE CLI;
 
+TYPE
+  GetArgProc = PROCEDURE(CARDINAL, VAR ARRAY OF CHAR);
+
 (* Add a boolean flag: -short / --long *)
 PROCEDURE AddFlag(short: ARRAY OF CHAR; long: ARRAY OF CHAR;
                   description: ARRAY OF CHAR);
@@ -10,7 +13,7 @@ PROCEDURE AddOption(short: ARRAY OF CHAR; long: ARRAY OF CHAR;
 
 (* Parse command-line arguments. argc is the count, getArg is
    the procedure that retrieves arg by index. *)
-PROCEDURE Parse(ac: CARDINAL; getArg: PROCEDURE(CARDINAL, VAR ARRAY OF CHAR));
+PROCEDURE Parse(ac: CARDINAL; getArg: GetArgProc);
 
 (* Returns 1 if the flag was present, 0 otherwise. *)
 PROCEDURE HasFlag(long: ARRAY OF CHAR): INTEGER;

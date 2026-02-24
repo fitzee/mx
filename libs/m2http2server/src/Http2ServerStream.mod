@@ -321,7 +321,7 @@ IMPLEMENTATION MODULE Http2ServerStream;
         bodyView.base := resp.body.data;
         bodyView.len := resp.body.len;
         (* We need a sub-view from bodyOfs for sendable bytes *)
-        bodyView.base := ADDRESS(CARDINAL(resp.body.data) + bodyOfs);
+        bodyView.base := ADDRESS(LONGCARD(resp.body.data) + LONGCARD(bodyOfs));
         bodyView.len := sendable;
         AppendView(outBuf, bodyView);
 
@@ -441,7 +441,7 @@ IMPLEMENTATION MODULE Http2ServerStream;
 
       EncodeDataHeader(outBuf, slot.stream.id, sendable, bodyEnd);
 
-      bodyView.base := ADDRESS(CARDINAL(resp.body.data) + bodyOfs);
+      bodyView.base := ADDRESS(LONGCARD(resp.body.data) + LONGCARD(bodyOfs));
       bodyView.len := sendable;
       AppendView(outBuf, bodyView);
 

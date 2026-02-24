@@ -47,6 +47,9 @@ IMPLEMENTATION MODULE Http2ServerConn;
                      Mark AS ArenaMark, ResetTo AS ArenaResetTo,
                      Clear AS ArenaClear;
   FROM Sockets IMPORT SockAddr;
+  IMPORT TLS;
+  IMPORT EventLoop;
+  FROM Poller IMPORT EvRead, EvWrite;
 
   (* ── Forward-declared server record access ──────────── *)
 
@@ -208,6 +211,7 @@ IMPLEMENTATION MODULE Http2ServerConn;
     cp^.lastActive := 0;
 
     cp^.watching := FALSE;
+    cp^.loop := NIL;
 
     RETURN TRUE;
   END ConnCreate;
@@ -582,7 +586,7 @@ IMPLEMENTATION MODULE Http2ServerConn;
       END;
 
       (* Extract payload view *)
-      payloadView.base := ADDRESS(CARDINAL(cp^.readBuf.data) + FrameHeaderSize);
+      payloadView.base := ADDRESS(LONGCARD(cp^.readBuf.data) + LONGCARD(FrameHeaderSize));
       payloadView.len := cp^.curHeader.length;
 
       (* Process the frame *)
@@ -606,12 +610,12 @@ IMPLEMENTATION MODULE Http2ServerConn;
       RETURN;
     END;
     remaining := b.len - n;
-    src := ADDRESS(CARDINAL(b.data) + n);
+    src := ADDRESS(LONGCARD(b.data) + LONGCARD(n));
     dst := b.data;
     (* Byte-by-byte copy; safe for overlapping *)
     FOR i := 0 TO remaining - 1 DO
-      sp := ADDRESS(CARDINAL(src) + i);
-      dp := ADDRESS(CARDINAL(dst) + i);
+      sp := ADDRESS(LONGCARD(src) + LONGCARD(i));
+      dp := ADDRESS(LONGCARD(dst) + LONGCARD(i));
       dp^ := sp^;
     END;
     b.len := remaining;
@@ -622,19 +626,69 @@ IMPLEMENTATION MODULE Http2ServerConn;
   PROCEDURE ConnOnEvent(fd, events: INTEGER; user: ADDRESS);
   VAR
     cp: ConnPtr;
+    tmpBuf: ARRAY [0..4095] OF CHAR;
+    got: INTEGER;
+    st: TLS.Status;
+    v: BytesView;
   BEGIN
     cp := ConnPtr(user);
     IF cp = NIL THEN RETURN END;
-    IF cp^.phase >= CpClosed THEN RETURN END;
+    IF cp^.phase >= CpClosed THEN
+      (* Already closed — trigger cleanup if callback set *)
+      IF ConnCleanup # NIL THEN
+        ConnCleanup(cp^.server, cp);
+      END;
+      RETURN;
+    END;
 
-    (* In a real server, we'd read from Stream/TLS here.
-       For test connections (fd=-1), data is fed via ConnFeedBytes.
-       For real connections, we would do:
-         Stream.TryRead(cp^.strm, readTmpBuf, readTmpMax, got)
-       and append to cp^.readBuf.  But this is driven by
-       the Http2Server module's event handling. *)
+    (* Test connections (no TLS) — data fed via ConnFeedBytes *)
+    IF cp^.tlsSess = NIL THEN
+      ProcessReadBuf(cp);
+      RETURN;
+    END;
+
+    (* Flush any pending write data first *)
+    IF cp^.writeBuf.len > cp^.writeOff THEN
+      ConnFlush(cp);
+    END;
+
+    (* Read from TLS into readBuf *)
+    LOOP
+      st := TLS.Read(cp^.tlsSess, ADR(tmpBuf), 4096, got);
+      IF st = TLS.OK THEN
+        IF got > 0 THEN
+          v.base := ADR(tmpBuf);
+          v.len := CARDINAL(got);
+          AppendView(cp^.readBuf, v);
+        ELSE
+          (* got=0 means EOF — peer closed *)
+          cp^.phase := CpClosed;
+          IF ConnCleanup # NIL THEN
+            ConnCleanup(cp^.server, cp);
+          END;
+          RETURN;
+        END;
+      ELSIF (st = TLS.WantRead) OR (st = TLS.WantWrite) THEN
+        EXIT;
+      ELSE
+        (* TLS error or connection closed *)
+        cp^.phase := CpClosed;
+        IF ConnCleanup # NIL THEN
+          ConnCleanup(cp^.server, cp);
+        END;
+        RETURN;
+      END;
+    END;
 
     ProcessReadBuf(cp);
+    ConnFlush(cp);
+
+    (* Check if processing moved us to closed/goaway state *)
+    IF cp^.phase >= CpClosed THEN
+      IF ConnCleanup # NIL THEN
+        ConnCleanup(cp^.server, cp);
+      END;
+    END;
   END ConnOnEvent;
 
   (* ── Drain and close ────────────────────────────────── *)
@@ -649,8 +703,14 @@ IMPLEMENTATION MODULE Http2ServerConn;
   PROCEDURE ConnClose(cp: ConnPtr);
   VAR
     i: CARDINAL;
+    dummy: TLS.Status;
   BEGIN
     IF cp = NIL THEN RETURN END;
+
+    (* Destroy TLS session *)
+    IF cp^.tlsSess # NIL THEN
+      dummy := TLS.SessionDestroy(cp^.tlsSess);
+    END;
 
     (* Free stream slots *)
     FOR i := 0 TO MaxStreamSlots - 1 DO
@@ -677,11 +737,44 @@ IMPLEMENTATION MODULE Http2ServerConn;
   (* ── Flush ──────────────────────────────────────────── *)
 
   PROCEDURE ConnFlush(cp: ConnPtr);
+  VAR
+    st: TLS.Status;
+    sent: INTEGER;
+    dataAddr: ADDRESS;
+    remaining: INTEGER;
+    evSt: EventLoop.Status;
   BEGIN
-    (* For test connections, the write buffer stays in cp^.writeBuf
-       for the test harness to read.
-       For real connections, Http2Server would call Stream.TryWrite
-       to flush cp^.writeBuf to the network. *)
+    IF cp = NIL THEN RETURN END;
+    (* Test connections: leave data in writeBuf for test harness *)
+    IF cp^.tlsSess = NIL THEN RETURN END;
+
+    WHILE cp^.writeOff < cp^.writeBuf.len DO
+      remaining := INTEGER(cp^.writeBuf.len - cp^.writeOff);
+      dataAddr := ADDRESS(LONGCARD(cp^.writeBuf.data) + LONGCARD(cp^.writeOff));
+      st := TLS.Write(cp^.tlsSess, dataAddr, remaining, sent);
+      IF st = TLS.OK THEN
+        cp^.writeOff := cp^.writeOff + CARDINAL(sent);
+      ELSIF (st = TLS.WantRead) OR (st = TLS.WantWrite) THEN
+        (* Socket buffer full — watch for EvWrite to resume *)
+        IF cp^.loop # NIL THEN
+          evSt := EventLoop.ModifyFd(cp^.loop, cp^.fd, EvRead + EvWrite);
+        END;
+        RETURN;
+      ELSE
+        (* TLS write error *)
+        cp^.phase := CpClosed;
+        RETURN;
+      END;
+    END;
+
+    (* All data flushed — clear buffer and revert to EvRead only *)
+    IF cp^.writeOff > 0 THEN
+      Clear(cp^.writeBuf);
+      cp^.writeOff := 0;
+      IF cp^.loop # NIL THEN
+        evSt := EventLoop.ModifyFd(cp^.loop, cp^.fd, EvRead);
+      END;
+    END;
   END ConnFlush;
 
   (* ── Server dispatch bridge ─────────────────────────── *)
@@ -691,9 +784,21 @@ IMPLEMENTATION MODULE Http2ServerConn;
      It's implemented in Http2Server.mod and exported for our use.
      We declare it as a module-level variable that Http2Server sets. *)
 
+  PROCEDURE SetServerDispatch(p: DispatchProc);
+  BEGIN
+    ServerDispatch := p;
+  END SetServerDispatch;
+
+  PROCEDURE SetConnCleanup(p: CleanupProc);
+  BEGIN
+    ConnCleanup := p;
+  END SetConnCleanup;
+
   VAR
-    ServerDispatch: PROCEDURE(ADDRESS, VAR Request, VAR Response);
+    ServerDispatch: DispatchProc;
+    ConnCleanup: CleanupProc;
 
 BEGIN
   ServerDispatch := NIL;
+  ConnCleanup := NIL;
 END Http2ServerConn.

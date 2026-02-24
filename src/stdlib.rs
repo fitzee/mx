@@ -1044,9 +1044,11 @@ static void m2_SLongIO_ReadLongReal(double *r) { scanf("%lf", r); }
 
 /* Args module */
 static uint32_t m2_Args_ArgCount(void) { return (uint32_t)m2_argc; }
-static void m2_Args_GetArg(uint32_t n, char *buf) {
+static void m2_Args_GetArg(uint32_t n, char *buf, uint32_t buf_high) {
+    (void)buf_high;
     if ((int)n < m2_argc) {
-        strcpy(buf, m2_argv[n]);
+        strncpy(buf, m2_argv[n], buf_high + 1);
+        buf[buf_high] = '\0';
     } else {
         buf[0] = '\0';
     }

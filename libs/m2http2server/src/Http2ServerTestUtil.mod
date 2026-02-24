@@ -150,11 +150,11 @@ IMPLEMENTATION MODULE Http2ServerTestUtil;
     END;
 
     (* Set payload view *)
-    payload.base := ADDRESS(CARDINAL(v.base) + FrameHeaderSize);
+    payload.base := ADDRESS(LONGCARD(v.base) + LONGCARD(FrameHeaderSize));
     payload.len := hdr.length;
 
     (* Advance v past this frame *)
-    v.base := ADDRESS(CARDINAL(v.base) + needed);
+    v.base := ADDRESS(LONGCARD(v.base) + LONGCARD(needed));
     v.len := v.len - needed;
 
     RETURN TRUE;

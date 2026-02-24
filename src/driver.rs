@@ -385,7 +385,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             all_imported_modules.push(from_mod.clone());
         } else {
             for mod_name in &imp.names {
-                all_imported_modules.push(mod_name.clone());
+                all_imported_modules.push(mod_name.name.clone());
             }
         }
     }
@@ -412,8 +412,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         }
                     } else {
                         for name in &imp.names {
-                            if !registered_defs.contains(name) {
-                                def_queue.push(name.clone());
+                            if !registered_defs.contains(&name.name) {
+                                def_queue.push(name.name.clone());
                             }
                         }
                     }
@@ -459,9 +459,9 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             // Transitively discover dependencies of this implementation module
             for imp in &imp_mod.imports {
                 if let Some(ref from_mod) = imp.from_module {
-                    if !loaded_modules.contains(from_mod) && !registered_defs.contains(from_mod) {
-                        // Register the def module first
-                        if !crate::stdlib::is_stdlib_module(from_mod) {
+                    if !loaded_modules.contains(from_mod) {
+                        // Register the def module first if not already done
+                        if !registered_defs.contains(from_mod) && !crate::stdlib::is_stdlib_module(from_mod) {
                             if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
                                 if opts.verbose {
                                     eprintln!("m2c: found definition module for {}: {}", from_mod, dep_def_path.display());
@@ -478,22 +478,23 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 } else {
                     // Whole-module import: IMPORT Module1, Module2;
                     for name in &imp.names {
-                        if !loaded_modules.contains(name) {
+                        let n = &name.name;
+                        if !loaded_modules.contains(n) {
                             // Also register the def module if not already done
-                            if !registered_defs.contains(name) && !crate::stdlib::is_stdlib_module(name) {
-                                if let Some(dep_def_path) = find_def_file(name, &opts.input, &opts.include_paths) {
+                            if !registered_defs.contains(n) && !crate::stdlib::is_stdlib_module(n) {
+                                if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
                                     if opts.verbose {
-                                        eprintln!("m2c: found definition module for {}: {}", name, dep_def_path.display());
+                                        eprintln!("m2c: found definition module for {}: {}", n, dep_def_path.display());
                                     }
                                     if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive) {
                                         if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
                                             codegen.register_def_module(&dep_def);
-                                            registered_defs.insert(name.clone());
+                                            registered_defs.insert(n.clone());
                                         }
                                     }
                                 }
                             }
-                            mod_queue.push(name.clone());
+                            mod_queue.push(n.clone());
                         }
                     }
                 }

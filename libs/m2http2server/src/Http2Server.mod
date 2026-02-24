@@ -18,7 +18,8 @@ IMPLEMENTATION MODULE Http2Server;
                                ConnDrain, ConnFlush, ConnOnEvent,
                                ConnCreateTest, ConnFeedBytes,
                                CpPreface, CpSettings, CpOpen,
-                               CpGoaway, CpClosed;
+                               CpGoaway, CpClosed,
+                               SetServerDispatch, SetConnCleanup;
   FROM Http2ServerMetrics IMPORT Metrics, MetricsInit,
                                   IncConnsAccepted, IncConnsActive,
                                   DecConnsActive, IncConnsClosed;
@@ -29,12 +30,15 @@ IMPLEMENTATION MODULE Http2Server;
                        AF_INET, SOCK_STREAM, InvalidSocket;
   FROM EventLoop IMPORT Loop, WatchFd, UnwatchFd, Run, Stop,
                          Create AS LoopCreate,
-                         Destroy AS LoopDestroy;
+                         Destroy AS LoopDestroy,
+                         GetScheduler;
   FROM Poller IMPORT EvRead;
-  FROM TLS IMPORT TLSContext,
+  FROM TLS IMPORT TLSContext, TLSSession,
                    ContextCreateServer, SetServerCert,
                    SetALPNServer, ContextDestroy,
+                   SessionCreateServer, Handshake, SessionDestroy,
                    MaxALPNLen;
+  IMPORT Scheduler;
 
   CONST
     MaxServerConns = MaxConns;
@@ -187,6 +191,9 @@ IMPLEMENTATION MODULE Http2Server;
 
     sockSt := SetNonBlocking(sp^.listenSock, TRUE);
 
+    SetServerDispatch(DoDispatch);
+    SetConnCleanup(DoCleanup);
+
     out := Server(sp);
     RETURN OK;
   END Create;
@@ -218,6 +225,40 @@ IMPLEMENTATION MODULE Http2Server;
     RETURN MwChainAdd(sp^.middleware, mw, ctx);
   END AddMiddleware;
 
+  (* ── Connection cleanup callback ─────────────────────── *)
+
+  (* Called by ConnOnEvent when a connection is detected as closed.
+     Unwatches the fd, closes the connection, and frees the slot. *)
+  PROCEDURE DoCleanup(serverAddr: ADDRESS; cp: ConnPtr);
+  VAR
+    sp: ServerRecPtr;
+    i: CARDINAL;
+  BEGIN
+    sp := ServerRecPtr(serverAddr);
+    IF sp = NIL THEN RETURN END;
+    IF cp = NIL THEN RETURN END;
+
+    (* Unwatch from event loop *)
+    IF cp^.watching THEN
+      UnwatchFd(sp^.loop, cp^.fd);
+      cp^.watching := FALSE;
+    END;
+
+    (* Find and clear the slot *)
+    FOR i := 0 TO MaxServerConns - 1 DO
+      IF sp^.conns[i] = cp THEN
+        ConnClose(cp);
+        sp^.conns[i] := NIL;
+        IF sp^.numConns > 0 THEN
+          DEC(sp^.numConns);
+        END;
+        DecConnsActive(sp^.metrics);
+        IncConnsClosed(sp^.metrics);
+        RETURN;
+      END;
+    END;
+  END DoCleanup;
+
   (* ── Accept callback ─────────────────────────────────── *)
 
   PROCEDURE OnAccept(fd, events: INTEGER; user: ADDRESS);
@@ -228,6 +269,9 @@ IMPLEMENTATION MODULE Http2Server;
     sockSt: Sockets.Status;
     cp: ConnPtr;
     idx: CARDINAL;
+    tlsSess: TLSSession;
+    tlsSt: TLS.Status;
+    sched: Scheduler.Scheduler;
   BEGIN
     sp := ServerRecPtr(user);
     IF sp = NIL THEN RETURN END;
@@ -250,10 +294,34 @@ IMPLEMENTATION MODULE Http2Server;
       RETURN;
     END;
 
+    (* Ensure accepted socket is blocking for TLS handshake.
+       macOS inherits O_NONBLOCK from the listen socket. *)
+    sockSt := SetNonBlocking(clientFd, FALSE);
+
+    (* TLS handshake — socket must be blocking *)
+    sched := GetScheduler(sp^.loop);
+    tlsSt := SessionCreateServer(sp^.loop, sched,
+                                 sp^.tlsCtx, INTEGER(clientFd),
+                                 tlsSess);
+    IF tlsSt # TLS.OK THEN
+      CloseSocket(clientFd);
+      RETURN;
+    END;
+
+    tlsSt := Handshake(tlsSess);
+    IF tlsSt # TLS.OK THEN
+      SessionDestroy(tlsSess);
+      CloseSocket(clientFd);
+      RETURN;
+    END;
+
+    (* Set non-blocking for event-loop driven I/O *)
     sockSt := SetNonBlocking(clientFd, TRUE);
 
     IF ConnCreate(ADDRESS(sp), sp^.nextConnId,
                   INTEGER(clientFd), peer, cp) THEN
+      cp^.tlsSess := tlsSess;
+      cp^.loop := sp^.loop;
       sp^.conns[idx] := cp;
       INC(sp^.numConns);
       INC(sp^.nextConnId);
@@ -264,7 +332,11 @@ IMPLEMENTATION MODULE Http2Server;
       WatchFd(sp^.loop, INTEGER(clientFd), EvRead,
               ConnOnEvent, ADDRESS(cp));
       cp^.watching := TRUE;
+
+      (* Note: TLS 1.3 may have buffered data during handshake.
+         The event loop will pick it up on the next iteration. *)
     ELSE
+      SessionDestroy(tlsSess);
       CloseSocket(clientFd);
     END;
   END OnAccept;

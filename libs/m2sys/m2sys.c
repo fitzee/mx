@@ -48,6 +48,23 @@ int32_t m2sys_fwrite_str(int32_t handle, void *data) {
     return n >= 0 ? 0 : -1;
 }
 
+/* ── Binary file I/O ───────────────────────────────────────────── */
+
+int32_t m2sys_fwrite_bytes(int32_t handle, const void *data, int32_t len) {
+    if (handle < 0 || handle >= MAX_HANDLES || !handle_table[handle]) return -1;
+    if (len <= 0) return 0;
+    size_t written = fwrite(data, 1, (size_t)len, handle_table[handle]);
+    return (int32_t)written;
+}
+
+int32_t m2sys_fread_bytes(int32_t handle, void *buf, int32_t maxLen) {
+    if (handle < 0 || handle >= MAX_HANDLES || !handle_table[handle]) return -1;
+    if (maxLen <= 0) return 0;
+    size_t rd = fread(buf, 1, (size_t)maxLen, handle_table[handle]);
+    if (rd == 0 && ferror(handle_table[handle])) return -1;
+    return (int32_t)rd;
+}
+
 /* ── Filesystem ────────────────────────────────────────────────── */
 
 int32_t m2sys_file_exists(void *path) {
@@ -217,6 +234,50 @@ void m2sys_getenv(void *name, void *out, int32_t out_size) {
 
 int32_t m2sys_strlen(void *s) {
     return (int32_t)strlen((const char *)s);
+}
+
+int32_t m2sys_str_eq(const void *a, const void *b) {
+    return strcmp((const char *)a, (const char *)b) == 0 ? 1 : 0;
+}
+
+int32_t m2sys_str_starts_with(const void *s, const void *prefix) {
+    const char *sp = (const char *)s;
+    const char *pp = (const char *)prefix;
+    while (*pp) {
+        if (*sp != *pp) return 0;
+        sp++; pp++;
+    }
+    return 1;
+}
+
+int32_t m2sys_str_append(void *dst, int32_t dst_size, const void *src) {
+    char *d = (char *)dst;
+    const char *s = (const char *)src;
+    int32_t dlen = (int32_t)strlen(d);
+    while (*s && dlen + 1 < dst_size) {
+        d[dlen++] = *s++;
+    }
+    d[dlen] = '\0';
+    return dlen;
+}
+
+int32_t m2sys_str_contains_ci(const void *haystack, const void *needle) {
+    const char *h = (const char *)haystack;
+    const char *n = (const char *)needle;
+    if (!*n) return 1;
+    for (; *h; h++) {
+        const char *hp = h, *np = n;
+        while (*np) {
+            if (!*hp) goto next;
+            char hc = (*hp >= 'A' && *hp <= 'Z') ? *hp + 32 : *hp;
+            char nc = (*np >= 'A' && *np <= 'Z') ? *np + 32 : *np;
+            if (hc != nc) goto next;
+            hp++; np++;
+        }
+        return 1;
+        next:;
+    }
+    return 0;
 }
 
 /* ── File operations ───────────────────────────────────────────── */

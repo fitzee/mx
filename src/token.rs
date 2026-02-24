@@ -26,6 +26,7 @@ pub enum TokenKind {
     // Keywords
     And,
     Array,
+    As,
     Begin,
     By,
     Case,
@@ -128,6 +129,7 @@ impl TokenKind {
         match s {
             "AND" => Some(TokenKind::And),
             "ARRAY" => Some(TokenKind::Array),
+            "AS" => Some(TokenKind::As),
             "BEGIN" => Some(TokenKind::Begin),
             "BY" => Some(TokenKind::By),
             "CASE" => Some(TokenKind::Case),
@@ -197,6 +199,7 @@ impl TokenKind {
             TokenKind::Ident(_) => "identifier",
             TokenKind::And => "'AND'",
             TokenKind::Array => "'ARRAY'",
+            TokenKind::As => "'AS'",
             TokenKind::Begin => "'BEGIN'",
             TokenKind::By => "'BY'",
             TokenKind::Case => "'CASE'",

@@ -12,7 +12,7 @@ DEFINITION MODULE Http2ServerConn;
   FROM Http2Types IMPORT Settings, FrameHeader;
   FROM Http2Hpack IMPORT DynTable;
   FROM Http2Stream IMPORT StreamTransTable;
-  FROM Http2ServerTypes IMPORT MaxStreamSlots;
+  FROM Http2ServerTypes IMPORT MaxStreamSlots, Request, Response;
   FROM Http2ServerStream IMPORT StreamSlot;
   FROM Arena IMPORT Arena;
   FROM Sockets IMPORT SockAddr;
@@ -85,6 +85,9 @@ DEFINITION MODULE Http2ServerConn;
       startTick:       INTEGER;
       lastActive:      INTEGER;
 
+      (* Event loop handle for I/O interest changes *)
+      loop:            ADDRESS;       (* EventLoop.Loop *)
+
       (* Watching state *)
       watching:        BOOLEAN;
     END;
@@ -121,5 +124,18 @@ DEFINITION MODULE Http2ServerConn;
   PROCEDURE ConnCreateTest(serverPtr: ADDRESS;
                            connId: CARDINAL;
                            VAR cp: ConnPtr): BOOLEAN;
+
+  TYPE
+    DispatchProc = PROCEDURE(ADDRESS, VAR Request, VAR Response);
+    CleanupProc  = PROCEDURE(ADDRESS, ConnPtr);
+
+  (* Set the server dispatch callback.
+     Must be called before any connections are accepted. *)
+  PROCEDURE SetServerDispatch(p: DispatchProc);
+
+  (* Set the connection cleanup callback.
+     Called when ConnOnEvent detects a closed connection so the
+     server can unwatch the fd and free the slot. *)
+  PROCEDURE SetConnCleanup(p: CleanupProc);
 
 END Http2ServerConn.

@@ -350,5 +350,65 @@
     "expected_exit": 0,
     "expected_stdout": "11\n40\n60\n",
     "tags": ["ci"]
+  },
+  {
+    "name": "type_cast_test",
+    "category": "resolution",
+    "dir": "programs/resolution",
+    "main": "type_cast_test.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "type cast OK\nall casts OK\n",
+    "tags": ["ci"],
+    "_comment": "Tests ADDRESS/WORD/BYTE casts emit (void*) not function calls, and user-defined pointer type casts."
+  },
+  {
+    "name": "high_fixed_array_test",
+    "category": "resolution",
+    "dir": "programs/resolution",
+    "main": "high_fixed_array_test.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "HIGH local array OK\nHIGH named type OK\nHIGH record char field OK\nHIGH record int field OK\nall HIGH OK\n",
+    "tags": ["ci"],
+    "_comment": "Tests HIGH() on fixed-size arrays: local vars, named types, and record fields."
+  },
+  {
+    "name": "c_keyword_params_test",
+    "category": "resolution",
+    "dir": "programs/resolution",
+    "main": "c_keyword_params_test.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "keyword params OK\nhello from default\nall keyword params OK\n",
+    "tags": ["ci"],
+    "_comment": "Tests C keyword names (short, long, register, default) used as M2 parameter names get mangled."
+  },
+  {
+    "name": "proc_var_call_test",
+    "category": "resolution",
+    "dir": "programs/resolution",
+    "main": "proc_var_call_test.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "proc var call OK\nrecord field proc call OK\nall proc var calls OK\n",
+    "tags": ["ci"],
+    "_comment": "Tests calls through proc-typed variables with VAR params: simple vars and record field proc vars."
+  },
+  {
+    "name": "proc_type_open_array_test",
+    "category": "resolution",
+    "dir": "programs/resolution",
+    "main": "proc_type_open_array_test.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "proc type open array OK\nhigh propagated correctly\nall proc type open array OK\n",
+    "tags": ["ci"],
+    "_comment": "Tests procedure type typedefs with open array params include _high in the C typedef."
   }
 ]

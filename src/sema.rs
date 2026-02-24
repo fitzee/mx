@@ -329,11 +329,12 @@ impl SemanticAnalyzer {
                 let _ = self.symtab.define(self.current_scope, mod_sym);
 
                 // Import specific names into current scope
-                for name in &imp.names {
-                    if let Some(sym) = self.symtab.lookup_in_scope(scope_id, name) {
+                for import_name in &imp.names {
+                    let local = import_name.local_name().to_string();
+                    if let Some(sym) = self.symtab.lookup_in_scope(scope_id, &import_name.name) {
                         let imported = sym.clone();
                         let _ = self.symtab.define(self.current_scope, Symbol {
-                            name: imported.name,
+                            name: local,
                             kind: imported.kind,
                             typ: imported.typ,
                             exported: false,
@@ -344,7 +345,7 @@ impl SemanticAnalyzer {
                     } else {
                         // Register as unknown procedure stub
                         let sym = Symbol {
-                            name: name.clone(),
+                            name: local,
                             kind: SymbolKind::Procedure {
                                 params: vec![],
                                 return_type: None,
@@ -361,7 +362,8 @@ impl SemanticAnalyzer {
                 }
             } else {
                 // IMPORT Module1, Module2, ...
-                for name in &imp.names {
+                for import_name in &imp.names {
+                    let name = &import_name.name;
                     // Check if this module was pre-registered (e.g., from a .def file)
                     if self.symtab.lookup(name).is_some() {
                         continue;

@@ -81,7 +81,7 @@ BEGIN
   INC(specCount)
 END AddOption;
 
-PROCEDURE Parse(ac: CARDINAL; getArg: PROCEDURE(CARDINAL, VAR ARRAY OF CHAR));
+PROCEDURE Parse(ac: CARDINAL; getArg: GetArgProc);
 VAR
   j, idx: INTEGER;
   a: ARRAY [0..255] OF CHAR;

@@ -29,8 +29,12 @@ void m2sys_getcwd(void *out, int32_t out_size);
 int32_t m2sys_chdir(void *path);
 void m2sys_getenv(void *name, void *out, int32_t out_size);
 
-/* String length (for M2+ convenience) */
+/* String utilities */
 int32_t m2sys_strlen(void *s);
+int32_t m2sys_str_eq(const void *a, const void *b);
+int32_t m2sys_str_starts_with(const void *s, const void *prefix);
+int32_t m2sys_str_append(void *dst, int32_t dst_size, const void *src);
+int32_t m2sys_str_contains_ci(const void *haystack, const void *needle);
 
 /* File operations */
 int32_t m2sys_sha256_file(void *path, void *hex_out);
@@ -55,6 +59,10 @@ int32_t m2sys_http_get(void *url, void *destPath);
 int32_t m2sys_tar_create(void *archivePath, void *baseDir);
 int32_t m2sys_tar_create_ex(void *archivePath, void *baseDir, void *excludePattern);
 int32_t m2sys_tar_extract(void *archivePath, void *destDir);
+
+/* Binary file I/O */
+int32_t m2sys_fwrite_bytes(int32_t handle, const void *data, int32_t len);
+int32_t m2sys_fread_bytes(int32_t handle, void *buf, int32_t maxLen);
 
 /* File locking (advisory, POSIX flock) */
 int32_t m2sys_flock(int32_t handle, int32_t exclusive);

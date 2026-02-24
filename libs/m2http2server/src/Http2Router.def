@@ -3,6 +3,7 @@ DEFINITION MODULE Http2Router;
   (* Method + path router for HTTP/2 requests.
      Exact match on (method, path).  Default 404 handler. *)
 
+  FROM SYSTEM IMPORT ADDRESS;
   FROM Http2ServerTypes IMPORT Request, Response, HandlerProc,
                                 MaxRoutes, MaxMethodLen, MaxPathLen;
 
@@ -18,8 +19,6 @@ DEFINITION MODULE Http2Router;
       routes: ARRAY [0..MaxRoutes-1] OF Route;
       count:  CARDINAL;
     END;
-
-  FROM SYSTEM IMPORT ADDRESS;
 
   PROCEDURE RouterInit(VAR r: Router);
 

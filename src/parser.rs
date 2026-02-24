@@ -383,9 +383,18 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::Import)?;
-        let mut names = vec![self.expect_ident()?];
-        while self.eat(&TokenKind::Comma) {
-            names.push(self.expect_ident()?);
+        let mut names = Vec::new();
+        loop {
+            let name = self.expect_ident()?;
+            let alias = if from_module.is_some() && self.eat(&TokenKind::As) {
+                Some(self.expect_ident()?)
+            } else {
+                None
+            };
+            names.push(ImportName { name, alias });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
         }
         self.expect(&TokenKind::Semi)?;
         Ok(Import { from_module, names, loc })
@@ -1848,7 +1857,29 @@ mod tests {
             CompilationUnit::ProgramModule(m) => {
                 assert_eq!(m.imports.len(), 1);
                 assert_eq!(m.imports[0].from_module, Some("InOut".to_string()));
-                assert_eq!(m.imports[0].names, vec!["WriteString", "WriteLn"]);
+                let names: Vec<&str> = m.imports[0].names.iter().map(|n| n.name.as_str()).collect();
+                assert_eq!(names, vec!["WriteString", "WriteLn"]);
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_import_as_alias() {
+        let cu = parse("MODULE Test; FROM InOut IMPORT WriteString AS WS, WriteLn; BEGIN END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert_eq!(m.imports.len(), 1);
+                assert_eq!(m.imports[0].from_module, Some("InOut".to_string()));
+                assert_eq!(m.imports[0].names.len(), 2);
+                // First import has alias
+                assert_eq!(m.imports[0].names[0].name, "WriteString");
+                assert_eq!(m.imports[0].names[0].alias, Some("WS".to_string()));
+                assert_eq!(m.imports[0].names[0].local_name(), "WS");
+                // Second import has no alias
+                assert_eq!(m.imports[0].names[1].name, "WriteLn");
+                assert_eq!(m.imports[0].names[1].alias, None);
+                assert_eq!(m.imports[0].names[1].local_name(), "WriteLn");
             }
             _ => panic!("expected program module"),
         }

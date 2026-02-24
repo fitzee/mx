@@ -20,8 +20,10 @@ pub struct CodeGen {
     indent: usize,
     module_name: String,
     sema: SemanticAnalyzer,
-    /// Maps imported name -> source module for stdlib resolution
+    /// Maps imported name (or alias) -> source module for stdlib resolution
     import_map: HashMap<String, String>,
+    /// Maps alias -> original name for aliased imports (FROM M IMPORT X AS Y)
+    import_alias_map: HashMap<String, String>,
     /// Tracks which local names are VAR parameters (passed as pointers)
     var_params: Vec<HashMap<String, bool>>,
     /// Tracks which local names are open array parameters (have _high companion)
@@ -107,6 +109,11 @@ pub struct CodeGen {
     embedded_local_procs: HashSet<String>,
     /// Module-level variable names in the current embedded implementation (for module-prefixed access)
     embedded_local_vars: HashSet<String>,
+    /// All known type names (bare + module-prefixed) for type cast recognition
+    known_type_names: HashSet<String>,
+    /// Maps record field names → proc param info for fields with procedure types.
+    /// Used as fallback for calls through complex designators (e.g. rec.field(args)).
+    field_proc_params: HashMap<String, Vec<ParamCodegenInfo>>,
     /// Emit #line directives mapping generated C back to Modula-2 source (for -g debug builds)
     emit_debug_lines: bool,
     /// Last file emitted in a #line directive (to avoid redundant file changes)
@@ -320,6 +327,7 @@ impl CodeGen {
             module_name: String::new(),
             sema: SemanticAnalyzer::new(),
             import_map: HashMap::new(),
+            import_alias_map: HashMap::new(),
             var_params: vec![HashMap::new()],
             open_array_params: vec![HashSet::new()],
             proc_params: HashMap::new(),
@@ -363,6 +371,8 @@ impl CodeGen {
             embedded_init_modules: Vec::new(),
             embedded_local_procs: HashSet::new(),
             embedded_local_vars: HashSet::new(),
+            known_type_names: HashSet::new(),
+            field_proc_params: HashMap::new(),
             emit_debug_lines: false,
             last_line_file: String::new(),
             last_line_num: 0,
@@ -524,6 +534,14 @@ impl CodeGen {
     pub fn register_def_module(&mut self, def: &crate::ast::DefinitionModule) {
         self.sema.register_def_module(def);
 
+        // Register type names from this def module for type-cast recognition
+        for d in &def.definitions {
+            if let Definition::Type(td) = d {
+                self.known_type_names.insert(td.name.clone());
+                self.known_type_names.insert(format!("{}_{}", def.name, td.name));
+            }
+        }
+
         // Store non-foreign def modules for type emission during embedded impl gen
         if def.foreign_lang.is_none() {
             self.def_modules.insert(def.name.clone(), def.clone());
@@ -584,13 +602,17 @@ impl CodeGen {
                             let mut first = true;
                             for fp in &h.params {
                                 let ctype = self.type_to_c(&fp.typ);
+                                let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
                                 for name in &fp.names {
                                     if !first { self.emit(", "); }
                                     first = false;
-                                    if fp.is_var {
-                                        self.emit(&format!("{} *{}", ctype, name));
+                                    let c_param = self.mangle(name);
+                                    if is_open_array {
+                                        self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
+                                    } else if fp.is_var {
+                                        self.emit(&format!("{} *{}", ctype, c_param));
                                     } else {
-                                        self.emit(&format!("{} {}", ctype, name));
+                                        self.emit(&format!("{} {}", ctype, c_param));
                                     }
                                 }
                             }
@@ -675,6 +697,45 @@ impl CodeGen {
 
     // ── Program module ──────────────────────────────────────────────
 
+    /// Resolve a local name (possibly an alias) to the original imported name.
+    fn original_import_name<'a>(&'a self, local_name: &'a str) -> &'a str {
+        self.import_alias_map.get(local_name).map(|s| s.as_str()).unwrap_or(local_name)
+    }
+
+    /// Check if a name is a known type and return the C type name for casting.
+    /// Returns None if the name is not a type (i.e., it's a procedure or variable).
+    fn resolve_type_cast_name(&self, name: &str) -> Option<String> {
+        // Check the known_type_names set (populated from def modules and gen_type_decl)
+        if self.known_type_names.contains(name) {
+            // It's a type — return the mangled C name
+            // If we're inside an embedded module, check if it's a local type
+            if let Some(ref gen_mod) = self.generating_for_module {
+                let prefixed = format!("{}_{}", gen_mod, name);
+                if self.known_type_names.contains(&prefixed) {
+                    return Some(self.mangle(name));
+                }
+            }
+            // Check if it's an imported type (module-prefixed in C)
+            if let Some(source_mod) = self.import_map.get(name) {
+                let orig = self.original_import_name(name);
+                return Some(format!("{}_{}", source_mod, self.mangle(orig)));
+            }
+            return Some(self.mangle(name));
+        }
+        // Also check sema symtab as fallback
+        if let Some(sym) = self.sema.symtab.lookup_any(name) {
+            if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
+                let qi = crate::ast::QualIdent {
+                    module: None,
+                    name: name.to_string(),
+                    loc: crate::errors::SourceLoc::default(),
+                };
+                return Some(self.type_to_c(&crate::ast::TypeNode::Named(qi)));
+            }
+        }
+        None
+    }
+
     fn build_import_map(&mut self, imports: &[Import]) {
         // Collect enum variant names to add to import_map after the main loop.
         // When importing an enum type, its variant names are implicitly in scope.
@@ -684,24 +745,30 @@ impl CodeGen {
                 // FROM Module IMPORT name1, name2;
                 // Also register the module name so Module.Proc() syntax works
                 self.imported_modules.insert(from_mod.clone());
-                for name in &imp.names {
-                    self.import_map.insert(name.clone(), from_mod.clone());
+                for import_name in &imp.names {
+                    let original = &import_name.name;
+                    let local = import_name.local_name().to_string();
+                    self.import_map.insert(local.clone(), from_mod.clone());
+                    // Track alias→original mapping if aliased
+                    if import_name.alias.is_some() {
+                        self.import_alias_map.insert(local.clone(), original.clone());
+                    }
                     // Register stdlib proc params for codegen (is_char, is_var, etc.)
                     if stdlib::is_stdlib_module(from_mod) {
-                        if let Some(params) = stdlib::get_stdlib_proc_params(from_mod, name) {
+                        if let Some(params) = stdlib::get_stdlib_proc_params(from_mod, original) {
                             let info: Vec<ParamCodegenInfo> = params.into_iter().map(|(pname, is_var, is_char, is_open_array)| {
                                 ParamCodegenInfo { name: pname, is_var, is_char, is_open_array }
                             }).collect();
-                            let prefixed = format!("{}_{}", from_mod, name);
+                            let prefixed = format!("{}_{}", from_mod, original);
                             self.proc_params.insert(prefixed, info.clone());
-                            self.proc_params.insert(name.clone(), info);
+                            self.proc_params.insert(local.clone(), info);
                         }
                     }
                     // If this imported name is an enum type, also import its variant names
                     if let Some(def_mod) = self.def_modules.get(from_mod.as_str()) {
                         for d in &def_mod.definitions {
                             if let Definition::Type(t) = d {
-                                if t.name == *name {
+                                if t.name == *original {
                                     if let Some(TypeNode::Enumeration { variants, .. }) = &t.typ {
                                         for v in variants {
                                             extra_variants.push((v.clone(), from_mod.clone()));
@@ -714,8 +781,8 @@ impl CodeGen {
                 }
             } else {
                 // IMPORT Module1, Module2;  (whole-module / qualified import)
-                for name in &imp.names {
-                    self.imported_modules.insert(name.clone());
+                for import_name in &imp.names {
+                    self.imported_modules.insert(import_name.name.clone());
                 }
             }
         }
@@ -729,6 +796,7 @@ impl CodeGen {
     fn gen_embedded_implementation(&mut self, imp: &ImplementationModule) {
         let saved_module_name = self.module_name.clone();
         let saved_import_map = self.import_map.clone();
+        let saved_import_alias_map = self.import_alias_map.clone();
         let saved_var_params = self.var_params.clone();
         let saved_open_array_params = self.open_array_params.clone();
         let saved_proc_params = self.proc_params.clone();
@@ -906,15 +974,16 @@ impl CodeGen {
                         for name in &fp.names {
                             if !first { self.emit(", "); }
                             first = false;
+                            let c_param = self.mangle(name);
                             if is_open_array {
-                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, name, name));
+                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
                             } else if Self::is_proc_type(&fp.typ) {
-                                let decl = self.proc_type_decl(&fp.typ, name, fp.is_var);
+                                let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
                                 self.emit(&decl);
                             } else if fp.is_var {
-                                self.emit(&format!("{} *{}", ctype, name));
+                                self.emit(&format!("{} *{}", ctype, c_param));
                             } else {
-                                self.emit(&format!("{} {}", ctype, name));
+                                self.emit(&format!("{} {}", ctype, c_param));
                             }
                         }
                     }
@@ -996,17 +1065,18 @@ impl CodeGen {
                         for name in &fp.names {
                             if !first { self.emit(", "); }
                             first = false;
+                            let c_param = self.mangle(name);
                             if is_open_array {
-                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, name, name));
+                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
                                 oa_params.insert(name.clone());
                             } else if Self::is_proc_type(&fp.typ) {
-                                let decl = self.proc_type_decl(&fp.typ, name, fp.is_var);
+                                let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
                                 self.emit(&decl);
                             } else if fp.is_var {
-                                self.emit(&format!("{} *{}", ctype, name));
+                                self.emit(&format!("{} *{}", ctype, c_param));
                                 param_vars.insert(name.clone(), true);
                             } else {
-                                self.emit(&format!("{} {}", ctype, name));
+                                self.emit(&format!("{} {}", ctype, c_param));
                             }
                         }
                     }
@@ -1065,6 +1135,7 @@ impl CodeGen {
             .collect();
         self.module_name = saved_module_name;
         self.import_map = saved_import_map;
+        self.import_alias_map = saved_import_alias_map;
         self.var_params = saved_var_params;
         self.open_array_params = saved_open_array_params;
         self.proc_params = saved_proc_params;
@@ -1091,8 +1162,8 @@ impl CodeGen {
                     }
                 } else {
                     for name in &imp.names {
-                        if names.contains(name) {
-                            my_deps.push(name.clone());
+                        if names.contains(&name.name) {
+                            my_deps.push(name.name.clone());
                         }
                     }
                 }
@@ -1106,8 +1177,8 @@ impl CodeGen {
                         }
                     } else {
                         for name in &imp.names {
-                            if names.contains(name) && !my_deps.contains(name) {
-                                my_deps.push(name.clone());
+                            if names.contains(&name.name) && !my_deps.contains(&name.name) {
+                                my_deps.push(name.name.clone());
                             }
                         }
                     }
@@ -1409,6 +1480,43 @@ impl CodeGen {
             self.export_c_names.insert(h.name.clone(), ecn.clone());
             self.proc_params.insert(ecn.clone(), param_info);
         }
+        // Register procedure-typed parameters as their own callables
+        // so calls like handler(req, resp) get correct VAR param info
+        for fp in &h.params {
+            if let TypeNode::Named(qi) = &fp.typ {
+                if let Some(pinfo) = self.proc_type_params.get(&qi.name).cloned() {
+                    for name in &fp.names {
+                        self.proc_params.insert(name.clone(), pinfo.clone());
+                    }
+                }
+            } else if let TypeNode::ProcedureType { params: pt_params, .. } = &fp.typ {
+                // Inline procedure type: PROCEDURE(VAR Request, VAR Response, ADDRESS)
+                let mut pinfo = Vec::new();
+                for (idx, ptp) in pt_params.iter().enumerate() {
+                    let is_open = matches!(ptp.typ, TypeNode::OpenArray { .. });
+                    let is_ch = matches!(&ptp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
+                    for pname in &ptp.names {
+                        pinfo.push(ParamCodegenInfo {
+                            name: pname.clone(),
+                            is_var: ptp.is_var,
+                            is_open_array: is_open,
+                            is_char: is_ch,
+                        });
+                    }
+                    if ptp.names.is_empty() {
+                        pinfo.push(ParamCodegenInfo {
+                            name: format!("_p{}", idx),
+                            is_var: ptp.is_var,
+                            is_open_array: is_open,
+                            is_char: is_ch,
+                        });
+                    }
+                }
+                for name in &fp.names {
+                    self.proc_params.insert(name.clone(), pinfo.clone());
+                }
+            }
+        }
     }
 
     // ── Declarations ────────────────────────────────────────────────
@@ -1456,6 +1564,11 @@ impl CodeGen {
     }
 
     fn gen_type_decl(&mut self, t: &TypeDecl) {
+        // Register this type name for type-cast recognition
+        self.known_type_names.insert(t.name.clone());
+        if let Some(ref mod_name) = self.generating_for_module {
+            self.known_type_names.insert(format!("{}_{}", mod_name, t.name));
+        }
         if let Some(tn) = &t.typ {
             match tn {
                 TypeNode::Record { fields, loc: _ } => {
@@ -1476,6 +1589,10 @@ impl CodeGen {
                                         (t.name.clone(), name.clone()),
                                         ftn.clone(),
                                     );
+                                    // If this field has a procedure type, register for call-site VAR param lookup
+                                    if let Some(pinfo) = self.proc_type_params.get(ftn).cloned() {
+                                        self.field_proc_params.insert(name.clone(), pinfo);
+                                    }
                                 }
                             }
                         }
@@ -1604,10 +1721,14 @@ impl CodeGen {
                         let mut first = true;
                         for fp in params {
                             let pt = self.type_to_c(&fp.typ);
-                            for name in &fp.names {
+                            let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                            for _name in &fp.names {
                                 if !first { self.emit(", "); }
                                 first = false;
-                                if fp.is_var {
+                                if is_open {
+                                    // Open array: pointer + high param
+                                    self.emit(&format!("{} *, uint32_t", pt));
+                                } else if fp.is_var {
                                     self.emit(&format!("{} *", pt));
                                 } else {
                                     self.emit(&pt);
@@ -2042,18 +2163,19 @@ impl CodeGen {
                         self.emit(", ");
                     }
                     first = false;
+                    let c_param = self.mangle(name);
                     if is_open_array {
                         let ctype = self.type_to_c(&fp.typ);
-                        self.emit(&format!("{} *{}, uint32_t {}_high", ctype, name, name));
+                        self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
                     } else if Self::is_proc_type(&fp.typ) {
-                        let decl = self.proc_type_decl(&fp.typ, name, fp.is_var);
+                        let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
                         self.emit(&decl);
                     } else if fp.is_var {
                         let ctype = self.type_to_c(&fp.typ);
-                        self.emit(&format!("{} *{}", ctype, name));
+                        self.emit(&format!("{} *{}", ctype, c_param));
                     } else {
                         let ctype = self.type_to_c(&fp.typ);
-                        self.emit(&format!("{} {}", ctype, name));
+                        self.emit(&format!("{} {}", ctype, c_param));
                     }
                 }
             }
@@ -2145,7 +2267,7 @@ impl CodeGen {
                     // designator string, not just the resolved proc name.
                     let has_complex_selectors = desig.selectors.iter().any(|s| {
                         matches!(s, Selector::Deref(_) | Selector::Index(_, _))
-                    }) || (desig.selectors.len() > 1
+                    }) || (!desig.selectors.is_empty()
                         && desig.ident.module.is_none()
                         && !self.imported_modules.contains(&desig.ident.name));
                     let c_name = if has_complex_selectors {
@@ -2155,7 +2277,7 @@ impl CodeGen {
                     };
                     // Look up param info: try module-prefixed name, then actual name,
                     // then FROM-import prefixed name
-                    let param_info = if let Some((mod_name, _)) = module_qualified {
+                    let mut param_info = if let Some((mod_name, _)) = module_qualified {
                         let prefixed = format!("{}_{}", mod_name, actual_name);
                         let info = self.get_param_info(&prefixed);
                         if info.is_empty() { self.get_param_info(&actual_name) } else { info }
@@ -2164,12 +2286,18 @@ impl CodeGen {
                         if info.is_empty() {
                             // Try FROM Module IMPORT name: check import_map for module prefix
                             if let Some(module) = self.import_map.get(&actual_name) {
-                                let prefixed = format!("{}_{}", module, actual_name);
+                                let orig = self.original_import_name(&actual_name).to_string();
+                                let prefixed = format!("{}_{}", module, orig);
                                 info = self.get_param_info(&prefixed);
                             }
                         }
                         info
                     };
+                    // Fallback: for calls through complex designators (record field proc vars),
+                    // resolve the designator's type to get param info
+                    if param_info.is_empty() && has_complex_selectors {
+                        param_info = self.get_designator_proc_param_info(desig);
+                    }
                     self.emit(&format!("{}(", c_name));
                     // Pass closure env if this is a nested proc with captures
                     if self.closure_env_type.contains_key(actual_name.as_str()) {
@@ -2521,10 +2649,21 @@ impl CodeGen {
                         "CHAR"     => Some("(char)"),
                         "REAL"     => Some("(float)"),
                         "LONGREAL" => Some("(double)"),
+                        "ADDRESS"  => Some("(void *)"),
+                        "WORD"     => Some("(uint32_t)"),
+                        "BYTE"     => Some("(uint8_t)"),
                         _ => None,
                     };
                     if let Some(cast) = c_cast {
                         self.emit(&format!("({}(", cast));
+                        self.gen_expr(&args[0]);
+                        self.emit("))");
+                        return;
+                    }
+                    // User-defined type cast: TypeName(expr) → (CTypeName)(expr)
+                    // Check if name is a known type (from def modules or local declarations)
+                    if let Some(c_type) = self.resolve_type_cast_name(&actual_name) {
+                        self.emit(&format!("(({})(", c_type));
                         self.gen_expr(&args[0]);
                         self.emit("))");
                         return;
@@ -2543,6 +2682,20 @@ impl CodeGen {
                             }
                         }
                     }
+                    // HIGH on non-open-array: emit sizeof-based constant
+                    if actual_name == "HIGH" && args.len() == 1 {
+                        if let ExprKind::Designator(ref d) = args[0].kind {
+                            // Simple variable that's not an open array param
+                            let is_open = d.selectors.is_empty()
+                                && d.ident.module.is_none()
+                                && self.is_open_array_param(&d.ident.name);
+                            if !is_open {
+                                let arg_str = self.expr_to_string(&args[0]);
+                                self.emit(&format!("(sizeof({}) / sizeof({}[0])) - 1", arg_str, arg_str));
+                                return;
+                            }
+                        }
+                    }
                     // For builtins that take char args, convert single-char strings to char literals
                     let char_builtins = ["CAP", "ORD", "CHR", "Write"];
                     let arg_strs: Vec<String> = args.iter().map(|a| {
@@ -2557,7 +2710,7 @@ impl CodeGen {
                     // Check for complex designator (pointer deref, indexing, etc.)
                     let has_complex_selectors = desig.selectors.iter().any(|s| {
                         matches!(s, Selector::Deref(_) | Selector::Index(_, _))
-                    }) || (desig.selectors.len() > 1
+                    }) || (!desig.selectors.is_empty()
                         && desig.ident.module.is_none()
                         && !self.imported_modules.contains(&desig.ident.name));
                     let c_name = if has_complex_selectors {
@@ -2567,7 +2720,7 @@ impl CodeGen {
                     };
                     // Look up param info: try module-prefixed name, then actual name,
                     // then FROM-import prefixed name
-                    let param_info = if let Some((mod_name, _)) = module_qualified {
+                    let mut param_info = if let Some((mod_name, _)) = module_qualified {
                         let prefixed = format!("{}_{}", mod_name, actual_name);
                         let info = self.get_param_info(&prefixed);
                         if info.is_empty() { self.get_param_info(&actual_name) } else { info }
@@ -2575,12 +2728,18 @@ impl CodeGen {
                         let mut info = self.get_param_info(&actual_name);
                         if info.is_empty() {
                             if let Some(module) = self.import_map.get(&actual_name) {
-                                let prefixed = format!("{}_{}", module, actual_name);
+                                let orig = self.original_import_name(&actual_name).to_string();
+                                let prefixed = format!("{}_{}", module, orig);
                                 info = self.get_param_info(&prefixed);
                             }
                         }
                         info
                     };
+                    // Fallback: for calls through complex designators (record field proc vars),
+                    // resolve the designator's type to get param info
+                    if param_info.is_empty() && has_complex_selectors {
+                        param_info = self.get_designator_proc_param_info(desig);
+                    }
                     self.emit(&format!("{}(", c_name));
                     // Pass closure env if this is a nested proc with captures
                     if self.closure_env_type.contains_key(actual_name.as_str()) {
@@ -2977,24 +3136,25 @@ impl CodeGen {
             }
             // Check if this bare name is an imported enum variant or stdlib variable
             if let Some(module) = self.import_map.get(&desig.ident.name).cloned() {
+                let orig = self.original_import_name(&desig.ident.name).to_string();
                 // Check for module-prefixed enum variant (e.g., OK from Stream → Stream_Status_OK)
-                let qual_key = format!("{}_{}", module, &desig.ident.name);
+                let qual_key = format!("{}_{}", module, &orig);
                 if let Some(c_name) = self.enum_variants.get(&qual_key) {
                     return c_name.clone();
                 }
                 // Check re-exported enum variants (e.g., OK from Promise → Scheduler_Status_OK)
-                if let Some(c_name) = self.resolve_reexported_enum_variant(&module, &desig.ident.name) {
+                if let Some(c_name) = self.resolve_reexported_enum_variant(&module, &orig) {
                     return c_name;
                 }
                 if stdlib::is_stdlib_module(&module) {
-                    if let Some(c_name) = stdlib::map_stdlib_call(&module, &desig.ident.name) {
+                    if let Some(c_name) = stdlib::map_stdlib_call(&module, &orig) {
                         return c_name;
                     }
                 }
                 // For imported names from embedded (non-stdlib, non-foreign) modules,
                 // use module-prefixed name (constants, variables, etc.)
                 if !stdlib::is_stdlib_module(&module) && !self.foreign_modules.contains(module.as_str()) {
-                    return format!("{}_{}", module, desig.ident.name);
+                    return format!("{}_{}", module, orig);
                 }
             }
             // Fallback: check bare enum_variants (for main module's own enums
@@ -3233,7 +3393,7 @@ impl CodeGen {
             if let Some(def_mod) = self.def_modules.get(module.as_str()) {
                 for imp in &def_mod.imports {
                     if let Some(ref from_mod) = imp.from_module {
-                        if imp.names.contains(&qi.name) {
+                        if imp.names.iter().any(|n| n.name == qi.name) {
                             let source_prefixed = format!("{}_{}", from_mod, self.mangle(&qi.name));
                             if self.embedded_enum_types.contains(&source_prefixed) {
                                 return source_prefixed;
@@ -3424,6 +3584,102 @@ impl CodeGen {
                 _ => return None,
             }
         }
+    }
+
+    /// Resolve the type of a complex designator by walking through selectors.
+    /// Returns the TypeId of the final resolved type, or None if resolution fails.
+    fn resolve_designator_type(&self, desig: &Designator) -> Option<TypeId> {
+        use crate::types::Type;
+        // Look up base variable
+        let base_name = if let Some(ref m) = desig.ident.module {
+            // Module-qualified: look for Module_Name
+            format!("{}_{}", m, desig.ident.name)
+        } else {
+            desig.ident.name.clone()
+        };
+        let sym = self.sema.symtab.lookup(&base_name)
+            .or_else(|| self.sema.symtab.lookup_any(&base_name))?;
+        let mut tid = sym.typ;
+
+        for sel in &desig.selectors {
+            // Follow aliases and pointers
+            tid = self.unwrap_type_aliases(tid);
+            match sel {
+                Selector::Field(fname, _) => {
+                    // Unwrap pointer/ref if implicit deref
+                    tid = self.unwrap_pointers(tid);
+                    tid = self.unwrap_type_aliases(tid);
+                    match self.sema.types.get(tid) {
+                        Type::Record { fields, .. } => {
+                            if let Some(f) = fields.iter().find(|f| f.name == *fname) {
+                                tid = f.typ;
+                            } else {
+                                return None;
+                            }
+                        }
+                        Type::Object { fields, .. } => {
+                            if let Some(f) = fields.iter().find(|f| f.name == *fname) {
+                                tid = f.typ;
+                            } else {
+                                return None;
+                            }
+                        }
+                        _ => return None,
+                    }
+                }
+                Selector::Index(_, _) => {
+                    match self.sema.types.get(tid) {
+                        Type::Array { elem_type, .. } => tid = *elem_type,
+                        Type::OpenArray { elem_type } => tid = *elem_type,
+                        _ => return None,
+                    }
+                }
+                Selector::Deref(_) => {
+                    tid = self.unwrap_pointers(tid);
+                }
+            }
+        }
+        Some(tid)
+    }
+
+    /// Follow Alias types to the underlying type
+    fn unwrap_type_aliases(&self, mut tid: TypeId) -> TypeId {
+        loop {
+            match self.sema.types.get(tid) {
+                Type::Alias { target, .. } => tid = *target,
+                _ => return tid,
+            }
+        }
+    }
+
+    /// Unwrap Pointer/Ref to get the base type
+    fn unwrap_pointers(&self, mut tid: TypeId) -> TypeId {
+        tid = self.unwrap_type_aliases(tid);
+        match self.sema.types.get(tid) {
+            Type::Pointer { base } => *base,
+            Type::Ref { target, .. } => *target,
+            _ => tid,
+        }
+    }
+
+    /// Get proc param info for a complex designator call by resolving its type.
+    fn get_designator_proc_param_info(&self, desig: &Designator) -> Vec<ParamCodegenInfo> {
+        // First try full type resolution through the sema type system
+        if let Some(tid) = self.resolve_designator_type(desig) {
+            if let Some(info) = self.param_info_from_proc_type(tid) {
+                return info;
+            }
+        }
+        // Fallback: check the last Field selector against field_proc_params
+        // (for embedded modules where the symtab doesn't have local params)
+        if let Some(last_sel) = desig.selectors.last() {
+            if let Selector::Field(fname, _) = last_sel {
+                if let Some(info) = self.field_proc_params.get(fname) {
+                    return info.clone();
+                }
+            }
+        }
+        Vec::new()
     }
 
     /// Get VAR parameter flags for a named procedure
@@ -3793,15 +4049,16 @@ impl CodeGen {
         }
         // Check if it's imported via FROM Module IMPORT
         if let Some(module) = self.import_map.get(name) {
+            let orig = self.original_import_name(name).to_string();
             if self.foreign_modules.contains(module.as_str()) {
-                return name.to_string();
+                return orig;
             }
-            if let Some(c_name) = stdlib::map_stdlib_call(module, name) {
+            if let Some(c_name) = stdlib::map_stdlib_call(module, &orig) {
                 return c_name;
             }
             // Non-stdlib module: use module-prefixed name
             if !stdlib::is_stdlib_module(module) {
-                return format!("{}_{}", module, name);
+                return format!("{}_{}", module, orig);
             }
         }
         // Check if this name has an EXPORTC alias
@@ -3809,7 +4066,10 @@ impl CodeGen {
             return ecn.clone();
         }
         // Inside an embedded implementation, local proc calls need module prefix
-        if self.embedded_local_procs.contains(name) {
+        // Also check embedded_local_vars for procedure-typed variables used as calls
+        if self.embedded_local_procs.contains(name)
+            || self.embedded_local_vars.contains(name)
+        {
             return format!("{}_{}", self.module_name, name);
         }
         self.mangle(name)
