@@ -2,6 +2,7 @@
 
 ## User guides
 
+- [Language support](language-support.md) — PIM4 and Modula-2+ feature matrix
 - [Using the toolchain](toolchain.md) — compiler commands, package manager, project workflows
 - [VS Code integration](vscode.md) — extension setup, settings, commands, troubleshooting
 - [FAQ](faq.md) — common questions and answers
