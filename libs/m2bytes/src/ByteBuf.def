@@ -13,7 +13,7 @@ DEFINITION MODULE ByteBuf;
 FROM SYSTEM IMPORT ADDRESS;
 
 CONST
-  MaxBufCap = 65535;  (* max indexable capacity *)
+  MaxBufCap = 10485760;  (* max indexable capacity — 10 MB *)
 
 TYPE
   (* Zero-copy view into a byte range. *)

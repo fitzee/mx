@@ -271,6 +271,11 @@ pub fn build_project(
         }
     }
 
+    // Canonicalize existing extra_c paths for dedup
+    let canonical_extras: Vec<PathBuf> = opts.extra_c_files.iter()
+        .filter_map(|p| p.canonicalize().ok())
+        .collect();
+
     // Merge transitive [cc] sections from path: dependencies
     let dep_cc = crate::project_resolver::collect_transitive_cc(root, manifest, None);
     for f in &dep_cc.cflags {
@@ -284,9 +289,12 @@ pub fn build_project(
         }
     }
     for extra in &dep_cc.extra_c {
-        // Already absolute paths from collect_transitive_cc
+        // Canonicalize to deduplicate paths that resolve to the same file
         let p = PathBuf::from(extra);
-        if !opts.extra_c_files.contains(&p) {
+        let dominated = p.canonicalize()
+            .map(|cp| canonical_extras.contains(&cp))
+            .unwrap_or(false);
+        if !dominated && !opts.extra_c_files.contains(&p) {
             opts.extra_c_files.push(p);
         }
     }

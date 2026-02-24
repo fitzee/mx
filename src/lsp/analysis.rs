@@ -115,8 +115,8 @@ fn collect_def_modules(
             }
         } else {
             for mod_name in &imp.names {
-                if !crate::stdlib::is_stdlib_module(mod_name) {
-                    if let Some(def_path) = find_def_file(mod_name, input_path, include_paths) {
+                if !crate::stdlib::is_stdlib_module(&mod_name.name) {
+                    if let Some(def_path) = find_def_file(&mod_name.name, input_path, include_paths) {
                         if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
                             result.push(def_mod.clone());
                         }

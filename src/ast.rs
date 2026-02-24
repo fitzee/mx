@@ -58,9 +58,22 @@ pub struct ImplementationModule {
 // ── Imports / Exports ───────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+pub struct ImportName {
+    pub name: Ident,
+    pub alias: Option<Ident>,
+}
+
+impl ImportName {
+    /// Returns the local name (alias if present, otherwise original name).
+    pub fn local_name(&self) -> &str {
+        self.alias.as_deref().unwrap_or(&self.name)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Import {
     pub from_module: Option<Ident>,
-    pub names: Vec<Ident>,
+    pub names: Vec<ImportName>,
     pub loc: SourceLoc,
 }
 

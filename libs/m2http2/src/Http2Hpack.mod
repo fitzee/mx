@@ -128,16 +128,13 @@ END InitStaticTable;
 (* ── Integer codec (RFC 7541 Section 5.1) ──────────────── *)
 
 PROCEDURE PrefixMax(prefixBits: CARDINAL): CARDINAL;
-(* Compute 2^prefixBits - 1. *)
-VAR r, i: CARDINAL;
 BEGIN
-  r := 1;
-  i := prefixBits;
-  WHILE i > 0 DO
-    r := r * 2;
-    DEC(i)
-  END;
-  RETURN r - 1
+  CASE prefixBits OF
+    1: RETURN 1   | 2: RETURN 3   | 3: RETURN 7
+  | 4: RETURN 15  | 5: RETURN 31  | 6: RETURN 63
+  | 7: RETURN 127 | 8: RETURN 255
+  ELSE RETURN 0
+  END
 END PrefixMax;
 
 PROCEDURE EncodeInt(VAR b: Buf; value: CARDINAL;
@@ -219,12 +216,36 @@ END StaticLookup;
 PROCEDURE StaticFind(name: ARRAY OF CHAR; nameLen: CARDINAL;
                      value: ARRAY OF CHAR; valLen: CARDINAL;
                      nameOnly: BOOLEAN): CARDINAL;
-VAR i, nameMatch: CARDINAL;
+VAR i, lo, hi, nameMatch: CARDINAL;
+    ch: CHAR;
 BEGIN
   InitStaticTable;
+  IF nameLen = 0 THEN RETURN 0 END;
+  ch := name[0];
+  (* First-character dispatch: narrow scan to entries starting with ch *)
+  CASE ch OF
+    ':': lo := 1;  hi := 14
+  | 'a': lo := 15; hi := 23
+  | 'c': lo := 24; hi := 32
+  | 'd': lo := 33; hi := 33
+  | 'e': lo := 34; hi := 36
+  | 'f': lo := 37; hi := 37
+  | 'h': lo := 38; hi := 38
+  | 'i': lo := 39; hi := 43
+  | 'l': lo := 44; hi := 46
+  | 'm': lo := 47; hi := 47
+  | 'p': lo := 48; hi := 49
+  | 'r': lo := 50; hi := 53
+  | 's': lo := 54; hi := 56
+  | 't': lo := 57; hi := 57
+  | 'u': lo := 58; hi := 58
+  | 'v': lo := 59; hi := 60
+  | 'w': lo := 61; hi := 61
+  ELSE RETURN 0
+  END;
   nameMatch := 0;
-  i := 1;
-  WHILE i <= HpackStaticTableSize DO
+  i := lo;
+  WHILE i <= hi DO
     IF EntryNameEq(staticTable[i], name, nameLen) THEN
       IF nameOnly THEN
         RETURN i
@@ -385,11 +406,59 @@ BEGIN
   END
 END LookupIndex;
 
+PROCEDURE StaticLookupName(index: CARDINAL;
+                           VAR entry: HeaderEntry;
+                           VAR ok: BOOLEAN);
+VAR i: CARDINAL;
+BEGIN
+  InitStaticTable;
+  ok := (index >= 1) AND (index <= HpackStaticTableSize);
+  IF NOT ok THEN RETURN END;
+  i := 0;
+  WHILE i < staticTable[index].nameLen DO
+    entry.name[i] := staticTable[index].name[i];
+    INC(i)
+  END;
+  entry.nameLen := staticTable[index].nameLen
+END StaticLookupName;
+
+PROCEDURE DynLookupName(VAR dt: DynTable; index: CARDINAL;
+                        VAR entry: HeaderEntry; VAR ok: BOOLEAN);
+VAR slot, i: CARDINAL;
+BEGIN
+  ok := index < dt.count;
+  IF NOT ok THEN RETURN END;
+  slot := DynRealIndex(dt, index);
+  i := 0;
+  WHILE i < dt.entries[slot].nameLen DO
+    entry.name[i] := dt.entries[slot].name[i];
+    INC(i)
+  END;
+  entry.nameLen := dt.entries[slot].nameLen
+END DynLookupName;
+
+PROCEDURE LookupNameOnly(idx: CARDINAL; VAR dt: DynTable;
+                         VAR entry: HeaderEntry; VAR ok: BOOLEAN);
+BEGIN
+  IF idx <= HpackStaticTableSize THEN
+    StaticLookupName(idx, entry, ok)
+  ELSE
+    DynLookupName(dt, idx - HpackStaticTableSize - 1, entry, ok)
+  END
+END LookupNameOnly;
+
 (* ── Huffman decode tree (RFC 7541 Appendix B) ──────────── *)
 
 CONST
   HuffMaxNodes = 600;  (* 257 leaves + 256 internal + margin *)
   HuffEOS = 256;
+
+TYPE
+  HuffAccelEntry = RECORD
+    sym:        INTEGER;    (* first decoded symbol, -1 if code > 8 bits *)
+    bitsUsed:   CARDINAL;   (* bits consumed for that symbol *)
+    nodeAfter8: CARDINAL;   (* tree node after all 8 bits, when sym=-1 *)
+  END;
 
 VAR
   huffLeft:  ARRAY [0..HuffMaxNodes-1] OF INTEGER;
@@ -397,6 +466,7 @@ VAR
   huffSym:   ARRAY [0..HuffMaxNodes-1] OF INTEGER;
   huffNodes: CARDINAL;
   huffReady: BOOLEAN;
+  huffAccel: ARRAY [0..255] OF HuffAccelEntry;
 
 PROCEDURE HuffInsert(code: LONGCARD; bits, sym: CARDINAL);
 (* Insert symbol into the Huffman decode tree.
@@ -441,6 +511,41 @@ END HuffInsert;
 
 PROCEDURE I(code: LONGCARD; bits, sym: CARDINAL);
 BEGIN HuffInsert(code, bits, sym) END I;
+
+PROCEDURE BuildHuffAccel;
+(* Build 256-entry root acceleration table. For each byte value 0..255,
+   walk tree from root consuming bits. If a leaf is reached within 8 bits,
+   record sym and bitsUsed. Otherwise record nodeAfter8. *)
+VAR
+  byteVal, bitsConsumed, node: CARDINAL;
+  b: CARDINAL;
+BEGIN
+  FOR byteVal := 0 TO 255 DO
+    node := 0;
+    b := byteVal;
+    bitsConsumed := 0;
+    huffAccel[byteVal].sym := -1;
+    huffAccel[byteVal].bitsUsed := 0;
+    huffAccel[byteVal].nodeAfter8 := 0;
+    WHILE bitsConsumed < 8 DO
+      IF b >= 128 THEN
+        node := CARDINAL(huffRight[node])
+      ELSE
+        node := CARDINAL(huffLeft[node])
+      END;
+      b := (b MOD 128) * 2;
+      INC(bitsConsumed);
+      IF huffSym[node] >= 0 THEN
+        huffAccel[byteVal].sym := huffSym[node];
+        huffAccel[byteVal].bitsUsed := bitsConsumed;
+        bitsConsumed := 8  (* break *)
+      END
+    END;
+    IF huffAccel[byteVal].sym = -1 THEN
+      huffAccel[byteVal].nodeAfter8 := node
+    END
+  END
+END BuildHuffAccel;
 
 PROCEDURE InitHuffTree;
 BEGIN
@@ -588,8 +693,36 @@ BEGIN
   (* EOS *)
   I(4294967292,30,256);
 
+  BuildHuffAccel;
   huffReady := TRUE
 END InitHuffTree;
+
+(* Walk one bit through the Huffman tree.
+   Returns FALSE if the tree has no child for this bit. *)
+PROCEDURE HuffWalkBit(bit: CARDINAL;
+                      VAR node: CARDINAL;
+                      VAR arr: ARRAY OF CHAR;
+                      VAR decLen: CARDINAL;
+                      maxLen: CARDINAL;
+                      VAR ok: BOOLEAN);
+VAR sym: INTEGER;
+BEGIN
+  IF bit = 1 THEN
+    IF huffRight[node] = -1 THEN ok := FALSE; RETURN END;
+    node := CARDINAL(huffRight[node])
+  ELSE
+    IF huffLeft[node] = -1 THEN ok := FALSE; RETURN END;
+    node := CARDINAL(huffLeft[node])
+  END;
+  sym := huffSym[node];
+  IF sym >= 0 THEN
+    IF CARDINAL(sym) = HuffEOS THEN ok := FALSE; RETURN END;
+    IF decLen >= maxLen THEN ok := FALSE; RETURN END;
+    arr[decLen] := CHR(CARDINAL(sym) MOD 256);
+    INC(decLen);
+    node := 0
+  END
+END HuffWalkBit;
 
 (* Decode Huffman-encoded bytes from v[start..start+encLen-1]
    into arr, writing at most maxLen bytes.
@@ -601,86 +734,71 @@ PROCEDURE HuffDecode(v: BytesView; start, encLen: CARDINAL;
                      VAR ok: BOOLEAN);
 VAR
   node: CARDINAL;
-  bIdx, bPos: CARDINAL;
+  bIdx, endIdx: CARDINAL;
   byt: CARDINAL;
-  bit: CARDINAL;
-  sym: INTEGER;
+  rem: CARDINAL;
+  i: CARDINAL;
+  a: HuffAccelEntry;
 BEGIN
   InitHuffTree;
   ok := TRUE;
   decLen := 0;
-  node := 0;  (* root *)
-
+  node := 0;
   bIdx := start;
-  bPos := 0;  (* bit position within current byte, 0=MSB *)
+  endIdx := start + encLen;
 
-  WHILE bIdx < start + encLen DO
+  WHILE (bIdx < endIdx) AND ok DO
     byt := ViewGetByte(v, bIdx);
-    (* Extract bit at position bPos (0=MSB=bit7, 7=LSB=bit0) *)
-    bit := (byt DIV 128) MOD 2;
-    IF bPos > 0 THEN
-      (* Shift out already-consumed bits *)
-      byt := byt * 1;  (* no-op; we need the shifted version *)
-    END;
+    INC(bIdx);
 
-    (* Actually, extract bit bPos from byte:
-       bit bPos=0 is (byte DIV 128) MOD 2
-       bit bPos=1 is (byte DIV 64) MOD 2, etc. *)
-    CASE bPos OF
-      0: bit := (byt DIV 128) MOD 2
-    | 1: bit := (byt DIV 64) MOD 2
-    | 2: bit := (byt DIV 32) MOD 2
-    | 3: bit := (byt DIV 16) MOD 2
-    | 4: bit := (byt DIV 8) MOD 2
-    | 5: bit := (byt DIV 4) MOD 2
-    | 6: bit := (byt DIV 2) MOD 2
-    | 7: bit := byt MOD 2
-    END;
-
-    (* Walk tree *)
-    IF bit = 1 THEN
-      IF huffRight[node] = -1 THEN ok := FALSE; RETURN END;
-      node := CARDINAL(huffRight[node])
+    IF node = 0 THEN
+      (* At root: use 8-bit acceleration table *)
+      a := huffAccel[byt];
+      IF a.sym >= 0 THEN
+        (* Short code (<=8 bits): emit symbol *)
+        IF CARDINAL(a.sym) = HuffEOS THEN ok := FALSE; RETURN END;
+        IF decLen >= maxLen THEN ok := FALSE; RETURN END;
+        arr[decLen] := CHR(CARDINAL(a.sym) MOD 256);
+        INC(decLen);
+        node := 0;
+        (* Shift out consumed bits and process remainder via tree walk *)
+        CASE a.bitsUsed OF
+          1: byt := (byt MOD 128) * 2;   rem := 7
+        | 2: byt := (byt MOD 64) * 4;    rem := 6
+        | 3: byt := (byt MOD 32) * 8;    rem := 5
+        | 4: byt := (byt MOD 16) * 16;   rem := 4
+        | 5: byt := (byt MOD 8) * 32;    rem := 3
+        | 6: byt := (byt MOD 4) * 64;    rem := 2
+        | 7: byt := (byt MOD 2) * 128;   rem := 1
+        | 8: rem := 0
+        ELSE rem := 0
+        END;
+        i := 0;
+        WHILE (i < rem) AND ok DO
+          HuffWalkBit(byt DIV 128, node, arr, decLen, maxLen, ok);
+          byt := (byt MOD 128) * 2;
+          INC(i)
+        END
+      ELSE
+        (* Long code (>8 bits): advance to tree node after 8 bits *)
+        node := a.nodeAfter8
+      END
     ELSE
-      IF huffLeft[node] = -1 THEN ok := FALSE; RETURN END;
-      node := CARDINAL(huffLeft[node])
-    END;
-
-    (* Check if we reached a leaf *)
-    sym := huffSym[node];
-    IF sym >= 0 THEN
-      IF CARDINAL(sym) = HuffEOS THEN
-        (* EOS in middle of string is an error *)
-        ok := FALSE;
-        RETURN
-      END;
-      IF decLen >= maxLen THEN ok := FALSE; RETURN END;
-      arr[decLen] := CHR(CARDINAL(sym) MOD 256);
-      INC(decLen);
-      node := 0  (* restart from root *)
-    END;
-
-    (* Advance bit position *)
-    INC(bPos);
-    IF bPos >= 8 THEN
-      bPos := 0;
-      INC(bIdx)
+      (* Not at root: process 8 bits individually *)
+      i := 0;
+      WHILE (i < 8) AND ok DO
+        HuffWalkBit(byt DIV 128, node, arr, decLen, maxLen, ok);
+        byt := (byt MOD 128) * 2;
+        INC(i)
+      END
     END
   END;
 
-  (* After all bits consumed, node should be back at root or
-     in a state where remaining bits are all 1s (padding).
-     If we're not at root, check that the path from current node
-     following all-1 bits leads nowhere (just padding). *)
-  IF node # 0 THEN
-    (* Padding bits should be all 1s. Verify by checking that
-       following right (1-bit) from current node doesn't decode
-       a complete symbol before we'd exceed 7 padding bits. *)
-    (* For simplicity: accept if node != root, since proper encoders
-       only add all-1 padding which won't complete a symbol. *)
-  END;
-
-  ok := TRUE
+  (* Padding: accept if remaining bits are all-1s padding *)
+  IF ok AND (node # 0) THEN
+    (* Proper encoders only add all-1 padding which won't complete
+       a symbol within 7 bits, so accept. *)
+  END
 END HuffDecode;
 
 PROCEDURE ReadLiteralString(v: BytesView; VAR pos: CARDINAL;
@@ -715,7 +833,6 @@ PROCEDURE DecodeHeaderBlock(v: BytesView;
                             VAR numHeaders: CARDINAL;
                             VAR ok: BOOLEAN);
 VAR pos, byt, idx: CARDINAL;
-    entry: HeaderEntry;
 BEGIN
   InitStaticTable;
   ok := TRUE;
@@ -740,9 +857,8 @@ BEGIN
       idx := DecodeInt(byt MOD 64, 6, v, pos, ok);
       IF NOT ok THEN RETURN END;
       IF idx > 0 THEN
-        LookupIndex(idx, dt, entry, ok);
-        IF NOT ok THEN RETURN END;
-        CopyEntryName(entry, headers[numHeaders])
+        LookupNameOnly(idx, dt, headers[numHeaders], ok);
+        IF NOT ok THEN RETURN END
       ELSE
         ReadLiteralString(v, pos, headers[numHeaders].name,
                           headers[numHeaders].nameLen,
@@ -770,9 +886,8 @@ BEGIN
       idx := DecodeInt(byt MOD 16, 4, v, pos, ok);
       IF NOT ok THEN RETURN END;
       IF idx > 0 THEN
-        LookupIndex(idx, dt, entry, ok);
-        IF NOT ok THEN RETURN END;
-        CopyEntryName(entry, headers[numHeaders])
+        LookupNameOnly(idx, dt, headers[numHeaders], ok);
+        IF NOT ok THEN RETURN END
       ELSE
         ReadLiteralString(v, pos, headers[numHeaders].name,
                           headers[numHeaders].nameLen,
