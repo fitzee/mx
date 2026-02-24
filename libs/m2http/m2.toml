@@ -12,6 +12,8 @@ m2evloop=path:../m2evloop
 m2sockets=path:../m2sockets
 m2tls=path:../m2tls
 m2stream=path:../m2stream
+m2http2=path:../m2http2
+m2bytes=path:../m2bytes
 
 [cc]
 extra-c=src/dns_bridge.c

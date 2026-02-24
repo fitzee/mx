@@ -104,6 +104,17 @@ fn collect_def_modules(
     };
 
     let input_path = Path::new(filename);
+
+    // For implementation modules, load the corresponding .def file first.
+    // Types/constants/procedures declared in the .def must be visible in the .mod.
+    if let CompilationUnit::ImplementationModule(m) = &unit {
+        if let Some(def_path) = find_def_file(&m.name, input_path, include_paths) {
+            if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
+                result.push(def_mod.clone());
+            }
+        }
+    }
+
     for imp in imports {
         if let Some(ref from_mod) = imp.from_module {
             if !crate::stdlib::is_stdlib_module(from_mod) {

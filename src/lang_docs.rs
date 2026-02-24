@@ -95,6 +95,27 @@ static REGISTRY: LazyLock<HashMap<&'static str, DocEntry>> = LazyLock::new(|| {
     m.insert("MIN", DocEntry { key: "MIN", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/MIN.md") });
     m.insert("FLOAT", DocEntry { key: "FLOAT", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/FLOAT.md") });
     m.insert("TRUNC", DocEntry { key: "TRUNC", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/TRUNC.md") });
+    m.insert("LONG", DocEntry { key: "LONG", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/LONG.md") });
+    m.insert("SHORT", DocEntry { key: "SHORT", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/SHORT.md") });
+    m.insert("LFLOAT", DocEntry { key: "LFLOAT", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/LFLOAT.md") });
+    m.insert("CMPLX", DocEntry { key: "CMPLX", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/CMPLX.md") });
+    m.insert("RE", DocEntry { key: "RE", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/RE.md") });
+    m.insert("IM", DocEntry { key: "IM", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/IM.md") });
+
+    // Bitwise operations
+    m.insert("SHL", DocEntry { key: "SHL", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/SHL.md") });
+    m.insert("SHR", DocEntry { key: "SHR", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/SHR.md") });
+    m.insert("BAND", DocEntry { key: "BAND", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/BAND.md") });
+    m.insert("BOR", DocEntry { key: "BOR", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/BOR.md") });
+    m.insert("BXOR", DocEntry { key: "BXOR", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/BXOR.md") });
+    m.insert("BNOT", DocEntry { key: "BNOT", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/BNOT.md") });
+    m.insert("SHIFT", DocEntry { key: "SHIFT", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/SHIFT.md") });
+    m.insert("ROTATE", DocEntry { key: "ROTATE", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/ROTATE.md") });
+
+    // Coroutines
+    m.insert("NEWPROCESS", DocEntry { key: "NEWPROCESS", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/NEWPROCESS.md") });
+    m.insert("TRANSFER", DocEntry { key: "TRANSFER", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/TRANSFER.md") });
+    m.insert("IOTRANSFER", DocEntry { key: "IOTRANSFER", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/IOTRANSFER.md") });
 
     // Built-in constants
     m.insert("TRUE", DocEntry { key: "TRUE", category: DocCategory::Builtin, markdown: include_str!("../docs/lang/builtins/TRUE.md") });

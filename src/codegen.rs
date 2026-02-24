@@ -56,6 +56,8 @@ pub struct CodeGen {
     array_vars: HashSet<String>,
     /// Record field names that have array types: (record_type_name, field_name)
     array_fields: HashSet<(String, String)>,
+    /// Record field names that are pointer types (bare name, for disambiguating array_fields)
+    pointer_fields: HashSet<String>,
     /// Variable names that are SET or BITSET types
     set_vars: HashSet<String>,
     /// Variable names that are CARDINAL (unsigned) types
@@ -344,6 +346,7 @@ impl CodeGen {
             array_types: HashSet::new(),
             array_vars: HashSet::new(),
             array_fields: HashSet::new(),
+            pointer_fields: HashSet::new(),
             set_vars: HashSet::new(),
             cardinal_vars: HashSet::new(),
             complex_vars: HashSet::new(),
@@ -1307,9 +1310,9 @@ impl CodeGen {
         }
 
         // Generate main function
-        self.emitln("int main(int argc, char **argv) {");
+        self.emitln("int main(int _m2_argc, char **_m2_argv) {");
         self.indent += 1;
-        self.emitln("m2_argc = argc; m2_argv = argv;");
+        self.emitln("m2_argc = _m2_argc; m2_argv = _m2_argv;");
         if self.emit_debug_lines {
             self.emitln("setvbuf(stdout, NULL, _IONBF, 0);");
         }
@@ -1617,6 +1620,14 @@ impl CodeGen {
                             if !arr_suffix.is_empty() || self.is_array_type(&f.typ) {
                                 for name in &f.names {
                                     self.array_fields.insert((t.name.clone(), name.clone()));
+                                }
+                            }
+                            // Track pointer-typed fields to disambiguate array_fields
+                            // (prevents false positives when different records have
+                            // same-named fields with different types)
+                            if self.is_pointer_type(&f.typ) {
+                                for name in &f.names {
+                                    self.pointer_fields.insert(name.clone());
                                 }
                             }
                             self.emit(&format!("{} ", ctype));
@@ -2198,8 +2209,10 @@ impl CodeGen {
                     // Simple variable: check array_vars
                     self.array_vars.contains(&desig.ident.name)
                 } else if let Some(Selector::Field(fname, _)) = desig.selectors.last() {
-                    // Record field: check array_fields
-                    self.is_array_field(fname)
+                    // Record field: check array_fields, but exclude pointer-typed fields
+                    // to avoid false positives when different records have same-named fields
+                    // (e.g., Buffers.BufRec.data is an array, ByteBuf.Buf.data is a pointer)
+                    self.is_array_field(fname) && !self.pointer_fields.contains(fname)
                 } else {
                     false
                 };
@@ -3861,6 +3874,20 @@ impl CodeGen {
         }
     }
 
+    /// Check if a TypeNode is a pointer type (POINTER TO ...)
+    fn is_pointer_type(&self, tn: &TypeNode) -> bool {
+        match tn {
+            TypeNode::Pointer { .. } => true,
+            TypeNode::Named(qi) => {
+                // Check if the named type resolves to a pointer typedef
+                // by checking if it's NOT in array_types and the C type ends with *
+                let c = self.type_to_c(tn);
+                c.ends_with('*')
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a TypeNode is any array type (for memcpy assignment)
     fn is_array_type(&self, tn: &TypeNode) -> bool {
         match tn {
@@ -4238,9 +4265,17 @@ impl CodeGen {
     // ── Modula-2+ TRY/EXCEPT/FINALLY ───────────────────────────────
 
     fn gen_try_statement(&mut self, body: &[Statement], excepts: &[ExceptClause], finally_body: &Option<Vec<Statement>>) {
+        let has_finally = finally_body.is_some();
+        // When FINALLY is present, we need to capture exception state
+        // so FINALLY runs before any re-raise.
+        let needs_deferred_raise = has_finally && (excepts.is_empty() || excepts.iter().all(|ec| ec.exception.is_some()));
+
         self.emitln("{");
         self.indent += 1;
         self.emitln("m2_ExcFrame _ef;");
+        if needs_deferred_raise {
+            self.emitln("int _ef_exc = 0;");
+        }
         self.emitln("M2_TRY(_ef) {");
         self.indent += 1;
         for s in body {
@@ -4252,10 +4287,16 @@ impl CodeGen {
         self.indent += 1;
         self.emitln("M2_ENDTRY(_ef);");
         if excepts.is_empty() {
-            self.emitln("/* no handlers — re-raise */");
-            self.emitln("m2_raise(_ef.exception_id, _ef.exception_name, _ef.exception_arg);");
+            if has_finally {
+                // Defer re-raise until after FINALLY
+                self.emitln("_ef_exc = 1;");
+            } else {
+                self.emitln("/* no handlers — re-raise */");
+                self.emitln("m2_raise(_ef.exception_id, _ef.exception_name, _ef.exception_arg);");
+            }
         } else {
             let mut first = true;
+            let mut has_catch_all = false;
             for ec in excepts {
                 self.emit_indent();
                 if !first {
@@ -4271,6 +4312,7 @@ impl CodeGen {
                     self.emit(&format!("if (_ef.exception_id == {}) {{\n", c_name));
                 } else {
                     // Catch-all
+                    has_catch_all = true;
                     self.emit("{\n");
                 }
                 self.indent += 1;
@@ -4278,6 +4320,21 @@ impl CodeGen {
                     self.gen_statement(s);
                 }
                 self.indent -= 1;
+            }
+            if !has_catch_all {
+                if has_finally {
+                    // Defer re-raise until after FINALLY
+                    self.emitln("} else {");
+                    self.indent += 1;
+                    self.emitln("_ef_exc = 1;");
+                    self.indent -= 1;
+                } else {
+                    // No catch-all: unhandled exception must propagate
+                    self.emitln("} else {");
+                    self.indent += 1;
+                    self.emitln("m2_raise(_ef.exception_id, _ef.exception_name, _ef.exception_arg);");
+                    self.indent -= 1;
+                }
             }
             self.emitln("}");
         }
@@ -4287,6 +4344,13 @@ impl CodeGen {
         if let Some(fb) = finally_body {
             for s in fb {
                 self.gen_statement(s);
+            }
+            if needs_deferred_raise {
+                self.emitln("if (_ef_exc) {");
+                self.indent += 1;
+                self.emitln("m2_raise(_ef.exception_id, _ef.exception_name, _ef.exception_arg);");
+                self.indent -= 1;
+                self.emitln("}");
             }
         }
         self.indent -= 1;

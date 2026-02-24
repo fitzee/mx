@@ -2,7 +2,7 @@ IMPLEMENTATION MODULE RpcTest;
 
 FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
-FROM ByteBuf IMPORT Buf, BufPtr, Init, Free, Clear, AppendByte,
+FROM ByteBuf IMPORT Buf, BBufPtr, Init, Free, Clear, AppendByte,
                      GetByte;
 
 CONST
@@ -77,7 +77,7 @@ PROCEDURE DoRead(VAR src: Buf; VAR srcPos: CARDINAL;
                  VAR got: CARDINAL): CARDINAL;
 VAR
   avail, n, i: CARDINAL;
-  dst: BufPtr;
+  dst: BBufPtr;
 BEGIN
   got := 0;
   avail := src.len - srcPos;
@@ -114,7 +114,7 @@ PROCEDURE DoWrite(VAR dst: Buf; closed: BOOLEAN;
                   VAR sent: CARDINAL): CARDINAL;
 VAR
   n, i: CARDINAL;
-  src: BufPtr;
+  src: BBufPtr;
 BEGIN
   sent := 0;
   IF closed THEN RETURN TsClosed END;

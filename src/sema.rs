@@ -292,20 +292,42 @@ impl SemanticAnalyzer {
 
     fn analyze_implementation_module(&mut self, m: &ImplementationModule) {
         let scope_id = self.enter_scope_at(&m.name, &m.loc);
+
+        // Import types, constants, and exceptions from the own definition module.
+        // In Modula-2, an implementation module implicitly sees these names
+        // from its corresponding .def. Procedures and variables are skipped
+        // because the .mod re-declares/implements them.
+        if let Some(def_sym) = self.symtab.lookup(&m.name).cloned() {
+            if let SymbolKind::Module { scope_id: def_scope } = def_sym.kind {
+                let def_symbols: Vec<Symbol> = self.symtab
+                    .scope_symbols(def_scope)
+                    .filter(|s| s.exported && matches!(s.kind,
+                        SymbolKind::Type | SymbolKind::Constant(_)))
+                    .cloned()
+                    .collect();
+                for sym in def_symbols {
+                    let _ = self.symtab.define(scope_id, sym);
+                }
+            }
+        }
+
         self.process_imports(&m.imports);
         self.analyze_block(&m.block);
         self.leave_scope_at();
 
-        let sym = Symbol {
-            name: m.name.clone(),
-            kind: SymbolKind::Module { scope_id },
-            typ: TY_VOID,
-            exported: false,
-            module: None,
-            loc: SourceLoc::default(),
-            doc: None,
-        };
-        self.define_sym(sym, &m.loc);
+        // Only register the module symbol if not already present from the .def
+        if self.symtab.lookup(&m.name).is_none() {
+            let sym = Symbol {
+                name: m.name.clone(),
+                kind: SymbolKind::Module { scope_id },
+                typ: TY_VOID,
+                exported: false,
+                module: None,
+                loc: SourceLoc::default(),
+                doc: None,
+            };
+            self.define_sym(sym, &m.loc);
+        }
     }
 
     fn process_imports(&mut self, imports: &[Import]) {

@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE Codec;
 
-FROM ByteBuf IMPORT BytesView, Buf, BufPtr,
+FROM ByteBuf IMPORT BytesView, Buf, BBufPtr,
                      GetByte, AppendByte, Reserve, ViewGetByte;
 FROM SYSTEM IMPORT ADDRESS, ADR;
 
@@ -108,7 +108,7 @@ END Skip;
 
 PROCEDURE ReadSlice(VAR r: Reader; n: CARDINAL;
                     VAR out: BytesView; VAR ok: BOOLEAN);
-VAR vp: BufPtr;
+VAR vp: BBufPtr;
 BEGIN
   IF r.pos + n > r.v.len THEN
     ok := FALSE;

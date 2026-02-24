@@ -52,9 +52,6 @@ void m2sys_dirname(void *path, void *out, int32_t outSize);
 /* Process execution (captures stdout) */
 int32_t m2sys_exec_output(void *cmdline, void *outBuf, int32_t outSize);
 
-/* HTTP (shells out to curl) */
-int32_t m2sys_http_get(void *url, void *destPath);
-
 /* Tar (POSIX ustar, no compression) */
 int32_t m2sys_tar_create(void *archivePath, void *baseDir);
 int32_t m2sys_tar_create_ex(void *archivePath, void *baseDir, void *excludePattern);
@@ -70,5 +67,8 @@ int32_t m2sys_funlock(int32_t handle);
 
 /* Remove directory recursively */
 int32_t m2sys_rmdir_r(void *path);
+
+/* Time */
+int64_t m2sys_unix_time(void);
 
 #endif

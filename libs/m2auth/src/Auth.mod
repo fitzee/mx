@@ -1161,6 +1161,69 @@ IMPLEMENTATION MODULE Auth;
     END
   END SignToken;
 
+  (* ── Hex key helpers ────────────────────────────── *)
+
+  PROCEDURE HexNibble(ch: CHAR; VAR val: CARDINAL): BOOLEAN;
+  BEGIN
+    IF (ch >= '0') AND (ch <= '9') THEN
+      val := ORD(ch) - ORD('0'); RETURN TRUE
+    ELSIF (ch >= 'a') AND (ch <= 'f') THEN
+      val := ORD(ch) - ORD('a') + 10; RETURN TRUE
+    ELSIF (ch >= 'A') AND (ch <= 'F') THEN
+      val := ORD(ch) - ORD('A') + 10; RETURN TRUE
+    END;
+    RETURN FALSE
+  END HexNibble;
+
+  PROCEDURE DecodeHexKey(VAR hex: ARRAY OF CHAR;
+                          VAR key: SymKey): Status;
+  VAR i, hi, lo: CARDINAL;
+  BEGIN
+    IF Length(hex) # 64 THEN RETURN Invalid END;
+    FOR i := 0 TO 31 DO
+      IF NOT HexNibble(hex[i * 2], hi) THEN RETURN Invalid END;
+      IF NOT HexNibble(hex[i * 2 + 1], lo) THEN RETURN Invalid END;
+      key[i] := CHR(hi * 16 + lo)
+    END;
+    RETURN OK
+  END DecodeHexKey;
+
+  PROCEDURE QuickSignHS256(VAR hexSecret: ARRAY OF CHAR;
+                            sub: ARRAY OF CHAR;
+                            ttl: CARDINAL;
+                            VAR token: ARRAY OF CHAR;
+                            VAR tokenLen: CARDINAL): Status;
+  VAR
+    key: SymKey;
+    kr: Keyring;
+    p: Principal;
+    st, st2: Status;
+    kid: ARRAY [0..0] OF CHAR;
+    now: LONGINT;
+  BEGIN
+    st := DecodeHexKey(hexSecret, key);
+    IF st # OK THEN RETURN st END;
+    st := KeyringCreate(kr);
+    IF st # OK THEN RETURN st END;
+    kid[0] := 0C;
+    st := KeyringAddHS256(kr, kid, key);
+    IF st # OK THEN
+      st2 := KeyringDestroy(kr);
+      RETURN st
+    END;
+    InitPrincipal(p);
+    Assign(sub, p.subject);
+    now := m2_auth_get_unix_time();
+    p.iatUnix := now;
+    p.expUnix := now + VAL(LONGINT, ttl);
+    st := SignToken(kr, JwtHS256, kid, p, token, tokenLen);
+    st2 := KeyringDestroy(kr);
+    IF (st = OK) AND (tokenLen <= HIGH(token)) THEN
+      token[tokenLen] := 0C
+    END;
+    RETURN st
+  END QuickSignHS256;
+
   (* ── Replay cache ────────────────────────────────── *)
 
   PROCEDURE ReplayCacheCreate(VAR rc: ReplayCache): Status;

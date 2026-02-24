@@ -1489,7 +1489,7 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
 
         // Args
         ("ARGS", "ARGCOUNT") => Some(vec![]),
-        ("ARGS", "GETARG") => Some(vec![sp("n", false, false), sp("buf", true, false)]),
+        ("ARGS", "GETARG") => Some(vec![sp("n", false, false), ("buf".to_string(), true, false, true)]),
 
         // BinaryIO
         ("BINARYIO", "OPENREAD") => Some(vec![sp("name", false, false), sp("fh", true, false)]),

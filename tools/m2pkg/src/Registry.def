@@ -43,4 +43,35 @@ PROCEDURE GetLatestVersion(name: ARRAY OF CHAR; VAR latestBuf: ARRAY OF CHAR): I
 PROCEDURE FetchRemote(url: ARRAY OF CHAR; name: ARRAY OF CHAR;
                       version: ARRAY OF CHAR; VAR pathBuf: ARRAY OF CHAR);
 
+(* Fetch the latest version of a package from a remote registry.
+   Queries <url>/api/v1/packages/<name>/latest for JSON with version + sha256.
+   Returns 0 on success, -1 on failure. *)
+PROCEDURE FetchLatest(url: ARRAY OF CHAR; name: ARRAY OF CHAR;
+                      VAR verBuf: ARRAY OF CHAR;
+                      VAR shaBuf: ARRAY OF CHAR): INTEGER;
+
+(* Publish current package to a remote HTTP registry.
+   Token is the Bearer token for authentication. *)
+PROCEDURE PublishRemote(url: ARRAY OF CHAR; token: ARRAY OF CHAR);
+
+(* Fetch list of all versions from a remote registry.
+   Writes newline-separated versions into verListBuf.
+   Returns count of versions found, 0 on failure. *)
+PROCEDURE FetchVersions(url: ARRAY OF CHAR; name: ARRAY OF CHAR;
+                        VAR verListBuf: ARRAY OF CHAR): INTEGER;
+
+(* Resolve a semver range against a remote registry.
+   Returns 0 on success, -1 on failure.
+   Sets resolvedVer and sha on success. *)
+PROCEDURE ResolveRangeRemote(url: ARRAY OF CHAR; name: ARRAY OF CHAR;
+                             rangeSpec: ARRAY OF CHAR;
+                             VAR resolvedVer: ARRAY OF CHAR;
+                             VAR sha: ARRAY OF CHAR): INTEGER;
+
+(* Search packages on a remote registry by query term. *)
+PROCEDURE SearchRemote(url: ARRAY OF CHAR; query: ARRAY OF CHAR);
+
+(* Set insecure mode (skip TLS verification). *)
+PROCEDURE SetInsecure(mode: BOOLEAN);
+
 END Registry.

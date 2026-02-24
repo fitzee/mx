@@ -23,6 +23,10 @@ PROCEDURE SetDepEntry(i: INTEGER; name: ARRAY OF CHAR; version: ARRAY OF CHAR;
                       path: ARRAY OF CHAR);
 PROCEDURE SetLockDepCount(n: INTEGER);
 
+(* URL dep support *)
+PROCEDURE SetDepURL(i: INTEGER; url: ARRAY OF CHAR);
+PROCEDURE GetDepURL(i: INTEGER; VAR buf: ARRAY OF CHAR);
+
 (* bootstrap.lock support *)
 PROCEDURE WriteBoot(path: ARRAY OF CHAR);
 PROCEDURE VerifyBoot(path: ARRAY OF CHAR);

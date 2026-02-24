@@ -10,7 +10,7 @@ BEGIN
   IF a < b THEN RETURN a ELSE RETURN b END
 END MinCap;
 
-PROCEDURE CopyBytes(src, dst: BufPtr; srcOff, dstOff, n: CARDINAL);
+PROCEDURE CopyBytes(src, dst: BBufPtr; srcOff, dstOff, n: CARDINAL);
 VAR i: CARDINAL;
 BEGIN
   i := 0;
@@ -57,7 +57,7 @@ PROCEDURE Reserve(VAR b: Buf; extra: CARDINAL): BOOLEAN;
 VAR
   needed, newCap: CARDINAL;
   p: ADDRESS;
-  newData: BufPtr;
+  newData: BBufPtr;
 BEGIN
   needed := b.len + extra;
   IF needed <= b.cap THEN RETURN TRUE END;
@@ -113,7 +113,7 @@ BEGIN
 END AppendChars;
 
 PROCEDURE AppendView(VAR b: Buf; v: BytesView);
-VAR i: CARDINAL; vp: BufPtr;
+VAR i: CARDINAL; vp: BBufPtr;
 BEGIN
   IF v.len = 0 THEN RETURN END;
   IF Reserve(b, v.len) THEN
@@ -157,7 +157,7 @@ END Truncate;
 (* ── View helpers ───────────────────────────────────── *)
 
 PROCEDURE ViewGetByte(v: BytesView; idx: CARDINAL): CARDINAL;
-VAR vp: BufPtr;
+VAR vp: BBufPtr;
 BEGIN
   IF idx >= v.len THEN RETURN 0 END;
   vp := v.base;

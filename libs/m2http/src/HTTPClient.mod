@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE HTTPClient;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE, LONGINT;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler;
 FROM Promise IMPORT Future, Promise, Value, Error,
@@ -61,6 +61,10 @@ TYPE
     headOnly   : BOOLEAN;
     chunkState : INTEGER;
     chunkRem   : INTEGER;
+    (* Request body (for PUT/POST) *)
+    reqBody    : ADDRESS;
+    reqBodyLen : INTEGER;
+    reqBodySent: INTEGER;
     (* Transport *)
     useTLS     : BOOLEAN;
     tlsCtx     : TLS.TLSContext;
@@ -69,6 +73,9 @@ TYPE
   END;
 
   ConnPtr = POINTER TO ConnRec;
+
+VAR
+  mSkipVerify: BOOLEAN;
 
 (* ── String helpers ────────────────────────────────────────────── *)
 
@@ -296,6 +303,84 @@ BEGIN
   AppendCRLF(c);
   AppendCRLF(c)
 END BuildRequest;
+
+PROCEDURE IntToStr(val: INTEGER; VAR buf: ARRAY OF CHAR);
+VAR
+  tmp: ARRAY [0..15] OF CHAR;
+  i, j, v: INTEGER;
+BEGIN
+  IF val = 0 THEN
+    buf[0] := '0'; buf[1] := 0C;
+    RETURN
+  END;
+  v := val;
+  i := 0;
+  WHILE (v > 0) AND (i < 15) DO
+    tmp[i] := CHR(ORD('0') + (v MOD 10));
+    v := v DIV 10;
+    INC(i)
+  END;
+  (* Reverse into buf *)
+  j := 0;
+  WHILE i > 0 DO
+    DEC(i);
+    IF j <= HIGH(buf) THEN
+      buf[j] := tmp[i]; INC(j)
+    END
+  END;
+  IF j <= HIGH(buf) THEN buf[j] := 0C END
+END IntToStr;
+
+PROCEDURE BuildRequestWithBody(c: ConnPtr; VAR method: ARRAY OF CHAR;
+                                VAR uri: URIRec;
+                                bodyLen: INTEGER;
+                                VAR contentType: ARRAY OF CHAR;
+                                VAR authorization: ARRAY OF CHAR);
+VAR
+  rpath: ARRAY [0..2047] OF CHAR;
+  rpLen: INTEGER;
+  ust: URI.Status;
+  clBuf: ARRAY [0..15] OF CHAR;
+BEGIN
+  c^.reqLen := 0;
+  AppendStr(c, method);
+  AppendCh(c, ' ');
+
+  ust := RequestPath(uri, rpath, rpLen);
+  IF rpLen > 0 THEN
+    AppendStr(c, rpath)
+  ELSE
+    AppendCh(c, '/')
+  END;
+
+  AppendStr(c, " HTTP/1.1");
+  AppendCRLF(c);
+  AppendStr(c, "Host: ");
+  AppendStr(c, uri.host);
+  AppendCRLF(c);
+  AppendStr(c, "Connection: close");
+  AppendCRLF(c);
+  AppendStr(c, "User-Agent: m2http/0.1");
+  AppendCRLF(c);
+  (* Content-Type *)
+  IF StrLen(contentType) > 0 THEN
+    AppendStr(c, "Content-Type: ");
+    AppendStr(c, contentType);
+    AppendCRLF(c)
+  END;
+  (* Content-Length *)
+  IntToStr(bodyLen, clBuf);
+  AppendStr(c, "Content-Length: ");
+  AppendStr(c, clBuf);
+  AppendCRLF(c);
+  (* Authorization *)
+  IF StrLen(authorization) > 0 THEN
+    AppendStr(c, "Authorization: ");
+    AppendStr(c, authorization);
+    AppendCRLF(c)
+  END;
+  AppendCRLF(c)
+END BuildRequestWithBody;
 
 (* ── Response parsing ──────────────────────────────────────────── *)
 
@@ -608,7 +693,7 @@ BEGIN
         sst := Stream.CreateTCP(c^.loop, c^.sched, fd, c^.stream);
         c^.state := StSending;
         est := EventLoop.ModifyFd(c^.loop, fd, EvWrite);
-        (* Send first chunk immediately *)
+        (* Send first chunk of headers immediately *)
         n := DoSend(c, ADR(c^.request[c^.reqSent]),
                      c^.reqLen - c^.reqSent);
         IF n > 0 THEN
@@ -619,7 +704,23 @@ BEGIN
           FailConn(c, 2);
           RETURN
         END;
-        IF c^.reqSent >= c^.reqLen THEN
+        (* Try sending body if headers done *)
+        IF (c^.reqSent >= c^.reqLen) AND
+           (c^.reqBodyLen > 0) AND (c^.reqBodySent < c^.reqBodyLen) THEN
+          n := DoSend(c,
+                 VAL(ADDRESS, VAL(LONGINT, c^.reqBody) + VAL(LONGINT, c^.reqBodySent)),
+                 c^.reqBodyLen - c^.reqBodySent);
+          IF n > 0 THEN
+            c^.reqBodySent := c^.reqBodySent + n
+          ELSIF n = -2 THEN
+            RETURN
+          ELSIF n < 0 THEN
+            FailConn(c, 2);
+            RETURN
+          END
+        END;
+        IF (c^.reqSent >= c^.reqLen) AND
+           (c^.reqBodySent >= c^.reqBodyLen) THEN
           c^.state := StRecvStatus;
           est := EventLoop.ModifyFd(c^.loop, fd, EvRead)
         END
@@ -629,17 +730,36 @@ BEGIN
       DoTLSHandshake(c) |
 
     StSending:
-      n := DoSend(c, ADR(c^.request[c^.reqSent]),
-                   c^.reqLen - c^.reqSent);
-      IF n > 0 THEN
-        c^.reqSent := c^.reqSent + n
-      ELSIF n = -2 THEN
-        RETURN
-      ELSIF n < 0 THEN
-        FailConn(c, 2);
-        RETURN
+      IF c^.reqSent < c^.reqLen THEN
+        (* Still sending headers *)
+        n := DoSend(c, ADR(c^.request[c^.reqSent]),
+                     c^.reqLen - c^.reqSent);
+        IF n > 0 THEN
+          c^.reqSent := c^.reqSent + n
+        ELSIF n = -2 THEN
+          RETURN
+        ELSIF n < 0 THEN
+          FailConn(c, 2);
+          RETURN
+        END
       END;
-      IF c^.reqSent >= c^.reqLen THEN
+      IF (c^.reqSent >= c^.reqLen) AND
+         (c^.reqBodyLen > 0) AND (c^.reqBodySent < c^.reqBodyLen) THEN
+        (* Send body bytes *)
+        n := DoSend(c,
+               VAL(ADDRESS, VAL(LONGINT, c^.reqBody) + VAL(LONGINT, c^.reqBodySent)),
+               c^.reqBodyLen - c^.reqBodySent);
+        IF n > 0 THEN
+          c^.reqBodySent := c^.reqBodySent + n
+        ELSIF n = -2 THEN
+          RETURN
+        ELSIF n < 0 THEN
+          FailConn(c, 2);
+          RETURN
+        END
+      END;
+      IF (c^.reqSent >= c^.reqLen) AND
+         (c^.reqBodySent >= c^.reqBodyLen) THEN
         c^.state := StRecvStatus;
         est := EventLoop.ModifyFd(c^.loop, fd, EvRead)
       END |
@@ -765,6 +885,9 @@ BEGIN
   c^.chunkState := ChSize;
   c^.chunkRem := 0;
   c^.reqSent := 0;
+  c^.reqBody := NIL;
+  c^.reqBodyLen := 0;
+  c^.reqBodySent := 0;
   c^.sock := InvalidSocket;
   c^.recvBuf := NIL;
   c^.resp := NIL;
@@ -820,7 +943,11 @@ BEGIN
       FailConn(c, 6);
       RETURN TLSFailed
     END;
-    tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.VerifyPeer);
+    IF mSkipVerify THEN
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.NoVerify)
+    ELSE
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.VerifyPeer)
+    END;
     tst := TLS.SetMinVersion(c^.tlsCtx, TLS.TLS12);
     tst := TLS.LoadSystemRoots(c^.tlsCtx);
     IF tst # TLS.OK THEN
@@ -888,6 +1015,180 @@ BEGIN
   RETURN DoRequest(lp, sched, uri, method, TRUE, outFuture)
 END Head;
 
+(* ── Request with body (PUT/POST) ─────────────────────────────── *)
+
+PROCEDURE DoRequestWithBody(lp: EventLoop.Loop; sched: Scheduler;
+                            VAR uri: URIRec;
+                            VAR method: ARRAY OF CHAR;
+                            bodyData: ADDRESS; bodyLen: INTEGER;
+                            VAR contentType: ARRAY OF CHAR;
+                            VAR authorization: ARRAY OF CHAR;
+                            VAR outFuture: Future): Status;
+VAR
+  c: ConnPtr;
+  dnsFuture: Future;
+  dnsSettled: BOOLEAN;
+  dnsResult: Result;
+  ap: AddrPtr;
+  pst: Promise.Status;
+  dst: DNS.Status;
+  sst: Sockets.Status;
+  bst: Buffers.Status;
+  est: EventLoop.Status;
+  tst: TLS.Status;
+  crc: INTEGER;
+  wantTLS: BOOLEAN;
+BEGIN
+  IF (lp = NIL) OR (sched = NIL) THEN RETURN Invalid END;
+
+  wantTLS := IsHTTPS(uri);
+
+  (* 1. Resolve DNS *)
+  dst := DNS.ResolveA(lp, sched, uri.host, uri.port, dnsFuture);
+  IF dst # DNS.OK THEN RETURN DNSFailed END;
+  pst := GetResultIfSettled(dnsFuture, dnsSettled, dnsResult);
+  IF (NOT dnsSettled) OR (NOT dnsResult.isOk) THEN
+    RETURN DNSFailed
+  END;
+  ap := dnsResult.v.ptr;
+
+  (* 2. Allocate connection context *)
+  ALLOCATE(c, TSIZE(ConnRec));
+  IF c = NIL THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    RETURN OutOfMemory
+  END;
+  c^.state := StConnecting;
+  c^.loop := lp;
+  c^.sched := sched;
+  c^.headOnly := FALSE;
+  c^.contentLen := -1;
+  c^.bodyRead := 0;
+  c^.chunked := FALSE;
+  c^.chunkState := ChSize;
+  c^.chunkRem := 0;
+  c^.reqSent := 0;
+  c^.reqBody := bodyData;
+  c^.reqBodyLen := bodyLen;
+  c^.reqBodySent := 0;
+  c^.sock := InvalidSocket;
+  c^.recvBuf := NIL;
+  c^.resp := NIL;
+  c^.useTLS := wantTLS;
+  c^.tlsCtx := NIL;
+  c^.tlsSess := NIL;
+  c^.stream := NIL;
+
+  (* 3. Create promise *)
+  pst := PromiseCreate(sched, c^.promise, outFuture);
+  IF pst # Promise.OK THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+
+  (* 4. Create response *)
+  ALLOCATE(c^.resp, TSIZE(Response));
+  IF c^.resp = NIL THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+  c^.resp^.statusCode := 0;
+  c^.resp^.headerCount := 0;
+  c^.resp^.body := NIL;
+  c^.resp^.contentLength := -1;
+
+  (* 5. Create receive buffer *)
+  bst := Buffers.Create(RecvBufCap, Buffers.Growable, c^.recvBuf);
+  IF bst # Buffers.OK THEN
+    DEALLOCATE(c^.resp, TSIZE(Response));
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+
+  (* 6. Build request with body headers *)
+  BuildRequestWithBody(c, method, uri, bodyLen,
+                       contentType, authorization);
+
+  (* 7. Create socket *)
+  sst := SocketCreate(AF_INET, SOCK_STREAM, c^.sock);
+  IF sst # Sockets.OK THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+  sst := SetNonBlocking(c^.sock, TRUE);
+
+  (* 8. Set up TLS if needed *)
+  IF wantTLS THEN
+    tst := TLS.ContextCreate(c^.tlsCtx);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    IF mSkipVerify THEN
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.NoVerify)
+    ELSE
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.VerifyPeer)
+    END;
+    tst := TLS.SetMinVersion(c^.tlsCtx, TLS.TLS12);
+    tst := TLS.LoadSystemRoots(c^.tlsCtx);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    tst := TLS.SessionCreate(lp, sched, c^.tlsCtx, c^.sock,
+                              c^.tlsSess);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    tst := TLS.SetSNI(c^.tlsSess, uri.host)
+  END;
+
+  (* 9. Connect *)
+  crc := m2_connect_ipv4(c^.sock,
+                          ORD(ap^.addrV4[0]),
+                          ORD(ap^.addrV4[1]),
+                          ORD(ap^.addrV4[2]),
+                          ORD(ap^.addrV4[3]),
+                          uri.port);
+  DEALLOCATE(ap, TSIZE(AddrRec));
+
+  IF crc < 0 THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+
+  IF (crc = 0) AND (NOT wantTLS) THEN
+    c^.state := StSending;
+    est := EventLoop.WatchFd(lp, c^.sock, EvWrite, OnSocketEvent, c)
+  ELSE
+    est := EventLoop.WatchFd(lp, c^.sock, EvWrite, OnSocketEvent, c)
+  END;
+
+  IF est # EventLoop.OK THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+
+  RETURN OK
+END DoRequestWithBody;
+
+PROCEDURE Put(lp: EventLoop.Loop; sched: Scheduler;
+              VAR uri: URIRec;
+              bodyData: ADDRESS; bodyLen: INTEGER;
+              VAR contentType: ARRAY OF CHAR;
+              VAR authorization: ARRAY OF CHAR;
+              VAR outFuture: Future): Status;
+VAR method: ARRAY [0..3] OF CHAR;
+BEGIN
+  method[0] := 'P'; method[1] := 'U'; method[2] := 'T'; method[3] := 0C;
+  RETURN DoRequestWithBody(lp, sched, uri, method, bodyData, bodyLen,
+                           contentType, authorization, outFuture)
+END Put;
+
 (* ── Response helpers ──────────────────────────────────────────── *)
 
 PROCEDURE FindHeader(resp: ResponsePtr;
@@ -926,4 +1227,11 @@ BEGIN
   resp := NIL
 END FreeResponse;
 
+PROCEDURE SetSkipVerify(skip: BOOLEAN);
+BEGIN
+  mSkipVerify := skip
+END SetSkipVerify;
+
+BEGIN
+  mSkipVerify := FALSE
 END HTTPClient.

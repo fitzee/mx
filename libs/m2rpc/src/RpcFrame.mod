@@ -1,7 +1,7 @@
 IMPLEMENTATION MODULE RpcFrame;
 
 FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
-FROM ByteBuf IMPORT Buf, BytesView, BufPtr, Init, Free, Clear,
+FROM ByteBuf IMPORT Buf, BytesView, BBufPtr, Init, Free, Clear,
                      AppendByte, AppendChars, AppendView,
                      Reserve, AsView;
 
@@ -198,7 +198,7 @@ VAR
   hdr: ARRAY [0..3] OF CHAR;
   view: BytesView;
   pos, sent, ts: CARDINAL;
-  bp: BufPtr;
+  bp: BBufPtr;
 BEGIN
   ok := FALSE;
 

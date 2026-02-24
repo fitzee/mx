@@ -141,6 +141,22 @@ DEFINITION MODULE Auth;
                        VAR token: ARRAY OF CHAR;
                        VAR tokenLen: CARDINAL): Status;
 
+  (* ── Hex key helpers ────────────────────────────── *)
+
+  (* Decode a 64-char hex string into a 32-byte SymKey.
+     Returns OK on success, Invalid if hex is malformed. *)
+  PROCEDURE DecodeHexKey(VAR hex: ARRAY OF CHAR;
+                          VAR key: SymKey): Status;
+
+  (* One-shot: decode hex secret, sign a short-lived JWT HS256 token.
+     sub = subject claim, ttl = seconds until expiry.
+     On OK, token and tokenLen are populated. *)
+  PROCEDURE QuickSignHS256(VAR hexSecret: ARRAY OF CHAR;
+                            sub: ARRAY OF CHAR;
+                            ttl: CARDINAL;
+                            VAR token: ARRAY OF CHAR;
+                            VAR tokenLen: CARDINAL): Status;
+
   (* ── Replay cache ────────────────────────────────── *)
 
   PROCEDURE ReplayCacheCreate(VAR rc: ReplayCache): Status;

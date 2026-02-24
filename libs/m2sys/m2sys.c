@@ -395,15 +395,6 @@ int32_t m2sys_exec_output(void *cmdline, void *outBuf, int32_t outSize) {
 #endif
 }
 
-/* ── HTTP (shells out to curl) ─────────────────────────────────── */
-
-int32_t m2sys_http_get(void *url, void *destPath) {
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "curl -fsSL -o \"%s\" \"%s\"",
-             (const char *)destPath, (const char *)url);
-    return m2sys_exec(cmd);
-}
-
 /* ── Tar (shells out to tar) ───────────────────────────────────── */
 
 int32_t m2sys_tar_create(void *archivePath, void *baseDir) {
@@ -455,4 +446,12 @@ int32_t m2sys_rmdir_r(void *path) {
     char cmd[1100];
     snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", (const char *)path);
     return m2sys_exec(cmd);
+}
+
+/* ── Time ────────────────────────────────────────────────────────── */
+
+#include <time.h>
+
+int64_t m2sys_unix_time(void) {
+    return (int64_t)time(NULL);
 }

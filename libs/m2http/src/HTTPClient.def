@@ -60,6 +60,18 @@ DEFINITION MODULE HTTPClient;
                  VAR uri: URIRec;
                  VAR outFuture: Future): Status;
 
+  (* Issue an HTTP PUT request with a body.
+     bodyData/bodyLen: raw payload to upload.
+     contentType: e.g. "application/octet-stream".
+     authorization: e.g. "Bearer <token>", or empty string.
+     Future resolves with Value.ptr -> heap ResponsePtr. *)
+  PROCEDURE Put(lp: Loop; sched: Scheduler;
+                VAR uri: URIRec;
+                bodyData: ADDRESS; bodyLen: INTEGER;
+                VAR contentType: ARRAY OF CHAR;
+                VAR authorization: ARRAY OF CHAR;
+                VAR outFuture: Future): Status;
+
   (* ── Response helpers ──────────────────────────────────── *)
 
   (* Case-insensitive header lookup.
@@ -70,5 +82,9 @@ DEFINITION MODULE HTTPClient;
 
   (* Free a Response and its body buffer. *)
   PROCEDURE FreeResponse(VAR resp: ResponsePtr);
+
+  (* Control TLS peer verification globally.
+     Set skip=TRUE to accept self-signed certificates. *)
+  PROCEDURE SetSkipVerify(skip: BOOLEAN);
 
 END HTTPClient.

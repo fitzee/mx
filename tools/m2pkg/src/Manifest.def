@@ -42,4 +42,8 @@ PROCEDURE IsFeatureEnabled(name: ARRAY OF CHAR): INTEGER;
 PROCEDURE GetRegistryURL(VAR buf: ARRAY OF CHAR);
 PROCEDURE SetRegistryURL(url: ARRAY OF CHAR);
 
+(* URL dependency accessors *)
+PROCEDURE IsDepURL(i: INTEGER): INTEGER;
+PROCEDURE GetDepURL(i: INTEGER; VAR buf: ARRAY OF CHAR);
+
 END Manifest.

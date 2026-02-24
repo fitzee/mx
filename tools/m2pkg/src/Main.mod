@@ -4,18 +4,19 @@ FROM InOut IMPORT WriteString, WriteLn, WriteInt;
 FROM Strings IMPORT Assign, Length, CompareStr, Concat;
 FROM Args IMPORT ArgCount, GetArg;
 FROM SYSTEM IMPORT ADR;
-FROM Sys IMPORT m2sys_file_exists, m2sys_exit, m2sys_is_dir, m2sys_rmdir_r;
+FROM Sys IMPORT m2sys_file_exists, m2sys_exit, m2sys_is_dir, m2sys_rmdir_r,
+               m2sys_getenv;
 FROM Manifest IMPORT Read, Clear, WriteTemplate, GetName, GetVersion,
                      IsM2Plus, GetEntry, DepCount, GetDepName, GetDepPath,
                      IsDepLocal, GetManifestVersion, GetEdition,
                      GetCCFlags, GetLDFlags, CCLibCount, GetCCLib,
                      CCFrameworkCount, GetCCFramework,
                      FeatureCount, GetFeatureName, GetFeatureDefault,
-                     IsFeatureEnabled, SetRegistryURL;
+                     IsFeatureEnabled, SetRegistryURL, GetRegistryURL;
 FROM Builder IMPORT Build, BuildAndRun;
 FROM Resolver IMPORT Resolve;
 FROM Lockfile IMPORT Exists, WriteBoot, VerifyBoot;
-FROM Registry IMPORT Publish;
+FROM Registry IMPORT Publish, PublishRemote, SearchRemote, SetInsecure;
 
 VAR
   argc: CARDINAL;
@@ -43,7 +44,8 @@ BEGIN
   WriteString("  build      Build the package"); WriteLn;
   WriteString("  run        Build and run the package"); WriteLn;
   WriteString("  resolve    Generate m2.lock from dependencies"); WriteLn;
-  WriteString("  publish    Publish package to local registry"); WriteLn;
+  WriteString("  publish    Publish package to registry"); WriteLn;
+  WriteString("  search     Search remote registry for packages"); WriteLn;
   WriteString("  fetch      Fetch registry dependencies to cache"); WriteLn;
   WriteString("  lock       Generate bootstrap.lock with hashes"); WriteLn;
   WriteString("  verify     Verify bootstrap.lock hashes"); WriteLn;
@@ -245,6 +247,70 @@ BEGIN
   END
 END DoClean;
 
+PROCEDURE DoPublish;
+VAR
+  regUrl: ARRAY [0..511] OF CHAR;
+  token: ARRAY [0..511] OF CHAR;
+  envBuf: ARRAY [0..15] OF CHAR;
+BEGIN
+  (* Check M2PKG_INSECURE env var *)
+  m2sys_getenv(ADR("M2PKG_INSECURE"), ADR(envBuf), 16);
+  IF (envBuf[0] = '1') OR (envBuf[0] = 't') THEN
+    SetInsecure(TRUE)
+  END;
+
+  GetRegistryURL(regUrl);
+  IF Length(regUrl) > 0 THEN
+    (* Remote publish *)
+    m2sys_getenv(ADR("M2PKG_TOKEN"), ADR(token), 512);
+    PublishRemote(regUrl, token)
+  ELSE
+    (* Local publish *)
+    Publish
+  END
+END DoPublish;
+
+PROCEDURE DoSearch;
+VAR
+  regUrl: ARRAY [0..511] OF CHAR;
+  searchTerm: ARRAY [0..127] OF CHAR;
+  envBuf: ARRAY [0..15] OF CHAR;
+  j2: INTEGER;
+BEGIN
+  (* Get search term — first non-flag arg after "search" *)
+  searchTerm[0] := 0C;
+  j2 := 2;
+  WHILE j2 < VAL(INTEGER, argc) DO
+    GetArg(j2, arg);
+    IF CompareStr(arg, "--registry") = 0 THEN
+      INC(j2) (* skip next arg — registry URL *)
+    ELSIF arg[0] # '-' THEN
+      Assign(arg, searchTerm)
+    END;
+    INC(j2)
+  END;
+
+  IF Length(searchTerm) = 0 THEN
+    WriteString("m2pkg: search requires a query term"); WriteLn;
+    WriteString("Usage: m2pkg search <term> [--registry <url>]"); WriteLn;
+    m2sys_exit(1)
+  END;
+
+  (* Check M2PKG_INSECURE env var *)
+  m2sys_getenv(ADR("M2PKG_INSECURE"), ADR(envBuf), 16);
+  IF (envBuf[0] = '1') OR (envBuf[0] = 't') THEN
+    SetInsecure(TRUE)
+  END;
+
+  GetRegistryURL(regUrl);
+  IF Length(regUrl) = 0 THEN
+    WriteString("m2pkg: no registry URL — use --registry <url> or set [registry] url in m2.toml"); WriteLn;
+    m2sys_exit(1)
+  END;
+
+  SearchRemote(regUrl, searchTerm)
+END DoSearch;
+
 BEGIN
   argc := ArgCount();
   IF argc < 2 THEN
@@ -302,7 +368,20 @@ BEGIN
   ELSIF CompareStr(cmd, "publish") = 0 THEN
     TRY
       Read("m2.toml");
-      Publish
+      ParseRegistryArg;
+      DoPublish
+    EXCEPT
+      m2sys_exit(1)
+    END
+
+  ELSIF CompareStr(cmd, "search") = 0 THEN
+    TRY
+      Assign("m2.toml", arg);
+      IF m2sys_file_exists(ADR(arg)) = 1 THEN
+        Read("m2.toml")
+      END;
+      ParseRegistryArg;
+      DoSearch
     EXCEPT
       m2sys_exit(1)
     END

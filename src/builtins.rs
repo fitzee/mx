@@ -15,6 +15,8 @@ pub fn is_builtin_proc(name: &str) -> bool {
             | "HIGH"
             | "INC"
             | "INCL"
+            | "LONG"
+            | "SHORT"
             | "MAX"
             | "MIN"
             | "ODD"
@@ -58,6 +60,8 @@ pub fn builtin_return_type(name: &str) -> TypeId {
         "ORD" => TY_CARDINAL,
         "SIZE" => TY_CARDINAL,
         "TRUNC" => TY_INTEGER,
+        "LONG" => TY_LONGINT,
+        "SHORT" => TY_INTEGER,
         "VAL" => TY_INTEGER,   // actually depends on first arg, simplified
         "RE" => TY_REAL,
         "IM" => TY_REAL,
@@ -154,6 +158,8 @@ pub fn register_builtin_procs(symtab: &mut SymbolTable, _types: &TypeRegistry, s
         ("ORD", vec![param("x", TY_CHAR, false)], Some(TY_CARDINAL)),
         ("SIZE", vec![param("T", TY_INTEGER, false)], Some(TY_CARDINAL)),
         ("TRUNC", vec![param("r", TY_REAL, false)], Some(TY_INTEGER)),
+        ("LONG", vec![param("x", TY_INTEGER, false)], Some(TY_LONGINT)),
+        ("SHORT", vec![param("x", TY_LONGINT, false)], Some(TY_INTEGER)),
         ("VAL", vec![param("T", TY_INTEGER, false), param("x", TY_INTEGER, false)], Some(TY_INTEGER)),
         ("NEW", vec![param("p", TY_ADDRESS, true)], None),
         ("DISPOSE", vec![param("p", TY_ADDRESS, true)], None),
@@ -236,6 +242,8 @@ pub fn codegen_builtin(name: &str, args: &[String]) -> String {
             }
         }
         "INCL" => format!("({} |= (1u << ({})))", args[0], args[1]),
+        "LONG" => format!("((int64_t)({}))", args[0]),
+        "SHORT" => format!("((int32_t)({}))", args[0]),
         "MAX" => format!("m2_max({})", args[0]),
         "MIN" => format!("m2_min({})", args[0]),
         "ODD" => format!("(({}) & 1)", args[0]),

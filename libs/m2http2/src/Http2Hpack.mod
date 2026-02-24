@@ -3,7 +3,8 @@ IMPLEMENTATION MODULE Http2Hpack;
 FROM Http2Types IMPORT HeaderEntry, HeaderName, HeaderValue,
                        HpackStaticTableSize, HpackMaxDynEntries,
                        HpackMaxNameLen, HpackMaxValueLen;
-FROM ByteBuf IMPORT BytesView, Buf, AppendByte, ViewGetByte;
+IMPORT ByteBuf;
+FROM ByteBuf IMPORT BytesView, Buf;
 
 (* ── Static table (RFC 7541 Appendix A) ────────────────── *)
 
@@ -143,15 +144,15 @@ VAR maxP, v: CARDINAL;
 BEGIN
   maxP := PrefixMax(prefixBits);
   IF value < maxP THEN
-    AppendByte(b, mask + value)
+    ByteBuf.AppendByte(b, mask + value)
   ELSE
-    AppendByte(b, mask + maxP);
+    ByteBuf.AppendByte(b, mask + maxP);
     v := value - maxP;
     WHILE v >= 128 DO
-      AppendByte(b, (v MOD 128) + 128);
+      ByteBuf.AppendByte(b, (v MOD 128) + 128);
       v := v DIV 128
     END;
-    AppendByte(b, v)
+    ByteBuf.AppendByte(b, v)
   END
 END EncodeInt;
 
@@ -174,7 +175,7 @@ BEGIN
       ok := FALSE;
       RETURN 0
     END;
-    byt := ViewGetByte(v, pos);
+    byt := ByteBuf.ViewGetByte(v, pos);
     INC(pos);
     result := result + (byt MOD 128) * mult;
     IF byt < 128 THEN
@@ -380,7 +381,7 @@ VAR i: CARDINAL;
 BEGIN
   i := 0;
   WHILE i < n DO
-    a[i] := CHR(ViewGetByte(v, start + i));
+    a[i] := CHR(ByteBuf.ViewGetByte(v, start + i));
     INC(i)
   END
 END CopyViewToArr;
@@ -748,7 +749,7 @@ BEGIN
   endIdx := start + encLen;
 
   WHILE (bIdx < endIdx) AND ok DO
-    byt := ViewGetByte(v, bIdx);
+    byt := ByteBuf.ViewGetByte(v, bIdx);
     INC(bIdx);
 
     IF node = 0 THEN
@@ -809,7 +810,7 @@ PROCEDURE ReadLiteralString(v: BytesView; VAR pos: CARDINAL;
 VAR byt, encLen: CARDINAL; isHuffman: BOOLEAN;
 BEGIN
   IF pos >= v.len THEN ok := FALSE; RETURN END;
-  byt := ViewGetByte(v, pos);
+  byt := ByteBuf.ViewGetByte(v, pos);
   INC(pos);
   isHuffman := byt >= 128;
   encLen := DecodeInt(byt MOD 128, 7, v, pos, ok);
@@ -840,7 +841,7 @@ BEGIN
   pos := 0;
 
   WHILE (pos < v.len) AND ok AND (numHeaders < maxOut) DO
-    byt := ViewGetByte(v, pos);
+    byt := ByteBuf.ViewGetByte(v, pos);
     INC(pos);
 
     IF byt >= 128 THEN
@@ -941,7 +942,7 @@ BEGIN
         EncodeInt(b, headers[i].nameLen, 7, 0);
         j := 0;
         WHILE j < headers[i].nameLen DO
-          AppendByte(b, ORD(headers[i].name[j]));
+          ByteBuf.AppendByte(b, ORD(headers[i].name[j]));
           INC(j)
         END
       END;
@@ -949,7 +950,7 @@ BEGIN
       EncodeInt(b, headers[i].valLen, 7, 0);
       j := 0;
       WHILE j < headers[i].valLen DO
-        AppendByte(b, ORD(headers[i].value[j]));
+        ByteBuf.AppendByte(b, ORD(headers[i].value[j]));
         INC(j)
       END;
       DynInsert(dt, headers[i].name, headers[i].nameLen,

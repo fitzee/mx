@@ -18,6 +18,7 @@ VAR
   lDepSources: ARRAY [0..MaxLockDeps-1] OF ARRAY [0..15] OF CHAR;
   lDepShas: ARRAY [0..MaxLockDeps-1] OF ARRAY [0..64] OF CHAR;
   lDepPaths: ARRAY [0..MaxLockDeps-1] OF ARRAY [0..511] OF CHAR;
+  lDepURLs: ARRAY [0..MaxLockDeps-1] OF ARRAY [0..511] OF CHAR;
   lDepCount: INTEGER;
   tmp: ARRAY [0..1023] OF CHAR;
 
@@ -69,7 +70,8 @@ BEGIN
             lDepVersions[curDep][0] := 0C;
             lDepSources[curDep][0] := 0C;
             lDepShas[curDep][0] := 0C;
-            lDepPaths[curDep][0] := 0C
+            lDepPaths[curDep][0] := 0C;
+            lDepURLs[curDep][0] := 0C
           END
         ELSIF Pos("package", line) < Length(line) THEN
           Assign("pkg", section);
@@ -101,6 +103,8 @@ BEGIN
               Assign(value, lDepShas[curDep])
             ELSIF CompareStr(key, "path") = 0 THEN
               Assign(value, lDepPaths[curDep])
+            ELSIF CompareStr(key, "url") = 0 THEN
+              Assign(value, lDepURLs[curDep])
             END
           END
         END
@@ -233,6 +237,12 @@ BEGIN
           WrLine(fh, ln)
         END;
 
+        IF Length(lDepURLs[i]) > 0 THEN
+          Assign("url=", ln);
+          Concat(ln, lDepURLs[i], t); Assign(t, ln);
+          WrLine(fh, ln)
+        END;
+
         INC(i)
       END
     END
@@ -308,6 +318,22 @@ BEGIN
     lDepCount := n
   END
 END SetLockDepCount;
+
+PROCEDURE SetDepURL(i: INTEGER; url: ARRAY OF CHAR);
+BEGIN
+  IF (i >= 0) AND (i < MaxLockDeps) THEN
+    Assign(url, lDepURLs[i])
+  END
+END SetDepURL;
+
+PROCEDURE GetDepURL(i: INTEGER; VAR buf: ARRAY OF CHAR);
+BEGIN
+  IF (i >= 0) AND (i < lDepCount) THEN
+    Assign(lDepURLs[i], buf)
+  ELSE
+    buf[0] := 0C
+  END
+END GetDepURL;
 
 (* --- bootstrap.lock support --- *)
 

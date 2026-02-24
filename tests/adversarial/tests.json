@@ -410,5 +410,65 @@
     "expected_stdout": "proc type open array OK\nhigh propagated correctly\nall proc type open array OK\n",
     "tags": ["ci"],
     "_comment": "Tests procedure type typedefs with open array params include _high in the C typedef."
+  },
+  {
+    "name": "args_getarg_high_test",
+    "category": "resolution",
+    "dir": "programs/resolution",
+    "main": "args_getarg_high_test.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout_contains": ["args_getarg_high OK"],
+    "tags": ["ci"],
+    "_comment": "Tests Args.GetArg emits _high param for open-array buffer argument."
+  },
+  {
+    "name": "try_except_basic",
+    "category": "runtime",
+    "dir": "programs/runtime/try_except_basic",
+    "main": "TryExceptBasic.mod",
+    "include_dirs": ["."],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "raise\ncaught-alpha\ncaught-all\nno-raise\ncount=3\n",
+    "tags": ["ci"],
+    "_comment": "TRY/EXCEPT: named handler, catch-all, no-exception path, body runs once."
+  },
+  {
+    "name": "try_except_nested",
+    "category": "runtime",
+    "dir": "programs/runtime/try_except_nested",
+    "main": "TryExceptNested.mod",
+    "include_dirs": ["."],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "outer-body\ninner-body\ninner-caught\nouter-continues\nouter-caught\ntry-body\nfinally-normal\nfinally-exc\nouter-after-finally\ndone\n",
+    "tags": ["ci"],
+    "_comment": "Nested TRY/EXCEPT: inner catches own, unhandled propagates to outer, FINALLY always runs."
+  },
+  {
+    "name": "pointer_array_field_collision",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/pointer_array_field_collision",
+    "main": "PtrArrayMain.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "sum=36\nbyte0=65\nbyte2=67\nok\n",
+    "tags": ["ci"],
+    "_comment": "Regression: array field and pointer field with same name in different records must not collide."
+  },
+  {
+    "name": "val_longint_cast",
+    "category": "resolution",
+    "dir": "programs/resolution/val_longint_cast",
+    "main": "ValLongint.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "cardinal-ok\ninteger-ok\n142\n",
+    "tags": ["ci"],
+    "_comment": "Regression: LONG() and VAL(LONGINT,x) must emit proper C cast, not bare LONG()."
   }
 ]

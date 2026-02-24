@@ -43,6 +43,9 @@ VAR
   mFeatureCount: INTEGER;
   (* [registry] section *)
   mRegistryURL: ARRAY [0..511] OF CHAR;
+  (* URL deps *)
+  mDepURLs: ARRAY [0..MaxDeps-1] OF ARRAY [0..511] OF CHAR;
+  mDepIsURL: ARRAY [0..MaxDeps-1] OF INTEGER;
 
 PROCEDURE Clear;
 VAR i: INTEGER;
@@ -60,7 +63,9 @@ BEGIN
   FOR i := 0 TO MaxDeps - 1 DO
     mDepNames[i][0] := 0C;
     mDepPaths[i][0] := 0C;
-    mDepLocal[i] := 0
+    mDepLocal[i] := 0;
+    mDepURLs[i][0] := 0C;
+    mDepIsURL[i] := 0
   END;
   FOR i := 0 TO MaxExtra - 1 DO
     mExtraC[i][0] := 0C
@@ -183,6 +188,23 @@ BEGIN
         Copy(value, 5, Length(value) - 5, pval);
         Assign(pval, mDepPaths[mDepCount]);
         mDepLocal[mDepCount] := 1
+      ELSIF (Length(value) > 4) AND (value[0] = 'h') AND (value[1] = 't')
+            AND (value[2] = 't') AND (value[3] = 'p') THEN
+        (* URL dep: value is https://host:port or https://host:port#version *)
+        mDepIsURL[mDepCount] := 1;
+        mDepLocal[mDepCount] := 0;
+        IF Pos("#", value) < Length(value) THEN
+          (* Split at # into URL and version *)
+          vlen := Pos("#", value);
+          Copy(value, 0, vlen, pval);
+          Assign(pval, mDepURLs[mDepCount]);
+          Copy(value, vlen + 1, Length(value) - vlen - 1, pval);
+          Assign(pval, mDepPaths[mDepCount])
+        ELSE
+          (* URL only, no pinned version *)
+          Assign(value, mDepURLs[mDepCount]);
+          mDepPaths[mDepCount][0] := 0C
+        END
       ELSE
         Assign(value, mDepPaths[mDepCount]);
         mDepLocal[mDepCount] := 0
@@ -483,5 +505,23 @@ BEGIN Assign(mRegistryURL, buf) END GetRegistryURL;
 
 PROCEDURE SetRegistryURL(url: ARRAY OF CHAR);
 BEGIN Assign(url, mRegistryURL) END SetRegistryURL;
+
+PROCEDURE IsDepURL(i: INTEGER): INTEGER;
+BEGIN
+  IF (i >= 0) AND (i < mDepCount) THEN
+    RETURN mDepIsURL[i]
+  ELSE
+    RETURN 0
+  END
+END IsDepURL;
+
+PROCEDURE GetDepURL(i: INTEGER; VAR buf: ARRAY OF CHAR);
+BEGIN
+  IF (i >= 0) AND (i < mDepCount) THEN
+    Assign(mDepURLs[i], buf)
+  ELSE
+    buf[0] := 0C
+  END
+END GetDepURL;
 
 END Manifest.

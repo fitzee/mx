@@ -6,6 +6,8 @@ PROCEDURE m2sys_fopen(path: ADDRESS; mode: ADDRESS): INTEGER;
 PROCEDURE m2sys_fclose(handle: INTEGER): INTEGER;
 PROCEDURE m2sys_fread_line(handle: INTEGER; buf: ADDRESS; bufSize: INTEGER): INTEGER;
 PROCEDURE m2sys_fwrite_str(handle: INTEGER; data: ADDRESS): INTEGER;
+PROCEDURE m2sys_fwrite_bytes(handle: INTEGER; data: ADDRESS; len: INTEGER): INTEGER;
+PROCEDURE m2sys_fread_bytes(handle: INTEGER; buf: ADDRESS; maxLen: INTEGER): INTEGER;
 
 (* File system queries *)
 PROCEDURE m2sys_file_exists(path: ADDRESS): INTEGER;
@@ -46,9 +48,6 @@ PROCEDURE m2sys_dirname(path: ADDRESS; outBuf: ADDRESS; outSize: INTEGER);
 (* Process execution (captures stdout) *)
 PROCEDURE m2sys_exec_output(cmdline: ADDRESS; outBuf: ADDRESS; outSize: INTEGER): INTEGER;
 
-(* HTTP *)
-PROCEDURE m2sys_http_get(url: ADDRESS; destPath: ADDRESS): INTEGER;
-
 (* Tar *)
 PROCEDURE m2sys_tar_create(archivePath: ADDRESS; baseDir: ADDRESS): INTEGER;
 PROCEDURE m2sys_tar_create_ex(archivePath: ADDRESS; baseDir: ADDRESS; excludePattern: ADDRESS): INTEGER;
@@ -60,5 +59,8 @@ PROCEDURE m2sys_funlock(handle: INTEGER): INTEGER;
 
 (* Remove directory recursively *)
 PROCEDURE m2sys_rmdir_r(path: ADDRESS): INTEGER;
+
+(* Time — returns Unix timestamp in seconds *)
+PROCEDURE m2sys_unix_time(): LONGINT;
 
 END Sys.

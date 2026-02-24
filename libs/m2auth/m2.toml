@@ -25,4 +25,4 @@ entry=tests/auth_tests.mod
 extra-c=src/auth_bridge.c
 cflags=-I/opt/homebrew/opt/openssl@3/include
 ldflags=-L/opt/homebrew/opt/openssl@3/lib
-libs=ssl crypto
+libs=-lssl -lcrypto
