@@ -116,6 +116,14 @@ pub struct CodeGen {
     /// Maps record field names → proc param info for fields with procedure types.
     /// Used as fallback for calls through complex designators (e.g. rec.field(args)).
     field_proc_params: HashMap<String, Vec<ParamCodegenInfo>>,
+    /// Monotonically increasing type ID counter for M2_TypeDesc emission
+    type_id_counter: usize,
+    /// Pending type descriptors to emit: (c_symbol_name, display_name, Option<parent_c_symbol>)
+    type_descs: Vec<(String, String, Option<String>, usize)>,
+    /// Maps M2 type name (mangled) → M2_TypeDesc C symbol name (for REF types)
+    ref_type_descs: HashMap<String, String>,
+    /// Maps M2 type name (mangled) → M2_TypeDesc C symbol name (for OBJECT types)
+    object_type_descs: HashMap<String, String>,
     /// Emit #line directives mapping generated C back to Modula-2 source (for -g debug builds)
     emit_debug_lines: bool,
     /// Last file emitted in a #line directive (to avoid redundant file changes)
@@ -376,6 +384,10 @@ impl CodeGen {
             embedded_local_vars: HashSet::new(),
             known_type_names: HashSet::new(),
             field_proc_params: HashMap::new(),
+            type_id_counter: 0,
+            type_descs: Vec::new(),
+            ref_type_descs: HashMap::new(),
+            object_type_descs: HashMap::new(),
             emit_debug_lines: false,
             last_line_file: String::new(),
             last_line_num: 0,
@@ -910,6 +922,11 @@ impl CodeGen {
         }
         self.generating_for_module = None;
 
+        // Emit M2+ type descriptors for types declared in this embedded module
+        if self.m2plus {
+            self.emit_type_descs();
+        }
+
         // Add module-prefixed type aliases for externally visible types.
         // Sema resolves imported types to module-qualified names (e.g., EventLoop.Loop),
         // so the codegen needs Module_TypeName aliases to exist in C.
@@ -1273,6 +1290,11 @@ impl CodeGen {
             }
         }
 
+        // Emit M2+ type descriptors (after all types are declared)
+        if self.m2plus {
+            self.emit_type_descs();
+        }
+
         // Forward declarations for procedures
         self.gen_forward_decls(&m.block.decls);
         self.newline();
@@ -1427,6 +1449,11 @@ impl CodeGen {
                 Declaration::Type(t) => self.gen_type_decl(t),
                 _ => {}
             }
+        }
+
+        // Emit M2+ type descriptors (after all types are declared)
+        if self.m2plus {
+            self.emit_type_descs();
         }
 
         self.gen_forward_decls(&m.block.decls);
@@ -1755,7 +1782,13 @@ impl CodeGen {
                 TypeNode::Ref { target, branded, .. } => {
                     self.emit_indent();
                     let target_c = self.type_to_c(target);
-                    self.emit(&format!("typedef {} *{};\n", target_c, self.mangle(&t.name)));
+                    let mangled = self.mangle(&t.name);
+                    self.emit(&format!("typedef {} *{};\n", target_c, mangled));
+                    // Register a type descriptor for this REF type (for TYPECASE)
+                    if self.m2plus {
+                        let td_sym = self.register_type_desc(&mangled, &t.name, None);
+                        self.ref_type_descs.insert(mangled, td_sym);
+                    }
                 }
                 TypeNode::RefAny { .. } => {
                     self.emit_indent();
@@ -2261,7 +2294,38 @@ impl CodeGen {
                 } else {
                     desig.ident.name.clone()
                 };
-                if builtins::is_builtin_proc(&actual_name) {
+                if actual_name == "NEW" && self.m2plus && !args.is_empty() {
+                    // M2+ typed NEW: use M2_ref_alloc for REF/OBJECT types
+                    let arg_str = self.expr_to_string(&args[0]);
+                    // Look up the variable's type to find its type descriptor
+                    let var_type = self.resolve_var_type_name(&arg_str);
+                    let td_sym = var_type.as_ref().and_then(|vt| {
+                        self.ref_type_descs.get(vt).cloned()
+                            .or_else(|| self.object_type_descs.get(vt).cloned())
+                    });
+                    self.emit_indent();
+                    if let Some(td) = td_sym {
+                        self.emit(&format!("{} = M2_ref_alloc(sizeof(*{}), &{});\n", arg_str, arg_str, td));
+                    } else {
+                        // Fallback: plain GC_MALLOC for non-typed or unknown types
+                        self.emit(&builtins::codegen_builtin("NEW", &[arg_str]));
+                        self.emit(";\n");
+                    }
+                } else if actual_name == "DISPOSE" && self.m2plus && !args.is_empty() {
+                    // M2+ typed DISPOSE: use M2_ref_free for REF/OBJECT types
+                    let arg_str = self.expr_to_string(&args[0]);
+                    let var_type = self.resolve_var_type_name(&arg_str);
+                    let has_td = var_type.as_ref().map(|vt| {
+                        self.ref_type_descs.contains_key(vt) || self.object_type_descs.contains_key(vt)
+                    }).unwrap_or(false);
+                    self.emit_indent();
+                    if has_td {
+                        self.emit(&format!("M2_ref_free({});\n", arg_str));
+                    } else {
+                        self.emit(&builtins::codegen_builtin("DISPOSE", &[arg_str]));
+                        self.emit(";\n");
+                    }
+                } else if builtins::is_builtin_proc(&actual_name) {
                     self.emit_indent();
                     let char_builtins = ["CAP", "ORD", "CHR", "Write"];
                     let arg_strs: Vec<String> = args.iter().map(|a| {
@@ -4051,6 +4115,16 @@ impl CodeGen {
         }
     }
 
+    /// Resolve a variable name (C expression string) to its M2 type name (mangled).
+    /// Used to find type descriptors for M2+ NEW calls.
+    fn resolve_var_type_name(&self, var_expr: &str) -> Option<String> {
+        // Direct variable name lookup
+        if let Some(type_name) = self.var_types.get(var_expr) {
+            return Some(self.mangle(type_name));
+        }
+        None
+    }
+
     fn resolve_proc_name(&self, desig: &Designator) -> String {
         let name = &desig.ident.name;
         if let Some(module) = &desig.ident.module {
@@ -4235,8 +4309,18 @@ impl CodeGen {
         // Generate type typedef (pointer to struct, as objects are reference types)
         self.emitln(&format!("typedef struct {} *{};", c_name, c_name));
 
-        // Generate static type info
-        self.emitln(&format!("static m2_TypeInfo {}_typeinfo = {{ 0, \"{}\", NULL }};", c_name, name));
+        // Register type descriptor for RTTI
+        let parent_c_sym = parent.map(|p| {
+            let pc = if let Some(ref m) = p.module {
+                format!("{}_{}", m, p.name)
+            } else {
+                self.mangle(&p.name)
+            };
+            self.object_type_descs.get(&pc).cloned()
+                .unwrap_or_else(|| format!("M2_TD_{}", pc))
+        });
+        let td_sym = self.register_type_desc(&c_name, name, parent_c_sym);
+        self.object_type_descs.insert(c_name.to_string(), td_sym);
 
         // Track field names for WITH resolution
         let mut field_names: Vec<String> = fields.iter()
@@ -4260,6 +4344,51 @@ impl CodeGen {
     fn next_exception_id(&mut self) -> usize {
         self.exception_counter += 1;
         self.exception_counter
+    }
+
+    /// Allocate a new unique type ID and register a type descriptor to be emitted.
+    /// Returns the C symbol name for the descriptor (e.g. "M2_TD_ModName_TypeName").
+    fn register_type_desc(&mut self, type_name: &str, display_name: &str, parent_c_sym: Option<String>) -> String {
+        self.type_id_counter += 1;
+        let id = self.type_id_counter;
+        let depth = if let Some(ref parent) = parent_c_sym {
+            // Find parent depth from already-registered descriptors
+            self.type_descs.iter()
+                .find(|(sym, _, _, _)| sym == parent)
+                .map(|(_, _, _, d)| d + 1)
+                .unwrap_or(1)
+        } else {
+            0
+        };
+        let c_sym = format!("M2_TD_{}", type_name);
+        self.type_descs.push((c_sym.clone(), display_name.to_string(), parent_c_sym, depth));
+        // Store the ID for later use
+        let _ = id;
+        c_sym
+    }
+
+    /// Emit all registered type descriptors as C globals.
+    /// Must be called after all type declarations have been processed.
+    /// Parents are always registered before children (due to topo-sorted embedded modules).
+    fn emit_type_descs(&mut self) {
+        if self.type_descs.is_empty() {
+            return;
+        }
+        let descs = std::mem::take(&mut self.type_descs);
+        let mut id = 0usize;
+        for (c_sym, display, parent, depth) in &descs {
+            id += 1;
+            let parent_expr = if let Some(p) = parent {
+                format!("&{}", p)
+            } else {
+                "NULL".to_string()
+            };
+            self.emitln(&format!(
+                "M2_TypeDesc {} = {{ {}, \"{}\", {}, {} }};",
+                c_sym, id, display, parent_expr, depth
+            ));
+        }
+        self.newline();
     }
 
     // ── Modula-2+ TRY/EXCEPT/FINALLY ───────────────────────────────
@@ -4402,7 +4531,6 @@ impl CodeGen {
         self.emit("void *_tc_val = (void *)(");
         self.gen_expr(expr);
         self.emit(");\n");
-        self.emitln("m2_TypeInfo *_tc_info = ((m2_TypeInfo **)_tc_val)[-1];");
         let mut first = true;
         for branch in branches {
             self.emit_indent();
@@ -4410,7 +4538,7 @@ impl CodeGen {
                 self.emit("} else ");
             }
             first = false;
-            self.emit("if (");
+            self.emit("if (_tc_val && (");
             for (i, ty) in branch.types.iter().enumerate() {
                 if i > 0 {
                     self.emit(" || ");
@@ -4420,19 +4548,22 @@ impl CodeGen {
                 } else {
                     self.mangle(&ty.name)
                 };
-                self.emit(&format!("_tc_info->type_id == M2_TYPEID_{}", type_name));
+                // Use M2_ISA for subtype-aware matching via type descriptor
+                self.emit(&format!("M2_ISA(_tc_val, &M2_TD_{})", type_name));
             }
-            self.emit(") {\n");
+            self.emit(")) {\n");
             self.indent += 1;
             if let Some(ref var_name) = branch.var {
-                // Cast to the specific type and bind
+                // Cast to the specific type and bind.
+                // REF types and OBJECT types are already pointer typedefs,
+                // so we cast directly (no extra pointer level).
                 if let Some(first_type) = branch.types.first() {
                     let type_name = if let Some(ref m) = first_type.module {
                         format!("{}_{}", m, first_type.name)
                     } else {
                         self.mangle(&first_type.name)
                     };
-                    self.emitln(&format!("{} *{} = ({} *)_tc_val;", type_name, var_name, type_name));
+                    self.emitln(&format!("{} {} = ({})_tc_val;", type_name, var_name, type_name));
                 }
             }
             for s in &branch.body {

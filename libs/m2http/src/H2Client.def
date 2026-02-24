@@ -1,0 +1,36 @@
+DEFINITION MODULE H2Client;
+
+  (* HTTP/2 client using non-blocking sockets, TLS, and Futures.
+
+     Same interface as HTTPClient (Get/Put/FreeResponse/SetSkipVerify)
+     but speaks HTTP/2 over TLS with ALPN "h2".
+
+     Uses the m2http2 library (Http2Conn, Http2Frame, Http2Hpack)
+     for binary framing, HPACK compression, and flow control.
+
+     Designed for talking to H2-only servers (e.g. m2pkgsvr). *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM HTTPClient IMPORT Response, ResponsePtr, Header, Status,
+                         MaxHeaders, MaxHeaderName, MaxHeaderVal;
+  FROM EventLoop IMPORT Loop;
+  FROM Scheduler IMPORT Scheduler;
+  FROM Promise IMPORT Future;
+  FROM URI IMPORT URIRec;
+
+  PROCEDURE Get(lp: Loop; sched: Scheduler;
+                VAR uri: URIRec;
+                VAR outFuture: Future): Status;
+
+  PROCEDURE Put(lp: Loop; sched: Scheduler;
+                VAR uri: URIRec;
+                bodyData: ADDRESS; bodyLen: INTEGER;
+                VAR contentType: ARRAY OF CHAR;
+                VAR authorization: ARRAY OF CHAR;
+                VAR outFuture: Future): Status;
+
+  PROCEDURE FreeResponse(VAR resp: ResponsePtr);
+
+  PROCEDURE SetSkipVerify(skip: BOOLEAN);
+
+END H2Client.

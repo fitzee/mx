@@ -470,5 +470,29 @@
     "expected_stdout": "cardinal-ok\ninteger-ok\n142\n",
     "tags": ["ci"],
     "_comment": "Regression: LONG() and VAL(LONGINT,x) must emit proper C cast, not bare LONG()."
+  },
+  {
+    "name": "typecase_basic",
+    "category": "runtime",
+    "dir": "programs/runtime/typecase_basic",
+    "main": "TypecaseBasic.mod",
+    "include_dirs": ["."],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "int\nreal\nchar\nother\nint=42\nreal\nelse\n",
+    "tags": ["ci"],
+    "_comment": "TYPECASE with REF types: basic dispatch, ELSE branch, variable binding via M2_ISA."
+  },
+  {
+    "name": "typecase_object",
+    "category": "runtime",
+    "dir": "programs/runtime/typecase_object",
+    "main": "TypecaseObject.mod",
+    "include_dirs": ["."],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "circle\nsquare\nshape\nunknown\n",
+    "tags": ["ci"],
+    "_comment": "TYPECASE with OBJECT hierarchy: subtype matching via M2_ISA parent chain walk."
   }
 ]

@@ -654,11 +654,23 @@ static inline void m2_raise(int id, const char *name, void *arg) {
 }
 
 /* Runtime type information (for TYPECASE / OBJECT) */
-typedef struct m2_TypeInfo {
-    int type_id;
+typedef struct M2_TypeDesc {
+    uint32_t   type_id;
     const char *type_name;
-    struct m2_TypeInfo *parent;
-} m2_TypeInfo;
+    struct M2_TypeDesc *parent;
+    uint32_t   depth;
+} M2_TypeDesc;
+
+/* Allocation header prepended before payload for typed REF/OBJECT allocations */
+typedef struct M2_RefHeader {
+#ifdef M2_RTTI_DEBUG
+    uint32_t magic;   /* 0x4D325246 ("M2RF") */
+    uint32_t flags;   /* 0 = live, 0xDEADDEAD = freed */
+#endif
+    M2_TypeDesc *td;
+} M2_RefHeader;
+
+#define M2_REFHEADER_MAGIC 0x4D325246u
 
 /* Modula-2+ Thread support (pthreads) */
 #ifdef M2_USE_THREADS
@@ -746,27 +758,74 @@ static void m2_Condition_Free(m2_Condition_T c) { pthread_cond_destroy(c); free(
 #endif /* M2_USE_THREADS */
 
 /* Modula-2+ Garbage Collection support (Boehm GC) */
-#ifdef M2_USE_GC
+#if defined(M2_USE_GC) && __has_include(<gc/gc.h>)
 #include <gc/gc.h>
 #else
 /* Fallback: use malloc when GC is not available */
+#ifdef M2_USE_GC
+#undef M2_USE_GC
+#endif
 #define GC_MALLOC(sz) malloc(sz)
 #define GC_REALLOC(p, sz) realloc(p, sz)
 #define GC_FREE(p) free(p)
 static inline void GC_INIT(void) {}
 #endif
 
-/* Allocate a GC-traced REF object with a type tag header */
-static inline void *m2_ref_alloc(size_t size, m2_TypeInfo *type_info) {
-    void **block = (void **)GC_MALLOC(sizeof(void *) + size);
-    block[0] = type_info; /* store type tag at offset 0 */
-    return &block[1];     /* return pointer past the tag */
+/* Allocate a GC-traced REF/OBJECT with M2_RefHeader prepended before payload */
+static inline void *M2_ref_alloc(size_t payload_size, M2_TypeDesc *td) {
+    M2_RefHeader *hdr = (M2_RefHeader *)GC_MALLOC(sizeof(M2_RefHeader) + payload_size);
+    if (!hdr) { fprintf(stderr, "M2_ref_alloc: out of memory\n"); exit(1); }
+#ifdef M2_RTTI_DEBUG
+    hdr->magic = M2_REFHEADER_MAGIC;
+    hdr->flags = 0;
+#endif
+    hdr->td = td;
+    return (void *)(hdr + 1); /* return pointer to payload (past header) */
 }
 
-/* Retrieve the type info from a REF/REFANY pointer */
-static inline m2_TypeInfo *m2_ref_typeinfo(void *ref) {
-    void **block = (void **)ref;
-    return (m2_TypeInfo *)block[-1];
+/* Recover the type descriptor from a typed REF/REFANY payload pointer.
+   Returns NULL if ref is NULL or (in debug mode) if the header is invalid. */
+static inline M2_TypeDesc *M2_TYPEOF(void *ref) {
+    if (!ref) return NULL;
+    M2_RefHeader *hdr = ((M2_RefHeader *)ref) - 1;
+#ifdef M2_RTTI_DEBUG
+    if (hdr->magic != M2_REFHEADER_MAGIC) return NULL;
+    if (hdr->flags == 0xDEADDEADu) {
+        fprintf(stderr, "M2_TYPEOF: use-after-free detected\n");
+        return NULL;
+    }
+#endif
+    return hdr->td;
+}
+
+/* Check if a payload's type is (or inherits from) a target type descriptor.
+   Returns 1 if match, 0 otherwise. Safe with NULL payloads. */
+static inline int M2_ISA(void *payload, M2_TypeDesc *target) {
+    M2_TypeDesc *td = M2_TYPEOF(payload);
+    if (!td || !target) return 0;
+    if (td->depth < target->depth) return 0; /* early-out: can't be a subtype */
+    while (td) {
+        if (td == target) return 1;
+        td = td->parent;
+    }
+    return 0;
+}
+
+/* Narrow: returns payload if it matches target type, otherwise raises an exception */
+static inline void *M2_NARROW(void *payload, M2_TypeDesc *target) {
+    if (M2_ISA(payload, target)) return payload;
+    m2_raise(99, "NarrowFault", NULL);
+    return NULL; /* unreachable */
+}
+
+/* Free a typed REF object — poisons header in debug mode */
+static inline void M2_ref_free(void *payload) {
+    if (!payload) return;
+    M2_RefHeader *hdr = ((M2_RefHeader *)payload) - 1;
+#ifdef M2_RTTI_DEBUG
+    hdr->flags = 0xDEADDEADu;
+#endif
+    GC_FREE(hdr);
 }
 
 /* PIM4 DIV: floored division (truncates toward negative infinity) */

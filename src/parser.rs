@@ -673,6 +673,10 @@ impl Parser {
                 elem_type: Box::new(elem),
                 loc: self.loc(),
             })
+        } else if self.at(&TokenKind::Refany) {
+            let loc = self.loc();
+            self.advance();
+            Ok(TypeNode::RefAny { loc })
         } else {
             self.parse_qual_type()
         }
