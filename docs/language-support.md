@@ -2,6 +2,15 @@
 
 What m2c supports across standard Modula-2 (PIM4) and the Modula-2+ extensions.
 
+## Compatibility
+
+m2c is a **superset of PIM4 Modula-2**. Existing PIM4 code should compile with m2c as-is. However, code using m2c-specific extensions (import aliases, C FFI pragmas, conditional compilation, bitwise builtins, or Modula-2+ features) will not compile with other Modula-2 compilers such as GNU Modula-2 (gm2).
+
+| Direction | Compatibility |
+|-----------|--------------|
+| Legacy M2 code -> m2c | Should work (PIM4 compatible) |
+| m2c code -> other compilers | Only if no m2c extensions are used |
+
 ## PIM4 Modula-2
 
 ### Module System
@@ -68,6 +77,7 @@ What m2c supports across standard Modula-2 (PIM4) and the Modula-2+ extensions.
 | `VAR` parameters (pass by reference) | Supported |
 | Value parameters | Supported |
 | Forward declarations | Not supported |
+| Coroutines (`NEWPROCESS`, `TRANSFER`, `IOTRANSFER`) | Not supported (compiles but exits at runtime) |
 
 ### Built-in Procedures and Functions
 
@@ -84,7 +94,7 @@ What m2c supports across standard Modula-2 (PIM4) and the Modula-2+ extensions.
 | Bitwise | `SHL`, `SHR`, `BAND`, `BOR`, `BXOR`, `BNOT`, `SHIFT`, `ROTATE` |
 | Complex numbers | `CMPLX`, `RE`, `IM` (ISO) |
 | Control | `HALT` |
-| Coroutines | `NEWPROCESS`, `TRANSFER`, `IOTRANSFER` (stub — not implemented at runtime) |
+| Coroutines | `NEWPROCESS`, `TRANSFER`, `IOTRANSFER` (declared for compatibility; not implemented — exits with error at runtime) |
 
 ### Operators
 

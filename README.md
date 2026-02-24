@@ -131,6 +131,7 @@ example_apps/           Example Modula-2 programs
 
 ## Documentation
 
+- [Language support](docs/language-support.md) — what PIM4 and Modula-2+ features m2c supports
 - [Documentation index](docs/README.md)
 - [Using the toolchain](docs/toolchain.md) — compiler, package manager, workflows
 - [LSP capabilities](docs/lsp.md) — features, configuration, troubleshooting
