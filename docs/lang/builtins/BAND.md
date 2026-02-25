@@ -4,8 +4,7 @@
 BAND(a: CARDINAL; b: CARDINAL): CARDINAL
 ```
 
-Bitwise AND of `a` and `b`. Each result bit is 1 only if the
-corresponding bits of both operands are 1.
+Bitwise AND of `a` and `b`. Each result bit is 1 only if the corresponding bits of both operands are 1.
 
 ## Example
 

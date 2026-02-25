@@ -1,7 +1,6 @@
 # UNSAFE
 
-Unsafe module annotation. Declares that a module explicitly uses
-unsafe operations. Requires `--m2plus`.
+Unsafe module annotation. Declares that a module explicitly uses unsafe operations. Requires `--m2plus`.
 
 ## Syntax
 
@@ -13,14 +12,10 @@ END ModuleName.
 
 ## Notes
 
-- An UNSAFE module may freely import from SYSTEM, perform address
-  arithmetic, unchecked type casts, and other low-level operations.
-- The annotation documents that the module intentionally opts into
-  unsafe operations for performance or FFI reasons.
-- Currently parsed and accepted by the compiler but not enforced --
-  the UNSAFE annotation has no effect on compilation.
-- Pair with SAFE modules to clearly separate safe and unsafe code
-  in a project.
+- An UNSAFE module may freely import from SYSTEM, perform address arithmetic, unchecked type casts, and other low-level operations.
+- The annotation documents that the module intentionally opts into unsafe operations for performance or FFI reasons.
+- Currently parsed and accepted by the compiler but not enforced -- the UNSAFE annotation has no effect on compilation.
+- Pair with SAFE modules to clearly separate safe and unsafe code in a project.
 
 ## Example
 

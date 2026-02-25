@@ -1,7 +1,6 @@
 # OVERRIDES
 
-Override parent methods in a subtype OBJECT declaration. Replaces
-inherited method implementations with new ones. Requires `--m2plus`.
+Override parent methods in a subtype OBJECT declaration. Replaces inherited method implementations with new ones. Requires `--m2plus`.
 
 ## Syntax
 
@@ -15,14 +14,10 @@ END;
 
 ## Notes
 
-- OVERRIDES lists method-to-procedure bindings that replace the
-  parent type's method implementations in the subtype's vtable.
-- The replacement procedure must match the original method
-  signature exactly.
-- Methods not listed in OVERRIDES are inherited unchanged from the
-  parent type.
-- OVERRIDES appears after any METHODS section (if present) and
-  before END.
+- OVERRIDES lists method-to-procedure bindings that replace the parent type's method implementations in the subtype's vtable.
+- The replacement procedure must match the original method signature exactly.
+- Methods not listed in OVERRIDES are inherited unchanged from the parent type.
+- OVERRIDES appears after any METHODS section (if present) and before END.
 
 ## Example
 

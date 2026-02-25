@@ -1,7 +1,6 @@
 # BRANDED
 
-Branded reference type. Creates a distinct type from `REF T`,
-preventing accidental type compatibility. Requires `--m2plus`.
+Branded reference type. Creates a distinct type from `REF T`, preventing accidental type compatibility. Requires `--m2plus`.
 
 ## Syntax
 
@@ -11,13 +10,9 @@ TYPE T = BRANDED REF MyRecord;
 
 ## Notes
 
-- Two `BRANDED REF` types with the same target type are
-  incompatible -- they cannot be assigned to each other.
-- Without BRANDED, two `REF SameRecord` types are structurally
-  compatible and freely interchangeable.
-- Branding is useful for enforcing abstraction boundaries where
-  different modules should not share reference types even if the
-  underlying structure is identical.
+- Two `BRANDED REF` types with the same target type are incompatible -- they cannot be assigned to each other.
+- Without BRANDED, two `REF SameRecord` types are structurally compatible and freely interchangeable.
+- Branding is useful for enforcing abstraction boundaries where different modules should not share reference types even if the underlying structure is identical.
 - BRANDED REF values are still assignment-compatible with REFANY.
 
 ## Example

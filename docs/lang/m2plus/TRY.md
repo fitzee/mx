@@ -1,8 +1,6 @@
 # TRY
 
-Exception handling block. Begins a protected region of code whose
-exceptions can be caught by an `EXCEPT` clause or cleaned up by a
-`FINALLY` clause. Requires the `--m2plus` compiler flag.
+Exception handling block. Begins a protected region of code whose exceptions can be caught by an `EXCEPT` clause or cleaned up by a `FINALLY` clause. Requires the `--m2plus` compiler flag.
 
 ## Syntax
 
@@ -22,12 +20,9 @@ END;
 
 ## Notes
 
-- A TRY block must be paired with either `EXCEPT` or `FINALLY`,
-  not both in the same block.
-- If an exception is raised inside the TRY body, control transfers
-  to the matching EXCEPT handler.
-- Implementation uses setjmp/longjmp with a stack-based exception
-  frame (M2_TRY/M2_CATCH/M2_ENDTRY macros).
+- A TRY block must be paired with either `EXCEPT` or `FINALLY`, not both in the same block.
+- If an exception is raised inside the TRY body, control transfers to the matching EXCEPT handler.
+- Implementation uses setjmp/longjmp with a stack-based exception frame (M2_TRY/M2_CATCH/M2_ENDTRY macros).
 
 ## Example
 

@@ -4,8 +4,7 @@
 BXOR(a: CARDINAL; b: CARDINAL): CARDINAL
 ```
 
-Bitwise exclusive OR of `a` and `b`. Each result bit is 1 if the
-corresponding bits of the two operands differ.
+Bitwise exclusive OR of `a` and `b`. Each result bit is 1 if the corresponding bits of the two operands differ.
 
 ## Example
 

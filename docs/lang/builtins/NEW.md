@@ -25,7 +25,8 @@ END
 
 ## Notes
 
-- Equivalent to `malloc(sizeof(T))` in C.
+- For `POINTER TO` types: equivalent to `malloc(sizeof(T))` in C.
+- For M2+ `REF` and `OBJECT` types: calls `M2_ref_alloc` which prepends a hidden `M2_RefHeader` (type descriptor pointer) before the payload. The returned pointer points to the payload, not the header, so dereference with `^` works normally.
 - The allocated memory is uninitialized. Fields should be assigned before use.
 - Use `DISPOSE` to free memory allocated by `NEW`.
-- If allocation fails, behavior is implementation-defined (PIM4 does not mandate an exception).
+- If allocation fails, the program terminates with an error message.

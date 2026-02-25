@@ -1,7 +1,6 @@
 # REFANY
 
-Universal reference type. Can hold any REF value regardless of its
-target type. Requires `--m2plus`.
+Universal reference type. Can hold any REF value regardless of its target type. Requires `--m2plus`.
 
 ## Syntax
 
@@ -11,31 +10,32 @@ VAR x: REFANY;
 
 ## Notes
 
-- Any `REF T` value can be assigned to a `REFANY` variable.
-- REFANY values carry a runtime type tag that identifies the
-  original concrete type.
+- Any `REF T` or OBJECT value can be assigned to a `REFANY` variable.
+- REFANY values carry a runtime type descriptor (`M2_TypeDesc`) stored in a hidden header prepended to the allocation. This identifies the concrete type and its parent chain.
 - Use TYPECASE to dispatch on the runtime type of a REFANY value.
-- REFANY cannot be dereferenced directly -- you must narrow it
-  to a specific REF type via TYPECASE first.
-- Useful for building heterogeneous data structures such as
-  collections that store mixed types.
+- REFANY cannot be dereferenced directly -- you must narrow it to a specific REF type via TYPECASE first.
+- NIL is a valid REFANY value. TYPECASE handles it safely (falls through to ELSE).
+- Useful for building heterogeneous data structures such as collections that store mixed types.
+- REFANY can be used as a formal parameter type.
 
 ## Example
 
 ```modula2
 TYPE
-  IntRef = REF RECORD i: INTEGER END;
-  StrRef = REF RECORD s: ARRAY [0..31] OF CHAR END;
+  IntRef = REF INTEGER;
+  StrRef = REF ARRAY [0..31] OF CHAR;
 VAR
   any: REFANY;
   ir: IntRef;
 BEGIN
   NEW(ir);
-  ir^.i := 10;
+  ir^ := 10;
   any := ir;
   TYPECASE any OF
-  | IntRef(v) => WriteInt(v^.i, 0); WriteLn;
-  | StrRef(v) => WriteString(v^.s); WriteLn;
+    IntRef (v):
+      WriteInt(v^, 0); WriteLn
+  | StrRef:
+      WriteString("a string"); WriteLn
   END;
 END RefAnyDemo.
 ```

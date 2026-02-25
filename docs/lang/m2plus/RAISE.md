@@ -1,7 +1,6 @@
 # RAISE
 
-Raises a named exception, unwinding the call stack to the nearest
-matching EXCEPT handler. Requires `--m2plus`.
+Raises a named exception, unwinding the call stack to the nearest matching EXCEPT handler. Requires `--m2plus`.
 
 ## Syntax
 
@@ -11,15 +10,10 @@ RAISE ExceptionName;
 
 ## Notes
 
-- The exception name must have been declared with an `EXCEPTION`
-  declaration at module level.
-- RAISE transfers control via longjmp to the nearest enclosing
-  TRY/EXCEPT frame that handles the named exception (or a
-  catch-all handler).
-- If no handler is found, the program terminates with an unhandled
-  exception error.
-- RAISE can appear in any statement context -- procedures, loops,
-  conditionals, etc.
+- The exception name must have been declared with an `EXCEPTION` declaration at module level.
+- RAISE transfers control via longjmp to the nearest enclosing TRY/EXCEPT frame that handles the named exception (or a catch-all handler).
+- If no handler is found, the program terminates with an unhandled exception error.
+- RAISE can appear in any statement context -- procedures, loops, conditionals, etc.
 
 ## Example
 

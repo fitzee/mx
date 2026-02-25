@@ -105,11 +105,18 @@ fn collect_def_modules(
 
     let input_path = Path::new(filename);
 
+    // Track loaded paths to avoid registering the same .def twice.
+    let mut loaded: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
     // For implementation modules, load the corresponding .def file first.
     // Types/constants/procedures declared in the .def must be visible in the .mod.
+    // Only look in the SAME directory — a .def found via include paths with the
+    // same module name is a different module that happens to share the name.
     if let CompilationUnit::ImplementationModule(m) = &unit {
-        if let Some(def_path) = find_def_file(&m.name, input_path, include_paths) {
+        if let Some(def_path) = find_def_file_same_dir(&m.name, input_path) {
             if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
+                let canon = def_path.canonicalize().unwrap_or(def_path.clone());
+                loaded.insert(canon);
                 result.push(def_mod.clone());
             }
         }
@@ -119,8 +126,12 @@ fn collect_def_modules(
         if let Some(ref from_mod) = imp.from_module {
             if !crate::stdlib::is_stdlib_module(from_mod) {
                 if let Some(def_path) = find_def_file(from_mod, input_path, include_paths) {
-                    if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
-                        result.push(def_mod.clone());
+                    let canon = def_path.canonicalize().unwrap_or(def_path.clone());
+                    if !loaded.contains(&canon) {
+                        if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
+                            loaded.insert(canon);
+                            result.push(def_mod.clone());
+                        }
                     }
                 }
             }
@@ -128,8 +139,12 @@ fn collect_def_modules(
             for mod_name in &imp.names {
                 if !crate::stdlib::is_stdlib_module(&mod_name.name) {
                     if let Some(def_path) = find_def_file(&mod_name.name, input_path, include_paths) {
-                        if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
-                            result.push(def_mod.clone());
+                        let canon = def_path.canonicalize().unwrap_or(def_path.clone());
+                        if !loaded.contains(&canon) {
+                            if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
+                                loaded.insert(canon);
+                                result.push(def_mod.clone());
+                            }
                         }
                     }
                 }
@@ -138,6 +153,22 @@ fn collect_def_modules(
     }
 
     result
+}
+
+/// Find a .def file ONLY in the same directory as the input file.
+/// Used for implementation module's own .def — a .def from a different directory
+/// with the same module name is a different module, not the corresponding definition.
+fn find_def_file_same_dir(module_name: &str, input_path: &Path) -> Option<PathBuf> {
+    let dir = input_path.parent().unwrap_or(Path::new("."));
+    let candidates = [
+        dir.join(format!("{}.def", module_name)),
+        dir.join(format!("{}.DEF", module_name)),
+        dir.join(format!("{}.def", module_name.to_lowercase())),
+    ];
+    for c in &candidates {
+        if c.exists() { return Some(c.clone()); }
+    }
+    None
 }
 
 /// Unified find_def_file: searches same dir as input, then include paths.

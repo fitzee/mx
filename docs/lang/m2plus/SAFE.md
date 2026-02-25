@@ -1,7 +1,6 @@
 # SAFE
 
-Safe module annotation. Declares that a module does not use unsafe
-operations. Requires `--m2plus`.
+Safe module annotation. Declares that a module does not use unsafe operations. Requires `--m2plus`.
 
 ## Syntax
 
@@ -13,14 +12,10 @@ END ModuleName.
 
 ## Notes
 
-- A SAFE module should not import from SYSTEM or perform unchecked
-  type casts, address arithmetic, or other unsafe operations.
-- The annotation documents intent and enables future compile-time
-  enforcement of safety constraints.
-- Currently parsed and accepted by the compiler but not enforced --
-  unsafe operations inside a SAFE module are not rejected.
-- Use SAFE to communicate to readers and tools that the module is
-  intended to be memory-safe.
+- A SAFE module should not import from SYSTEM or perform unchecked type casts, address arithmetic, or other unsafe operations.
+- The annotation documents intent and enables future compile-time enforcement of safety constraints.
+- Currently parsed and accepted by the compiler but not enforced -- unsafe operations inside a SAFE module are not rejected.
+- Use SAFE to communicate to readers and tools that the module is intended to be memory-safe.
 
 ## Example
 

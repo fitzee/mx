@@ -199,7 +199,7 @@ END
 | `NEW` / `DISPOSE` for REF types | Supported |
 | Dereference with `^` | Supported |
 
-Implementation: `malloc`/`free` by default. Optional Boehm GC with `-DM2_USE_GC`.
+Implementation: `M2_ref_alloc` prepends an `M2_RefHeader` (type descriptor pointer) before each payload. `malloc`/`free` by default; optional Boehm GC with `-DM2_USE_GC` (falls back to malloc if `gc/gc.h` is unavailable).
 
 ### Object-Oriented Programming
 
@@ -227,7 +227,7 @@ END;
 | `OVERRIDES` | Supported |
 | Single inheritance | Supported |
 
-Implementation: vtable-based dispatch.
+Implementation: vtable-based dispatch. Each OBJECT type gets an `M2_TypeDesc` linked to its parent, enabling subtype-aware TYPECASE matching.
 
 ### Concurrency
 
@@ -259,10 +259,10 @@ Implementation: pthreads. `M2_USE_THREADS` define emitted only when concurrency 
 VAR r: REFANY;
 BEGIN
   TYPECASE r OF
-  | IntRef(i):  WriteInt(i^, 0);
-  | RealRef(f): WriteReal(f^, 0);
+    IntRef (i):  WriteInt(i^, 0)
+  | RealRef:     WriteString("a real")
   ELSE
-    WriteString("unknown type");
+    WriteString("unknown type")
   END;
 END
 ```
@@ -270,7 +270,11 @@ END
 | Feature | Status |
 |---------|--------|
 | `TYPECASE` | Supported |
+| Subtype matching (OBJECT inheritance) | Supported |
+| Variable binding `Type (var):` | Supported |
 | `SAFE` / `UNSAFE` module annotations | Parsed (not enforced) |
+
+Implementation: `M2_ISA` walks `M2_TypeDesc` parent chain with depth early-out. NIL falls through to ELSE.
 
 ---
 

@@ -166,7 +166,7 @@ LockStatement     = "LOCK" Designator "DO" StatementSequence "END" .
 ```ebnf
 TypecaseStatement = "TYPECASE" Expr "OF" TypeCase { "|" TypeCase }
                     [ "ELSE" StatementSequence ] "END" .
-TypeCase          = QualIdent "(" ident ")" "=>" StatementSequence .
+TypeCase          = QualIdent { "," QualIdent } [ "(" ident ")" ] ":" StatementSequence .
 ```
 
 ### Module Safety Annotations

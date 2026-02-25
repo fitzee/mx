@@ -4,8 +4,7 @@
 SHR(x: CARDINAL; n: CARDINAL): CARDINAL
 ```
 
-Shift `x` right by `n` bit positions. Vacated high bits are filled with zero
-(logical shift, not arithmetic).
+Shift `x` right by `n` bit positions. Vacated high bits are filled with zero (logical shift, not arithmetic).
 
 ## Example
 

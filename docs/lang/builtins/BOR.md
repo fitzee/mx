@@ -4,8 +4,7 @@
 BOR(a: CARDINAL; b: CARDINAL): CARDINAL
 ```
 
-Bitwise OR of `a` and `b`. Each result bit is 1 if the corresponding
-bit of either operand is 1.
+Bitwise OR of `a` and `b`. Each result bit is 1 if the corresponding bit of either operand is 1.
 
 ## Example
 
