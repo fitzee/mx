@@ -10,7 +10,7 @@ FROM Manifest IMPORT GetName, GetVersion, DepCount, GetDepName, GetDepPath,
                      GetIncludes, GetEntry;
 
 CONST
-  MaxLockDeps = 16;
+  MaxLockDeps = 64;
 
 VAR
   lDepNames: ARRAY [0..MaxLockDeps-1] OF ARRAY [0..63] OF CHAR;

@@ -276,8 +276,13 @@ pub fn build_project(
         .filter_map(|p| p.canonicalize().ok())
         .collect();
 
-    // Merge transitive [cc] sections from path: dependencies
-    let dep_cc = crate::project_resolver::collect_transitive_cc(root, manifest, None);
+    // Load lockfile for transitive dep resolution
+    let lockfile = std::fs::read_to_string(root.join("m2.lock"))
+        .ok()
+        .and_then(|c| crate::project_resolver::Lockfile::parse(&c));
+
+    // Merge transitive [cc] sections from dependencies
+    let dep_cc = crate::project_resolver::collect_transitive_cc(root, manifest, lockfile.as_ref());
     for f in &dep_cc.cflags {
         if !opts.extra_cflags.contains(f) {
             opts.extra_cflags.push(f.clone());

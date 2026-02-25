@@ -1,12 +1,13 @@
 IMPLEMENTATION MODULE Resolver;
 
 FROM SYSTEM IMPORT ADR;
-FROM Strings IMPORT Assign, Length, Concat;
+FROM Strings IMPORT Assign, Length, Concat, CompareStr;
 FROM InOut IMPORT WriteString, WriteLn;
 FROM Sys IMPORT m2sys_file_exists, m2sys_is_dir, m2sys_getenv;
 FROM Manifest IMPORT DepCount, GetDepName, GetDepPath, IsDepLocal, GetDepVersion,
-                     IsDepURL, GetDepURL;
-FROM Lockfile IMPORT WriteEnhanced, SetDepEntry, SetLockDepCount, SetDepURL;
+                     IsDepURL, GetDepURL, Read, Clear;
+FROM Lockfile IMPORT WriteEnhanced, SetDepEntry, SetLockDepCount, SetDepURL,
+                     GetDepResolvedPath, GetDepSource, GetDepLockName, LockDepCount;
 FROM Registry IMPORT Fetch, Lookup, LookupRange, FetchRemote, FetchLatest,
                      SetInsecure, ResolveRangeRemote;
 FROM Manifest IMPORT GetRegistryURL;
@@ -29,6 +30,14 @@ VAR
   depUrl: ARRAY [0..511] OF CHAR;
   isRange: INTEGER;
   envBuf: ARRAY [0..15] OF CHAR;
+  bfsIdx: INTEGER;
+  tdCount, ti: INTEGER;
+  tdName: ARRAY [0..63] OF CHAR;
+  tdVer: ARRAY [0..31] OF CHAR;
+  srcBuf: ARRAY [0..15] OF CHAR;
+  alreadyResolved: INTEGER;
+  k: INTEGER;
+  lockName: ARRAY [0..63] OF CHAR;
 BEGIN
   nd := DepCount();
   SetLockDepCount(nd);
@@ -184,6 +193,119 @@ BEGIN
       END;
       INC(i)
     END
+  END;
+
+  (* --- BFS for transitive remote deps --- *)
+  IF nd > 0 THEN
+    bfsIdx := 0;
+    WHILE bfsIdx < nd DO
+      GetDepSource(bfsIdx, srcBuf);
+      IF CompareStr(srcBuf, "local") # 0 THEN
+        (* Non-local dep — read its manifest to discover its deps *)
+        GetDepResolvedPath(bfsIdx, fetchPath);
+        IF Length(fetchPath) > 0 THEN
+          Assign(fetchPath, mpath);
+          Concat(mpath, "/m2.toml", tmp);
+          Assign(tmp, mpath);
+          Clear;
+          Read(mpath);
+          tdCount := DepCount();
+          ti := 0;
+          WHILE ti < tdCount DO
+            GetDepName(ti, tdName);
+            GetDepVersion(ti, tdVer);
+            (* Check if already resolved *)
+            alreadyResolved := 0;
+            k := 0;
+            WHILE k < nd DO
+              GetDepLockName(k, lockName);
+              IF CompareStr(tdName, lockName) = 0 THEN
+                alreadyResolved := 1
+              END;
+              INC(k)
+            END;
+            IF alreadyResolved = 0 THEN
+              (* Transitive dep not yet in lockfile — resolve it *)
+              IF (IsDepLocal(ti) = 1) OR (Length(tdVer) = 0) THEN
+                (* Path dep in published package or no version — fetch latest from registry *)
+                IF Length(registryUrl) > 0 THEN
+                  rc := FetchLatest(registryUrl, tdName, resolvedVer, sha);
+                  IF rc = 0 THEN
+                    FetchRemote(registryUrl, tdName, resolvedVer, fetchPath);
+                    WriteString("m2pkg: resolved transitive "); WriteString(tdName);
+                    WriteString(" (latest) -> "); WriteString(resolvedVer);
+                    WriteString(" -> "); WriteString(fetchPath); WriteLn;
+                    SetDepEntry(nd, tdName, resolvedVer, "registry", sha, fetchPath);
+                    INC(nd)
+                  ELSE
+                    WriteString("m2pkg: warning: cannot resolve transitive dep ");
+                    WriteString(tdName); WriteLn
+                  END
+                END
+              ELSIF (tdVer[0] = '^') OR (tdVer[0] = '~') OR
+                    ((tdVer[0] = '>') AND (Length(tdVer) > 1) AND (tdVer[1] = '=')) THEN
+                (* Range spec *)
+                rc := LookupRange(tdName, tdVer, resolvedVer, sha);
+                IF rc # 0 THEN
+                  IF Length(registryUrl) > 0 THEN
+                    rc := ResolveRangeRemote(registryUrl, tdName, tdVer, resolvedVer, sha);
+                    IF rc = 0 THEN
+                      FetchRemote(registryUrl, tdName, resolvedVer, fetchPath);
+                      WriteString("m2pkg: resolved transitive "); WriteString(tdName);
+                      WriteString("@"); WriteString(tdVer);
+                      WriteString(" -> "); WriteString(resolvedVer);
+                      WriteString(" -> "); WriteString(fetchPath); WriteLn;
+                      SetDepEntry(nd, tdName, resolvedVer, "registry", sha, fetchPath);
+                      INC(nd)
+                    ELSE
+                      WriteString("m2pkg: warning: cannot resolve transitive dep ");
+                      WriteString(tdName); WriteString(" "); WriteString(tdVer); WriteLn
+                    END
+                  END
+                ELSE
+                  Fetch(tdName, resolvedVer, fetchPath);
+                  WriteString("m2pkg: resolved transitive "); WriteString(tdName);
+                  WriteString("@"); WriteString(tdVer);
+                  WriteString(" -> "); WriteString(resolvedVer);
+                  WriteString(" -> "); WriteString(fetchPath); WriteLn;
+                  SetDepEntry(nd, tdName, resolvedVer, "registry", sha, fetchPath);
+                  INC(nd)
+                END
+              ELSE
+                (* Exact version *)
+                rc := Lookup(tdName, tdVer, sha);
+                IF rc # 0 THEN
+                  IF Length(registryUrl) > 0 THEN
+                    FetchRemote(registryUrl, tdName, tdVer, fetchPath);
+                    WriteString("m2pkg: resolved transitive "); WriteString(tdName);
+                    WriteString("@"); WriteString(tdVer);
+                    WriteString(" -> "); WriteString(fetchPath); WriteLn;
+                    SetDepEntry(nd, tdName, tdVer, "registry", "", fetchPath);
+                    INC(nd)
+                  ELSE
+                    WriteString("m2pkg: warning: cannot resolve transitive dep ");
+                    WriteString(tdName); WriteString(" "); WriteString(tdVer); WriteLn
+                  END
+                ELSE
+                  Fetch(tdName, tdVer, fetchPath);
+                  WriteString("m2pkg: resolved transitive "); WriteString(tdName);
+                  WriteString("@"); WriteString(tdVer);
+                  WriteString(" -> "); WriteString(fetchPath); WriteLn;
+                  SetDepEntry(nd, tdName, tdVer, "registry", sha, fetchPath);
+                  INC(nd)
+                END
+              END
+            END;
+            INC(ti)
+          END
+        END
+      END;
+      INC(bfsIdx)
+    END;
+    (* Restore main manifest *)
+    Clear;
+    Read("m2.toml");
+    SetLockDepCount(nd)
   END;
 
   (* Write enhanced lockfile *)
