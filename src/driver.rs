@@ -267,11 +267,257 @@ fn write_per_module_files(c_code: &str, opts: &CompileOptions) -> CompileResult<
     Ok(())
 }
 
-fn cc_failure_error(stderr: &[u8]) -> CompileError {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CcSeverity {
+    Error,
+    Warning,
+    Note,
+    Fatal,
+}
+
+#[derive(Debug, Clone)]
+struct CcDiagnostic {
+    file: String,
+    line: usize,
+    col: usize,
+    severity: CcSeverity,
+    message: String,
+}
+
+/// Parse cc stderr into structured diagnostics.
+/// Handles both clang and gcc format: `file:line:col: severity: message`
+fn parse_cc_stderr(stderr: &str) -> Vec<CcDiagnostic> {
+    let mut diagnostics = Vec::new();
+    for line in stderr.lines() {
+        let trimmed = line.trim();
+        // Skip caret/context lines (indented, ^, ~ markers, empty)
+        if trimmed.is_empty()
+            || trimmed.starts_with('^')
+            || trimmed.starts_with('~')
+            || trimmed.chars().all(|c| c == ' ' || c == '^' || c == '~' || c == '|')
+            || (line.starts_with(' ') && !trimmed.contains(": error:") && !trimmed.contains(": warning:"))
+        {
+            continue;
+        }
+
+        // Find the severity marker
+        let (sev_tag, severity) = if let Some(pos) = line.find(": fatal error:") {
+            (pos, CcSeverity::Fatal)
+        } else if let Some(pos) = line.find(": error:") {
+            (pos, CcSeverity::Error)
+        } else if let Some(pos) = line.find(": warning:") {
+            (pos, CcSeverity::Warning)
+        } else if let Some(pos) = line.find(": note:") {
+            (pos, CcSeverity::Note)
+        } else {
+            continue;
+        };
+
+        let prefix = &line[..sev_tag];
+        let msg_start = match severity {
+            CcSeverity::Fatal => sev_tag + ": fatal error:".len(),
+            CcSeverity::Error => sev_tag + ": error:".len(),
+            CcSeverity::Warning => sev_tag + ": warning:".len(),
+            CcSeverity::Note => sev_tag + ": note:".len(),
+        };
+        let message = line[msg_start..].trim().to_string();
+
+        // Parse file:line:col from prefix using rsplitn to handle paths with colons
+        // Format: /path/to/file.c:42:10
+        let parts: Vec<&str> = prefix.rsplitn(3, ':').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let col = match parts[0].trim().parse::<usize>() {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let line_num = match parts[1].trim().parse::<usize>() {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let file = parts[2].trim().to_string();
+
+        diagnostics.push(CcDiagnostic {
+            file,
+            line: line_num,
+            col,
+            severity,
+            message,
+        });
+    }
+    diagnostics
+}
+
+/// Demangle a C identifier back to Modula-2 qualified name.
+/// `Module_Proc` → `Module.Proc` (M2 identifiers cannot contain underscores)
+fn demangle_m2_name(c_name: &str) -> String {
+    c_name.replace('_', ".")
+}
+
+/// Map a C compiler error message to a Modula-2-friendly diagnostic message.
+fn map_cc_message(msg: &str) -> String {
+    // use of undeclared identifier 'Module_Name'
+    if msg.starts_with("use of undeclared identifier '") {
+        if let Some(ident) = msg.strip_prefix("use of undeclared identifier '").and_then(|s| s.strip_suffix('\'')) {
+            if let Some(dot_pos) = ident.find('_') {
+                let module = &ident[..dot_pos];
+                let name = &ident[dot_pos + 1..];
+                return format!(
+                    "'{}' is not exported by module '{}', or module '{}' is not imported",
+                    demangle_m2_name(name), module, module
+                );
+            }
+            return format!("'{}' is not declared", demangle_m2_name(ident));
+        }
+    }
+
+    // unknown type name 'TypeName'
+    if msg.starts_with("unknown type name '") {
+        if let Some(type_name) = msg.strip_prefix("unknown type name '").and_then(|s| s.strip_suffix('\'')) {
+            return format!("type '{}' is not declared", demangle_m2_name(type_name));
+        }
+    }
+
+    // no member named 'f' in 'struct Module_Rec'
+    if msg.starts_with("no member named '") {
+        if let Some(rest) = msg.strip_prefix("no member named '") {
+            if let Some(tick_pos) = rest.find('\'') {
+                let field = &rest[..tick_pos];
+                if let Some(struct_start) = rest.find("'struct ") {
+                    let after = &rest[struct_start + "'struct ".len()..];
+                    if let Some(end) = after.find('\'') {
+                        let struct_name = &after[..end];
+                        // Extract record name from Module_Rec
+                        let rec_name = if let Some(dot_pos) = struct_name.rfind('_') {
+                            &struct_name[dot_pos + 1..]
+                        } else {
+                            struct_name
+                        };
+                        return format!("record type '{}' has no field '{}'", rec_name, field);
+                    }
+                }
+            }
+        }
+    }
+
+    // implicit declaration of function 'Module_P'
+    if msg.starts_with("implicit declaration of function '") || msg.starts_with("call to undeclared function '") {
+        let prefix = if msg.starts_with("implicit declaration") {
+            "implicit declaration of function '"
+        } else {
+            "call to undeclared function '"
+        };
+        if let Some(func) = msg.strip_prefix(prefix).and_then(|s| s.strip_suffix('\'').or_else(|| s.split('\'').next())) {
+            return format!("procedure '{}' is not declared", demangle_m2_name(func));
+        }
+    }
+
+    // too few/many arguments
+    if msg.starts_with("too few arguments") {
+        return "too few arguments in procedure call".to_string();
+    }
+    if msg.starts_with("too many arguments") {
+        return "too many arguments in procedure call".to_string();
+    }
+
+    // incompatible pointer types
+    if msg.contains("incompatible pointer types") {
+        return "type mismatch: incompatible types".to_string();
+    }
+
+    // redefinition of 'name'
+    if msg.starts_with("redefinition of '") {
+        if let Some(name) = msg.strip_prefix("redefinition of '").and_then(|s| s.strip_suffix('\'')) {
+            return format!("'{}' is already defined", demangle_m2_name(name));
+        }
+    }
+
+    // Unmapped: prefix with (C backend)
+    format!("(C backend) {}", msg)
+}
+
+/// Returns true if the file extension indicates a Modula-2 source file.
+fn is_m2_file(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".mod") || lower.ends_with(".def")
+}
+
+/// Build a driver error from C compiler failure, mapping cc diagnostics back
+/// to Modula-2 source locations via #line directives.
+fn handle_cc_failure(stderr: &[u8], is_link_phase: bool, diagnostics_json: bool) -> CompileError {
+    let raw = String::from_utf8_lossy(stderr);
     let show_c = std::env::var("M2C_SHOW_C_ERRORS").map_or(false, |v| v == "1");
+
+    // Linker errors have a different format — fall back to raw stderr
+    if is_link_phase {
+        if show_c || raw.contains("Undefined symbols") || raw.contains("ld:") {
+            return CompileError::driver(format!("link failed:\n{}", raw.trim()));
+        }
+        return CompileError::driver("link failed (internal error). Re-run with M2C_SHOW_C_ERRORS=1 for details.");
+    }
+
+    let cc_diags = parse_cc_stderr(&raw);
+
+    // Filter to errors/fatals referencing M2 source files (from #line directives)
+    let m2_errors: Vec<CompileError> = cc_diags
+        .iter()
+        .filter(|d| matches!(d.severity, CcSeverity::Error | CcSeverity::Fatal))
+        .filter(|d| is_m2_file(&d.file))
+        .map(|d| {
+            CompileError::codegen(
+                crate::errors::SourceLoc::new(&d.file, d.line, d.col),
+                map_cc_message(&d.message),
+            )
+        })
+        .collect();
+
+    if !m2_errors.is_empty() {
+        if diagnostics_json {
+            emit_diagnostics_jsonl(&m2_errors);
+        }
+        let mut msg = m2_errors
+            .iter()
+            .map(|e| format!("{}", e))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if show_c {
+            msg.push_str(&format!("\n\n--- raw C compiler output ---\n{}", raw.trim()));
+        }
+        // Return the first error's location for the top-level CompileError
+        return CompileError::codegen(m2_errors[0].loc.clone(), msg);
+    }
+
+    // No M2-located errors found — check for C-file errors (no #line match)
+    let c_errors: Vec<CompileError> = cc_diags
+        .iter()
+        .filter(|d| matches!(d.severity, CcSeverity::Error | CcSeverity::Fatal))
+        .map(|d| {
+            CompileError::codegen(
+                crate::errors::SourceLoc::new("<generated>", d.line, d.col),
+                map_cc_message(&d.message),
+            )
+        })
+        .collect();
+
+    if !c_errors.is_empty() {
+        if diagnostics_json {
+            emit_diagnostics_jsonl(&c_errors);
+        }
+        let mut msg = c_errors
+            .iter()
+            .map(|e| format!("{}", e))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if show_c {
+            msg.push_str(&format!("\n\n--- raw C compiler output ---\n{}", raw.trim()));
+        }
+        return CompileError::codegen(c_errors[0].loc.clone(), msg);
+    }
+
+    // Couldn't parse any diagnostics — fall back to old behavior
     if show_c {
-        let msg = String::from_utf8_lossy(stderr);
-        CompileError::driver(format!("C backend failed:\n{}", msg.trim()))
+        CompileError::driver(format!("C backend failed:\n{}", raw.trim()))
     } else {
         CompileError::driver(
             "C backend failed (internal error). Re-run with M2C_SHOW_C_ERRORS=1 for details."
@@ -590,7 +836,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         })?;
 
         if !output.status.success() {
-            return Err(cc_failure_error(&output.stderr));
+            return Err(handle_cc_failure(&output.stderr, false, opts.diagnostics_json));
         }
 
         // Clean up (keep .c in debug mode for source mapping)
@@ -641,7 +887,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 CompileError::driver(format!("failed to run C compiler: {}", e))
             })?;
             if !output.status.success() {
-                return Err(cc_failure_error(&output.stderr));
+                return Err(handle_cc_failure(&output.stderr, false, opts.diagnostics_json));
             }
 
             // Step 2: link .o → executable
@@ -681,7 +927,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 CompileError::driver(format!("failed to link: {}", e))
             })?;
             if !output.status.success() {
-                return Err(cc_failure_error(&output.stderr));
+                return Err(handle_cc_failure(&output.stderr, true, opts.diagnostics_json));
             }
 
             // Step 3: dsymutil to create .dSYM bundle (macOS)
@@ -749,7 +995,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             })?;
 
             if !output.status.success() {
-                return Err(cc_failure_error(&output.stderr));
+                return Err(handle_cc_failure(&output.stderr, false, opts.diagnostics_json));
             }
 
             let _ = fs::remove_file(&c_file);

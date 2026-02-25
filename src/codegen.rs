@@ -124,8 +124,10 @@ pub struct CodeGen {
     ref_type_descs: HashMap<String, String>,
     /// Maps M2 type name (mangled) → M2_TypeDesc C symbol name (for OBJECT types)
     object_type_descs: HashMap<String, String>,
-    /// Emit #line directives mapping generated C back to Modula-2 source (for -g debug builds)
-    emit_debug_lines: bool,
+    /// Emit #line directives mapping generated C back to Modula-2 source
+    emit_line_directives: bool,
+    /// Debug mode: enables debug-only behaviors like setvbuf (separate from #line emission)
+    debug_mode: bool,
     /// Last file emitted in a #line directive (to avoid redundant file changes)
     last_line_file: String,
     /// Last line number emitted in a #line directive (to avoid redundant directives)
@@ -388,7 +390,8 @@ impl CodeGen {
             type_descs: Vec::new(),
             ref_type_descs: HashMap::new(),
             object_type_descs: HashMap::new(),
-            emit_debug_lines: false,
+            emit_line_directives: true,
+            debug_mode: false,
             last_line_file: String::new(),
             last_line_num: 0,
             generating_for_module: None,
@@ -402,7 +405,7 @@ impl CodeGen {
     }
 
     pub fn set_debug(&mut self, enabled: bool) {
-        self.emit_debug_lines = enabled;
+        self.debug_mode = enabled;
     }
 
     /// Take ownership of the symbol table (for LSP use).
@@ -494,7 +497,7 @@ impl CodeGen {
     /// Only emits when debug lines are enabled, the location is valid (non-default),
     /// and the line/file has changed since the last directive.
     fn emit_line_directive(&mut self, loc: &crate::errors::SourceLoc) {
-        if !self.emit_debug_lines {
+        if !self.emit_line_directives {
             return;
         }
         if loc.line == 0 || loc.file.is_empty() {
@@ -1335,7 +1338,7 @@ impl CodeGen {
         self.emitln("int main(int _m2_argc, char **_m2_argv) {");
         self.indent += 1;
         self.emitln("m2_argc = _m2_argc; m2_argv = _m2_argv;");
-        if self.emit_debug_lines {
+        if self.debug_mode {
             self.emitln("setvbuf(stdout, NULL, _IONBF, 0);");
         }
 
@@ -4669,7 +4672,7 @@ END Test."#;
     }
 
     #[test]
-    fn test_no_line_directives_without_debug() {
+    fn test_line_directives_always_emitted() {
         let src = r#"MODULE Test;
 FROM InOut IMPORT WriteString, WriteLn;
 BEGIN
@@ -4677,7 +4680,8 @@ BEGIN
   WriteLn;
 END Test."#;
         let c = generate(src, false);
-        assert!(!c.contains("#line"), "non-debug output should not contain #line directives");
+        assert!(c.contains("#line"), "non-debug output should still contain #line directives");
+        assert!(!c.contains("setvbuf"), "non-debug output should not contain setvbuf");
     }
 
     #[test]

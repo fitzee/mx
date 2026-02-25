@@ -51,3 +51,24 @@ category = "HTTP"
 
 [m2auth]
 category = "Services"
+
+[m2cli]
+category = "Helpers"
+
+[m2conf]
+category = "Helpers"
+
+[m2fmt]
+category = "Helpers"
+
+[m2glob]
+category = "Helpers"
+
+[m2path]
+category = "Helpers"
+
+[m2sys]
+category = "Helpers"
+
+[m2text]
+category = "Helpers"
