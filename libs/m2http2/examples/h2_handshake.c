@@ -29,23 +29,22 @@ typedef struct m2_ExcFrame {
 
 static __thread m2_ExcFrame *m2_exc_stack = NULL;
 
-static inline m2_ExcFrame *m2_push_exc_frame(void) {
-    m2_ExcFrame *f = (m2_ExcFrame *)malloc(sizeof(m2_ExcFrame));
-    f->prev = m2_exc_stack;
-    f->exception_id = 0;
-    f->exception_name = NULL;
-    f->exception_arg = NULL;
-    m2_exc_stack = f;
-    return f;
-}
+/* Stack-based exception frame macros — no heap allocation.
+   Usage:  m2_ExcFrame _ef;
+           M2_TRY(_ef) { body; M2_ENDTRY(_ef); }
+           M2_CATCH { M2_ENDTRY(_ef); handlers; }           */
+#define M2_TRY(frame) \
+    (frame).prev = m2_exc_stack; \
+    (frame).exception_id = 0; \
+    (frame).exception_name = NULL; \
+    (frame).exception_arg = NULL; \
+    m2_exc_stack = &(frame); \
+    if (setjmp((frame).buf) == 0)
 
-static inline void m2_pop_exc_frame(void) {
-    if (m2_exc_stack) {
-        m2_ExcFrame *f = m2_exc_stack;
-        m2_exc_stack = f->prev;
-        free(f);
-    }
-}
+#define M2_CATCH else
+
+#define M2_ENDTRY(frame) \
+    m2_exc_stack = (frame).prev
 
 static inline void m2_raise(int id, const char *name, void *arg) {
     if (m2_exc_stack) {
@@ -266,6 +265,21 @@ static inline double m2_lcomplex_abs(m2_LONGCOMPLEX a) {
 #define m2_max(T) m2_max_##T
 #define m2_min(T) m2_min_##T
 
+/* ISO SYSTEM.SHIFT — positive n shifts left, negative shifts right, vacated bits = 0 */
+static inline uint32_t m2_shift(uint32_t val, int32_t n) {
+    if (n == 0) return val;
+    if (n > 0) return (n >= 32) ? 0u : (val << n);
+    n = -n;
+    return (n >= 32) ? 0u : (val >> n);
+}
+/* ISO SYSTEM.ROTATE — positive n rotates left, negative rotates right */
+static inline uint32_t m2_rotate(uint32_t val, int32_t n) {
+    n = n % 32;
+    if (n < 0) n += 32;
+    if (n == 0) return val;
+    return (val << n) | (val >> (32 - n));
+}
+
 /* InOut module */
 static int m2_InOut_Done = 1;
 static void m2_WriteString(const char *s) { printf("%s", s); }
@@ -310,16 +324,35 @@ static void m2_WriteRealOct(float r) { printf("%.8A", (double)r); }
 static void m2_ALLOCATE(void **p, uint32_t size) { *p = malloc(size); }
 static void m2_DEALLOCATE(void **p, uint32_t size) { free(*p); *p = NULL; (void)size; }
 
-/* Strings module */
-static void m2_Strings_Assign(const char *src, char *dst) { strcpy(dst, src); }
-static void m2_Strings_Insert(const char *sub, char *dst, uint32_t pos) {
+/* Strings module — bounded, always NUL-terminates, truncates on overflow */
+static void m2_Strings_Assign(const char *src, char *dst, uint32_t dst_high) {
+    size_t cap = (size_t)dst_high + 1;
+    size_t slen = strlen(src);
+    if (slen >= cap) slen = cap - 1;
+    memcpy(dst, src, slen);
+    dst[slen] = '\0';
+}
+static void m2_Strings_Insert(const char *sub, char *dst, uint32_t dst_high, uint32_t pos) {
+    size_t cap = (size_t)dst_high + 1;
     size_t slen = strlen(sub), dlen = strlen(dst);
     if (pos > dlen) pos = (uint32_t)dlen;
-    memmove(dst + pos + slen, dst + pos, dlen - pos + 1);
-    memcpy(dst + pos, sub, slen);
+    size_t new_len = dlen + slen;
+    if (new_len >= cap) new_len = cap - 1;
+    /* how much of the tail after pos can we keep? */
+    size_t tail_dst = pos + slen;
+    size_t tail_keep = (tail_dst < new_len) ? new_len - tail_dst : 0;
+    if (tail_keep > 0)
+        memmove(dst + tail_dst, dst + pos, tail_keep);
+    /* how much of sub fits? */
+    size_t sub_copy = slen;
+    if (pos + sub_copy > new_len) sub_copy = new_len - pos;
+    if (sub_copy > 0)
+        memcpy(dst + pos, sub, sub_copy);
+    dst[new_len] = '\0';
 }
-static void m2_Strings_Delete(char *s, uint32_t pos, uint32_t len) {
+static void m2_Strings_Delete(char *s, uint32_t s_high, uint32_t pos, uint32_t len) {
     size_t slen = strlen(s);
+    (void)s_high; /* delete only shrinks — can never overflow */
     if (pos >= slen) return;
     if (pos + len > slen) len = (uint32_t)(slen - pos);
     memmove(s + pos, s + pos + len, slen - pos - len + 1);
@@ -329,15 +362,24 @@ static uint32_t m2_Strings_Pos(const char *sub, const char *s) {
     return p ? (uint32_t)(p - s) : UINT32_MAX;
 }
 static uint32_t m2_Strings_Length(const char *s) { return (uint32_t)strlen(s); }
-static void m2_Strings_Copy(const char *src, uint32_t pos, uint32_t len, char *dst) {
+static void m2_Strings_Copy(const char *src, uint32_t pos, uint32_t len, char *dst, uint32_t dst_high) {
+    size_t cap = (size_t)dst_high + 1;
     size_t slen = strlen(src);
     if (pos >= slen) { dst[0] = '\0'; return; }
     if (pos + len > slen) len = (uint32_t)(slen - pos);
+    if (len >= cap) len = (uint32_t)(cap - 1);
     memcpy(dst, src + pos, len);
     dst[len] = '\0';
 }
-static void m2_Strings_Concat(const char *s1, const char *s2, char *dst) {
-    strcpy(dst, s1); strcat(dst, s2);
+static void m2_Strings_Concat(const char *s1, const char *s2, char *dst, uint32_t dst_high) {
+    size_t cap = (size_t)dst_high + 1;
+    size_t len1 = strlen(s1), len2 = strlen(s2);
+    if (len1 >= cap) len1 = cap - 1;
+    memcpy(dst, s1, len1);
+    size_t rem = cap - 1 - len1;
+    if (len2 > rem) len2 = rem;
+    memcpy(dst + len1, s2, len2);
+    dst[len1 + len2] = '\0';
 }
 static int32_t m2_Strings_CompareStr(const char *s1, const char *s2) { return (int32_t)strcmp(s1, s2); }
 
@@ -525,11 +567,84 @@ static int m2_BinaryIO_IsEOF(uint32_t fh) {
     return 1;
 }
 
-/* Implementation Module ExportCTest */
+/* Module h2_handshake */
 
-int32_t get_value(void);
+void Main(void);
 
 
-int32_t get_value(void) {
-    return 42;
+void Main(void) {
+    H2Conn c;
+    Buf serverBuf;
+    BytesView v, payload;
+    FrameHeader hdr;
+    Settings s;
+    int ok;
+    uint32_t sid;
+    Http2Conn_InitConn(c);
+    Http2Conn_SendPreface(c);
+    v = Http2Conn_GetOutput(c);
+    m2_WriteString("Client preface+SETTINGS: ");
+    m2_WriteCard(v.len, 0);
+    m2_WriteString(" bytes");
+    m2_WriteLn();
+    if (Http2Frame_CheckPreface(v)) {
+        m2_WriteString("  Preface: valid");
+    } else {
+        m2_WriteString("  Preface: INVALID");
+    }
+    m2_WriteLn();
+    Http2Conn_ClearOutput(c);
+    ByteBuf_Init(serverBuf, 128);
+    Http2Types_InitDefaultSettings(s);
+    s.maxFrameSize = 32768;
+    s.initialWindowSize = 131072;
+    Http2TestUtil_BuildSettingsFrame(serverBuf, s);
+    v = ByteBuf_AsView(serverBuf);
+    Http2TestUtil_ReadFrameHeader(v, hdr, ok);
+    Http2TestUtil_ReadFramePayload(v, hdr, payload, ok);
+    Http2Conn_ProcessFrame(c, hdr, payload, ok);
+    if (ok) {
+        m2_WriteString("Server SETTINGS processed: OK");
+    } else {
+        m2_WriteString("Server SETTINGS: ERROR");
+    }
+    m2_WriteLn();
+    v = Http2Conn_GetOutput(c);
+    m2_WriteString("Client SETTINGS ACK: ");
+    m2_WriteCard(v.len, 0);
+    m2_WriteString(" bytes");
+    m2_WriteLn();
+    Http2Conn_ClearOutput(c);
+    ByteBuf_Clear(serverBuf);
+    Http2TestUtil_BuildSettingsAckFrame(serverBuf);
+    v = ByteBuf_AsView(serverBuf);
+    Http2TestUtil_ReadFrameHeader(v, hdr, ok);
+    Http2TestUtil_ReadFramePayload(v, hdr, payload, ok);
+    Http2Conn_ProcessFrame(c, hdr, payload, ok);
+    m2_WriteString("Server SETTINGS ACK received: ");
+    if (ok) {
+        m2_WriteString("OK");
+    } else {
+        m2_WriteString("ERROR");
+    }
+    m2_WriteLn();
+    sid = Http2Conn_OpenStream(c);
+    m2_WriteString("Opened stream: ");
+    m2_WriteCard(sid, 0);
+    m2_WriteLn();
+    m2_WriteString("Remote maxFrameSize: ");
+    m2_WriteCard(c.remoteSettings.maxFrameSize, 0);
+    m2_WriteLn();
+    m2_WriteString("Remote initialWindowSize: ");
+    m2_WriteCard(c.remoteSettings.initialWindowSize, 0);
+    m2_WriteLn();
+    ByteBuf_Free(serverBuf);
+    Http2Conn_FreeConn(c);
+    m2_WriteString("Handshake complete.");
+    m2_WriteLn();
+}
+int main(int argc, char **argv) {
+    m2_argc = argc; m2_argv = argv;
+    Main();
+    return 0;
 }

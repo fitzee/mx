@@ -71,4 +71,8 @@ int32_t m2sys_rmdir_r(void *path);
 /* Time */
 int64_t m2sys_unix_time(void);
 
+/* File metadata */
+int64_t m2sys_file_mtime(void *path);
+int32_t m2sys_is_symlink(void *path);
+
 #endif

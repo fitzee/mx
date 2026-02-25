@@ -1,0 +1,41 @@
+DEFINITION MODULE Glob;
+(* Gitignore-grade glob pattern matching.
+
+   Pattern syntax:
+   - *       matches any sequence of non-/ characters
+   - ?       matches any single non-/ character
+   - [abc]   character class: matches a, b, or c
+   - [a-z]   character range: matches a through z inclusive
+   - [!x]    negated class: matches any char except x
+   - ** /    matches zero or more directory components
+   - / **    matches everything below a directory
+   - a/** /b matches zero or more intermediate directories
+
+   Utility procedures detect negation (leading !), anchoring
+   (leading /), and path separators for gitignore-style rule
+   classification. *)
+
+(* Full glob match of pattern against text.
+   Returns TRUE if the entire text matches the pattern. *)
+PROCEDURE Match(pattern: ARRAY OF CHAR;
+                text: ARRAY OF CHAR): BOOLEAN;
+
+(* Returns TRUE if pattern starts with '!' (gitignore negation). *)
+PROCEDURE IsNegated(pattern: ARRAY OF CHAR): BOOLEAN;
+
+(* Returns TRUE if pattern starts with '/' (anchored to root). *)
+PROCEDURE IsAnchored(pattern: ARRAY OF CHAR): BOOLEAN;
+
+(* Returns TRUE if pattern contains '/' anywhere
+   (determines path vs basename matching). *)
+PROCEDURE HasPathSep(pattern: ARRAY OF CHAR): BOOLEAN;
+
+(* Copy pattern without leading '!' into out. *)
+PROCEDURE StripNegation(pattern: ARRAY OF CHAR;
+                        VAR out: ARRAY OF CHAR);
+
+(* Copy pattern without leading '/' into out. *)
+PROCEDURE StripAnchor(pattern: ARRAY OF CHAR;
+                      VAR out: ARRAY OF CHAR);
+
+END Glob.

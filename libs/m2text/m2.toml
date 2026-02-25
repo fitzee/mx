@@ -1,0 +1,18 @@
+# m2.toml - m2text: Text analysis library
+#
+# UTF-8 validation, encoding detection, line ending analysis,
+# shebang parsing, and text-vs-binary heuristics.
+# Operates on raw byte buffers via ADDRESS.
+manifest_version=1
+name=m2text
+version=0.1.0
+edition=pim4
+entry=src/Text.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/text_tests.mod
+
+[cc]

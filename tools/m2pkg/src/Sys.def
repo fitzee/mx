@@ -63,4 +63,8 @@ PROCEDURE m2sys_rmdir_r(path: ADDRESS): INTEGER;
 (* Time — returns Unix timestamp in seconds *)
 PROCEDURE m2sys_unix_time(): LONGINT;
 
+(* File metadata *)
+PROCEDURE m2sys_file_mtime(path: ADDRESS): LONGINT;
+PROCEDURE m2sys_is_symlink(path: ADDRESS): INTEGER;
+
 END Sys.

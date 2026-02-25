@@ -1,0 +1,88 @@
+DEFINITION MODULE Fmt;
+(* JSON/CSV/table output formatting.
+
+   All output is written to a caller-provided Buf backed by a
+   stack-allocated ARRAY OF CHAR.  No heap allocation anywhere.
+
+   JSON:  Mini-writer with automatic comma insertion and nesting.
+   CSV:   Field encoder with RFC 4180 quoting rules.
+   Table: Fixed-capacity text table with padded column rendering. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  Buf = RECORD
+    data: ADDRESS;
+    cap:  CARDINAL;
+    pos:  CARDINAL;
+  END;
+
+(* ── Buffer operations ────────────────────────────────── *)
+
+(* Initialise buffer with caller-provided backing array. *)
+PROCEDURE InitBuf(VAR b: Buf; data: ADDRESS; cap: CARDINAL);
+
+(* Current number of bytes written. *)
+PROCEDURE BufLen(VAR b: Buf): CARDINAL;
+
+(* Reset position to 0. *)
+PROCEDURE BufClear(VAR b: Buf);
+
+(* ── JSON mini-writer ─────────────────────────────────── *)
+
+(* Begin JSON object: write '{'. *)
+PROCEDURE JsonStart(VAR b: Buf);
+
+(* End JSON object: write '}'. *)
+PROCEDURE JsonEnd(VAR b: Buf);
+
+(* Begin JSON array: write '['. *)
+PROCEDURE JsonArrayStart(VAR b: Buf);
+
+(* End JSON array: write ']'. *)
+PROCEDURE JsonArrayEnd(VAR b: Buf);
+
+(* Write a JSON key: "key": with comma handling. *)
+PROCEDURE JsonKey(VAR b: Buf; key: ARRAY OF CHAR);
+
+(* Write a JSON string value with escaping and comma handling. *)
+PROCEDURE JsonStr(VAR b: Buf; val: ARRAY OF CHAR);
+
+(* Write a JSON integer value with comma handling. *)
+PROCEDURE JsonInt(VAR b: Buf; val: INTEGER);
+
+(* Write a JSON boolean value with comma handling. *)
+PROCEDURE JsonBool(VAR b: Buf; val: BOOLEAN);
+
+(* Write a JSON null value with comma handling. *)
+PROCEDURE JsonNull(VAR b: Buf);
+
+(* ── CSV encoder ──────────────────────────────────────── *)
+
+(* Write a CSV field, auto-quoting if necessary. *)
+PROCEDURE CsvField(VAR b: Buf; val: ARRAY OF CHAR);
+
+(* Write CSV field separator: comma. *)
+PROCEDURE CsvSep(VAR b: Buf);
+
+(* Write CSV line ending: CRLF. *)
+PROCEDURE CsvNewline(VAR b: Buf);
+
+(* ── Text table renderer ─────────────────────────────── *)
+
+(* Set number of columns (max 16). *)
+PROCEDURE TableSetColumns(n: INTEGER);
+
+(* Set header text for a column. *)
+PROCEDURE TableSetHeader(col: INTEGER; name: ARRAY OF CHAR);
+
+(* Add a row, returns row index. *)
+PROCEDURE TableAddRow(): INTEGER;
+
+(* Set cell value at given row and column. *)
+PROCEDURE TableSetCell(row: INTEGER; col: INTEGER; value: ARRAY OF CHAR);
+
+(* Render the table into the buffer. *)
+PROCEDURE TableRender(VAR b: Buf);
+
+END Fmt.

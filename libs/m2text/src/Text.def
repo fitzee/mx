@@ -1,0 +1,72 @@
+DEFINITION MODULE Text;
+(* Text analysis utilities.
+
+   Operates on raw byte buffers (ADDRESS + length).
+   Provides UTF-8 validation, encoding detection, line ending
+   analysis, shebang parsing, and text-vs-binary heuristics.
+
+   Usage:
+     VAR buf: ARRAY [0..255] OF CHAR;
+         ok: BOOLEAN;
+     Assign(buf, "Hello, world");
+     ok := IsASCII(ADR(buf), Length(buf));   -- TRUE
+     ok := IsValidUTF8(ADR(buf), Length(buf)); -- TRUE *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* ── Line ending constants ─────────────────────────── *)
+
+CONST
+  LineEndNone  = 0;
+  LineEndLF    = 1;
+  LineEndCRLF  = 2;
+  LineEndCR    = 3;
+  LineEndMixed = 4;
+
+(* ── Encoding validation ──────────────────────────── *)
+
+(* Full UTF-8 validation.  Rejects overlong sequences,
+   surrogates (U+D800..U+DFFF), and codepoints > U+10FFFF. *)
+PROCEDURE IsValidUTF8(buf: ADDRESS; len: CARDINAL): BOOLEAN;
+
+(* TRUE if every byte in buf is < 128. *)
+PROCEDURE IsASCII(buf: ADDRESS; len: CARDINAL): BOOLEAN;
+
+(* ── Text / binary heuristic ──────────────────────── *)
+
+(* Heuristic: TRUE if no NUL bytes and control-character
+   ratio is below 5% in the first min(len, 8192) bytes.
+   Control chars: 0x00-0x08, 0x0E-0x1F (TAB, LF, CR excluded). *)
+PROCEDURE IsText(buf: ADDRESS; len: CARDINAL): BOOLEAN;
+
+(* Convenience: NOT IsText(buf, len). *)
+PROCEDURE IsBinary(buf: ADDRESS; len: CARDINAL): BOOLEAN;
+
+(* ── BOM detection ─────────────────────────────────── *)
+
+(* Returns 3 if buf starts with UTF-8 BOM (EF BB BF),
+   0 otherwise.  Requires len >= 3 for a match. *)
+PROCEDURE HasBOM(buf: ADDRESS; len: CARDINAL): INTEGER;
+
+(* ── Line counting ─────────────────────────────────── *)
+
+(* Count lines.  Returns 0 for empty buffer, otherwise
+   number of LF bytes + 1. *)
+PROCEDURE CountLines(buf: ADDRESS; len: CARDINAL): INTEGER;
+
+(* ── Shebang parsing ──────────────────────────────── *)
+
+(* Extract interpreter name from a #! line.
+   "#!/usr/bin/env python\n..." -> "python"
+   "#!/bin/bash\n..."           -> "bash"
+   No shebang -> interp = "". *)
+PROCEDURE ParseShebang(buf: ADDRESS; len: CARDINAL;
+                       VAR interp: ARRAY OF CHAR);
+
+(* ── Line ending detection ─────────────────────────── *)
+
+(* Returns one of the LineEnd* constants.
+   Scans the entire buffer for CR / LF patterns. *)
+PROCEDURE DetectLineEnding(buf: ADDRESS; len: CARDINAL): INTEGER;
+
+END Text.

@@ -1,0 +1,53 @@
+DEFINITION MODULE Path;
+(* Pure path string manipulation.
+   All operations work on UNIX-style paths with '/' separators.
+   No heap allocation; caller provides output buffers.
+   Null-terminated strings (0C). *)
+
+(* Collapse "." and ".." segments, strip trailing "/", merge "//".
+   Root stays as "/". "." stays as ".". ".." stays as "..".
+   Cannot navigate above root: "/../a" -> "/a". *)
+PROCEDURE Normalize(path: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+
+(* Return the file extension including the leading dot.
+   "foo.mod" -> ".mod", "foo.tar.gz" -> ".gz", "foo" -> "".
+   Dotfiles: ".gitignore" -> "" (leading dot is not an extension). *)
+PROCEDURE Extension(path: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+
+(* Remove the extension from the path.
+   "foo.mod" -> "foo", "/a/b.txt" -> "/a/b", "foo" -> "foo". *)
+PROCEDURE StripExt(path: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+
+(* TRUE if path starts with "/". *)
+PROCEDURE IsAbsolute(path: ARRAY OF CHAR): BOOLEAN;
+
+(* Split path into directory and base name.
+   "/a/b/c" -> dir="/a/b", base="c".
+   "foo" -> dir="", base="foo".
+   "/" -> dir="/", base="".
+   "/a" -> dir="/", base="a". *)
+PROCEDURE Split(path: ARRAY OF CHAR;
+                VAR dir: ARRAY OF CHAR; VAR base: ARRAY OF CHAR);
+
+(* Compute a relative path from base to target.
+   Both paths are normalized first.
+   ("/a/b", "/a/c/d") -> "../c/d".
+   ("/a/b", "/a/b") -> ".".
+   ("/a/b/c", "/a") -> "../..". *)
+PROCEDURE RelativeTo(base: ARRAY OF CHAR; target: ARRAY OF CHAR;
+                     VAR out: ARRAY OF CHAR);
+
+(* Join two path components with "/".
+   If b is absolute, b wins: ("a", "/b") -> "/b".
+   Avoids double slashes: ("a/", "b") -> "a/b".
+   Empty a: ("", "b") -> "b". *)
+PROCEDURE Join(a: ARRAY OF CHAR; b: ARRAY OF CHAR;
+               VAR out: ARRAY OF CHAR);
+
+(* Simple glob matching on the basename of path.
+   "*" matches zero or more non-"/" chars.
+   "?" matches exactly one non-"/" char.
+   ("foo.mod", "*.mod") -> TRUE, ("ab", "?") -> FALSE. *)
+PROCEDURE Match(path: ARRAY OF CHAR; pattern: ARRAY OF CHAR): BOOLEAN;
+
+END Path.

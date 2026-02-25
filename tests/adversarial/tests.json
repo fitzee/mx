@@ -494,5 +494,29 @@
     "expected_stdout": "circle\nsquare\nshape\nunknown\n",
     "tags": ["ci"],
     "_comment": "TYPECASE with OBJECT hierarchy: subtype matching via M2_ISA parent chain walk."
+  },
+  {
+    "name": "const_char_literal",
+    "category": "semantics",
+    "dir": "programs/semantics/const_char_literal",
+    "main": "ConstCharLiteral.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "slash-ok\nstar-ok\nhello\nexpr-ok\n",
+    "tags": ["ci"],
+    "_comment": "Regression: CONST x = '/'; must generate char, not const char *."
+  },
+  {
+    "name": "ptr_anon_array_index",
+    "category": "semantics",
+    "dir": "programs/semantics/ptr_anon_array_index",
+    "main": "PtrAnonArrayIndex.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "v0=10\nv3=40\nv7=80\nm4=999\ngt50=999\ngt50=60\ngt50=70\ngt50=80\n",
+    "tags": ["ci"],
+    "_comment": "Regression: bp^[i] for POINTER TO ARRAY must generate bp[i], not (*bp)[i]."
   }
 ]

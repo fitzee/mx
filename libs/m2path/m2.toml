@@ -1,0 +1,17 @@
+# m2.toml - m2path: Pure Modula-2 path string manipulation library
+#
+# Normalize, split, join, match, and compute relative paths.
+# No heap allocation; all operations use caller-provided buffers.
+manifest_version=1
+name=m2path
+version=0.1.0
+edition=pim4
+entry=src/Path.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/path_tests.mod
+
+[cc]

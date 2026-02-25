@@ -455,3 +455,17 @@ int32_t m2sys_rmdir_r(void *path) {
 int64_t m2sys_unix_time(void) {
     return (int64_t)time(NULL);
 }
+
+/* ── File metadata ───────────────────────────────────────────────── */
+
+int64_t m2sys_file_mtime(void *path) {
+    struct stat st;
+    if (stat((const char *)path, &st) != 0) return -1;
+    return (int64_t)st.st_mtime;
+}
+
+int32_t m2sys_is_symlink(void *path) {
+    struct stat st;
+    if (lstat((const char *)path, &st) != 0) return 0;
+    return S_ISLNK(st.st_mode) ? 1 : 0;
+}

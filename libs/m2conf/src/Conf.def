@@ -1,0 +1,33 @@
+DEFINITION MODULE Conf;
+
+(* Parse INI-style config: [section], key=value, # comments, blank lines.
+   Max 16 sections, 32 keys/section, 64-char keys, 256-char values.
+   Keys before any section header belong to section "" (empty string). *)
+
+(* Parse INI-format config from buf (len bytes). Returns TRUE on success. *)
+PROCEDURE Parse(buf: ARRAY OF CHAR; len: CARDINAL): BOOLEAN;
+
+(* Reset all parsed data. *)
+PROCEDURE Clear;
+
+(* Number of sections parsed. *)
+PROCEDURE SectionCount(): INTEGER;
+
+(* Get section name by index. Returns TRUE if index is valid. *)
+PROCEDURE GetSectionName(i: INTEGER; VAR name: ARRAY OF CHAR): BOOLEAN;
+
+(* Number of keys in the named section. Returns -1 if section not found. *)
+PROCEDURE KeyCount(section: ARRAY OF CHAR): INTEGER;
+
+(* Get key name by index within section. Returns TRUE if found. *)
+PROCEDURE GetKey(section: ARRAY OF CHAR; i: INTEGER;
+                 VAR key: ARRAY OF CHAR): BOOLEAN;
+
+(* Get value for section+key. Returns TRUE if found. *)
+PROCEDURE GetValue(section: ARRAY OF CHAR; key: ARRAY OF CHAR;
+                   VAR value: ARRAY OF CHAR): BOOLEAN;
+
+(* Check if key exists in section. *)
+PROCEDURE HasKey(section: ARRAY OF CHAR; key: ARRAY OF CHAR): BOOLEAN;
+
+END Conf.

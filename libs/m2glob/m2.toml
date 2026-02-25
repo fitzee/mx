@@ -1,0 +1,18 @@
+# m2.toml - m2glob: Gitignore-grade glob pattern matching library
+#
+# Supports *, ?, [abc]/[a-z]/[!x] character classes, ** for
+# multi-directory matching. Utility procs for negation, anchoring,
+# and path separator detection.
+manifest_version=1
+name=m2glob
+version=0.1.0
+edition=pim4
+entry=src/Glob.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/glob_tests.mod
+
+[cc]

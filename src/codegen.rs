@@ -1589,7 +1589,16 @@ impl CodeGen {
         self.emit_indent();
         let ctype = self.infer_c_type(&c.expr);
         self.emit(&format!("static const {} {} = ", ctype, c_name));
-        self.gen_expr(&c.expr);
+        if let ExprKind::StringLit(s) = &c.expr.kind {
+            if s.len() == 1 {
+                let ch = s.chars().next().unwrap();
+                self.emit(&format!("'{}'", escape_c_char(ch)));
+            } else {
+                self.gen_expr(&c.expr);
+            }
+        } else {
+            self.gen_expr(&c.expr);
+        }
         self.emit(";\n");
     }
 
@@ -3325,6 +3334,16 @@ impl CodeGen {
                             i += 2;
                             continue;
                         }
+                        if let Selector::Index(indices, _) = &sels[i + 1] {
+                            for idx in indices {
+                                let idx_str = self.expr_to_string(idx);
+                                result.push('[');
+                                result.push_str(&idx_str);
+                                result.push(']');
+                            }
+                            i += 2;
+                            continue;
+                        }
                     }
                     // Standalone deref: wrap with (*...)
                     result = format!("(*{})", result);
@@ -3599,6 +3618,7 @@ impl CodeGen {
         match &expr.kind {
             ExprKind::IntLit(_) => "int32_t".to_string(),
             ExprKind::RealLit(_) => "float".to_string(),
+            ExprKind::StringLit(s) if s.len() == 1 => "char".to_string(),
             ExprKind::StringLit(_) => "const char *".to_string(),
             ExprKind::CharLit(_) => "char".to_string(),
             ExprKind::BoolLit(_) => "int".to_string(),

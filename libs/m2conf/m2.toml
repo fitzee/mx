@@ -1,0 +1,17 @@
+# m2.toml - m2conf: INI-style config file parser
+#
+# Parses [section] / key=value / # comment format.
+# Fixed-size storage, no heap allocation.
+manifest_version=1
+name=m2conf
+version=0.1.0
+edition=pim4
+entry=src/Conf.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/conf_tests.mod
+
+[cc]
