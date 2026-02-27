@@ -21,8 +21,9 @@ pub fn document_symbols(unit: &CompilationUnit) -> Vec<Json> {
                         syms.push(make_symbol(&t.name, 5, &t.loc));
                     }
                     crate::ast::Definition::Var(v) => {
-                        for name in &v.names {
-                            syms.push(make_symbol(name, 13, &v.loc));
+                        for (i, name) in v.names.iter().enumerate() {
+                            let loc = v.name_locs.get(i).unwrap_or(&v.loc);
+                            syms.push(make_symbol(name, 13, loc));
                         }
                     }
                     crate::ast::Definition::Procedure(p) => {
@@ -46,8 +47,9 @@ fn add_block_symbols(block: &crate::ast::Block, syms: &mut Vec<Json>) {
                 syms.push(make_symbol(&t.name, 5, &t.loc));
             }
             crate::ast::Declaration::Var(v) => {
-                for vname in &v.names {
-                    syms.push(make_symbol(vname, 13, &v.loc));
+                for (i, vname) in v.names.iter().enumerate() {
+                    let loc = v.name_locs.get(i).unwrap_or(&v.loc);
+                    syms.push(make_symbol(vname, 13, loc));
                 }
             }
             crate::ast::Declaration::Procedure(p) => {

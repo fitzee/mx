@@ -23,6 +23,7 @@ pub struct ProgramModule {
     pub name: Ident,
     pub priority: Option<Box<Expr>>,
     pub imports: Vec<Import>,
+    pub export: Option<Export>,
     pub block: Block,
     pub is_safe: bool,
     pub is_unsafe: bool,
@@ -144,6 +145,7 @@ pub struct TypeDecl {
 #[derive(Debug, Clone)]
 pub struct VarDecl {
     pub names: Vec<Ident>,
+    pub name_locs: Vec<SourceLoc>,
     pub typ: TypeNode,
     pub loc: SourceLoc,
     pub doc: Option<String>,

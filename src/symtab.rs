@@ -122,6 +122,11 @@ impl SymbolTable {
         self.scopes[scope_id].symbols.values().collect()
     }
 
+    /// Look up a symbol in a specific scope only (no parent chain walk).
+    pub fn lookup_in_scope_direct(&self, scope_id: usize, name: &str) -> Option<&Symbol> {
+        self.scopes.get(scope_id).and_then(|s| s.symbols.get(name))
+    }
+
     pub fn lookup_in_scope(&self, scope_id: usize, name: &str) -> Option<&Symbol> {
         let scope = &self.scopes[scope_id];
         if let Some(sym) = scope.symbols.get(name) {
@@ -182,6 +187,11 @@ impl SymbolTable {
     /// Return the parent scope ID, if any.
     pub fn scope_parent(&self, scope_id: usize) -> Option<usize> {
         self.scopes.get(scope_id).and_then(|s| s.parent)
+    }
+
+    /// Return the name of a scope (e.g. procedure name for a procedure body scope).
+    pub fn scope_name(&self, scope_id: usize) -> Option<&str> {
+        self.scopes.get(scope_id).map(|s| s.name.as_str())
     }
 
     /// Look up a symbol by name, returning both the defining scope ID and the symbol.

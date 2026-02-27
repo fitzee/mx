@@ -234,7 +234,39 @@ impl Parser {
             ));
         }
         self.expect(&TokenKind::Dot)?;
-        Ok(ProgramModule { name, priority, imports, block, is_safe: false, is_unsafe: false, loc, doc: None })
+        Ok(ProgramModule { name, priority, imports, export: None, block, is_safe: false, is_unsafe: false, loc, doc: None })
+    }
+
+    /// Parse a local (nested) module inside a block.
+    /// Syntax: MODULE name ; [IMPORT ...;] [EXPORT [QUALIFIED] name {, name} ;] block END name ;
+    fn parse_local_module(&mut self) -> CompileResult<ProgramModule> {
+        let loc = self.loc();
+        self.expect(&TokenKind::Module)?;
+        let name = self.expect_ident()?;
+        let priority = if self.eat(&TokenKind::LBrack) {
+            let e = self.parse_expression()?;
+            self.expect(&TokenKind::RBrack)?;
+            Some(Box::new(e))
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Semi)?;
+        let imports = self.parse_imports()?;
+        let export = if self.at(&TokenKind::Export) {
+            Some(self.parse_export()?)
+        } else {
+            None
+        };
+        let block = self.parse_block()?;
+        let end_name = self.expect_ident()?;
+        if end_name != name {
+            return Err(CompileError::parser(
+                self.loc(),
+                format!("module name mismatch: expected '{}', found '{}'", name, end_name),
+            ));
+        }
+        self.expect(&TokenKind::Semi)?;
+        Ok(ProgramModule { name, priority, imports, export, block, is_safe: false, is_unsafe: false, loc, doc: None })
     }
 
     fn parse_definition_module(&mut self) -> CompileResult<DefinitionModule> {
@@ -506,7 +538,7 @@ impl Parser {
                 }
                 TokenKind::Module => {
                     let doc = section_doc;
-                    match self.parse_program_module() {
+                    match self.parse_local_module() {
                         Ok(mut m) => { m.doc = doc; decls.push(Declaration::Module(m)); }
                         Err(e) => {
                             self.record_error(e);
@@ -563,14 +595,16 @@ impl Parser {
 
     fn parse_var_decl(&mut self) -> CompileResult<VarDecl> {
         let loc = self.loc();
+        let mut name_locs = vec![loc.clone()];
         let mut names = vec![self.expect_ident()?];
         while self.eat(&TokenKind::Comma) {
+            name_locs.push(self.loc());
             names.push(self.expect_ident()?);
         }
         self.expect(&TokenKind::Colon)?;
         let typ = self.parse_type()?;
         self.expect(&TokenKind::Semi)?;
-        Ok(VarDecl { names, typ, loc, doc: None })
+        Ok(VarDecl { names, name_locs, typ, loc, doc: None })
     }
 
     fn parse_proc_decl(&mut self) -> CompileResult<ProcDecl> {

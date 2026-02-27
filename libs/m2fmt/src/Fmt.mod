@@ -6,17 +6,21 @@ FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
 FROM Strings IMPORT Assign, Length, Concat;
 
 TYPE
-  ByteArray = ARRAY [0..65535] OF CHAR;
-  BytePtr = POINTER TO ByteArray;
+  CharPtr = POINTER TO CHAR;
 
 (* ── Buffer helpers (private) ─────────────────────────── *)
 
+PROCEDURE PutCh(base: ADDRESS; idx: CARDINAL; ch: CHAR);
+VAR p: CharPtr;
+BEGIN
+  p := VAL(ADDRESS, VAL(LONGINT, base) + VAL(LONGINT, idx));
+  p^ := ch
+END PutCh;
+
 PROCEDURE BufAppendChar(VAR b: Buf; ch: CHAR);
-VAR bp: BytePtr;
 BEGIN
   IF b.pos < b.cap THEN
-    bp := b.data;
-    bp^[b.pos] := ch;
+    PutCh(b.data, b.pos, ch);
     INC(b.pos)
   END
 END BufAppendChar;
@@ -32,11 +36,9 @@ BEGIN
 END BufAppendStr;
 
 PROCEDURE BufNullTerm(VAR b: Buf);
-VAR bp: BytePtr;
 BEGIN
   IF b.pos < b.cap THEN
-    bp := b.data;
-    bp^[b.pos] := 0C
+    PutCh(b.data, b.pos, 0C)
   END
 END BufNullTerm;
 

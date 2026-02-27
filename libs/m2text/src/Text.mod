@@ -4,43 +4,54 @@ FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
 FROM Strings IMPORT Assign, Length;
 
 TYPE
-  ByteArray = ARRAY [0..65535] OF CHAR;
-  BytePtr = POINTER TO ByteArray;
+  CharPtr = POINTER TO CHAR;
 
-(* ── Byte read helper (avoids signed char sign-extension) ── *)
+(* ── Byte/char read helpers via POINTER TO CHAR ── *)
 
-PROCEDURE Byte(bp: BytePtr; i: CARDINAL): CARDINAL;
+PROCEDURE PtrAt(base: ADDRESS; idx: CARDINAL): CharPtr;
 BEGIN
-  RETURN ORD(bp^[i]) MOD 256
+  RETURN VAL(ADDRESS, VAL(LONGINT, base) + VAL(LONGINT, idx))
+END PtrAt;
+
+PROCEDURE Byte(base: ADDRESS; i: CARDINAL): CARDINAL;
+VAR p: CharPtr;
+BEGIN
+  p := PtrAt(base, i);
+  RETURN ORD(p^) MOD 256
 END Byte;
+
+PROCEDURE GetCh(base: ADDRESS; i: CARDINAL): CHAR;
+VAR p: CharPtr;
+BEGIN
+  p := PtrAt(base, i);
+  RETURN p^
+END GetCh;
 
 (* ── Encoding validation ──────────────────────────── *)
 
 PROCEDURE IsValidUTF8(buf: ADDRESS; len: CARDINAL): BOOLEAN;
 VAR
-  bp: BytePtr;
   i: CARDINAL;
   b, b1, b2, b3: CARDINAL;
 BEGIN
   IF len = 0 THEN RETURN TRUE END;
-  bp := buf;
   i := 0;
   WHILE i < len DO
-    b := Byte(bp, i);
+    b := Byte(buf, i);
     IF b <= 07FH THEN
       (* Single byte ASCII *)
       INC(i)
     ELSIF (b >= 0C2H) AND (b <= 0DFH) THEN
       (* 2-byte sequence: reject 0xC0, 0xC1 (overlong) by range *)
       IF i + 1 >= len THEN RETURN FALSE END;
-      b1 := Byte(bp, i + 1);
+      b1 := Byte(buf, i + 1);
       IF (b1 < 080H) OR (b1 > 0BFH) THEN RETURN FALSE END;
       INC(i, 2)
     ELSIF (b >= 0E0H) AND (b <= 0EFH) THEN
       (* 3-byte sequence *)
       IF i + 2 >= len THEN RETURN FALSE END;
-      b1 := Byte(bp, i + 1);
-      b2 := Byte(bp, i + 2);
+      b1 := Byte(buf, i + 1);
+      b2 := Byte(buf, i + 2);
       (* Check continuation bytes *)
       IF (b1 < 080H) OR (b1 > 0BFH) THEN RETURN FALSE END;
       IF (b2 < 080H) OR (b2 > 0BFH) THEN RETURN FALSE END;
@@ -52,9 +63,9 @@ BEGIN
     ELSIF (b >= 0F0H) AND (b <= 0F4H) THEN
       (* 4-byte sequence *)
       IF i + 3 >= len THEN RETURN FALSE END;
-      b1 := Byte(bp, i + 1);
-      b2 := Byte(bp, i + 2);
-      b3 := Byte(bp, i + 3);
+      b1 := Byte(buf, i + 1);
+      b2 := Byte(buf, i + 2);
+      b3 := Byte(buf, i + 3);
       (* Check continuation bytes *)
       IF (b1 < 080H) OR (b1 > 0BFH) THEN RETURN FALSE END;
       IF (b2 < 080H) OR (b2 > 0BFH) THEN RETURN FALSE END;
@@ -75,14 +86,12 @@ END IsValidUTF8;
 
 PROCEDURE IsASCII(buf: ADDRESS; len: CARDINAL): BOOLEAN;
 VAR
-  bp: BytePtr;
   i: CARDINAL;
 BEGIN
   IF len = 0 THEN RETURN TRUE END;
-  bp := buf;
   i := 0;
   WHILE i < len DO
-    IF Byte(bp, i) >= 128 THEN RETURN FALSE END;
+    IF Byte(buf, i) >= 128 THEN RETURN FALSE END;
     INC(i)
   END;
   RETURN TRUE
@@ -92,19 +101,17 @@ END IsASCII;
 
 PROCEDURE IsText(buf: ADDRESS; len: CARDINAL): BOOLEAN;
 VAR
-  bp: BytePtr;
   i, scanLen: CARDINAL;
   b: CARDINAL;
   controlCount: CARDINAL;
 BEGIN
   IF len = 0 THEN RETURN TRUE END;
-  bp := buf;
   scanLen := len;
   IF scanLen > 8192 THEN scanLen := 8192 END;
   controlCount := 0;
   i := 0;
   WHILE i < scanLen DO
-    b := Byte(bp, i);
+    b := Byte(buf, i);
     (* NUL byte: definitely binary *)
     IF b = 0 THEN RETURN FALSE END;
     (* Control chars: 0x01-0x08, 0x0E-0x1F *)
@@ -126,13 +133,11 @@ END IsBinary;
 (* ── BOM detection ─────────────────────────────────── *)
 
 PROCEDURE HasBOM(buf: ADDRESS; len: CARDINAL): INTEGER;
-VAR bp: BytePtr;
 BEGIN
   IF len < 3 THEN RETURN 0 END;
-  bp := buf;
-  IF (Byte(bp, 0) = 0EFH) AND
-     (Byte(bp, 1) = 0BBH) AND
-     (Byte(bp, 2) = 0BFH) THEN
+  IF (Byte(buf, 0) = 0EFH) AND
+     (Byte(buf, 1) = 0BBH) AND
+     (Byte(buf, 2) = 0BFH) THEN
     RETURN 3
   END;
   RETURN 0
@@ -142,16 +147,14 @@ END HasBOM;
 
 PROCEDURE CountLines(buf: ADDRESS; len: CARDINAL): INTEGER;
 VAR
-  bp: BytePtr;
   i: CARDINAL;
   count: INTEGER;
 BEGIN
   IF len = 0 THEN RETURN 0 END;
-  bp := buf;
   count := 0;
   i := 0;
   WHILE i < len DO
-    IF Byte(bp, i) = 0AH THEN
+    IF Byte(buf, i) = 0AH THEN
       INC(count)
     END;
     INC(i)
@@ -164,7 +167,6 @@ END CountLines;
 PROCEDURE ParseShebang(buf: ADDRESS; len: CARDINAL;
                        VAR interp: ARRAY OF CHAR);
 VAR
-  bp: BytePtr;
   lineEnd: CARDINAL;
   i, start, nameLen: CARDINAL;
   hasEnv: BOOLEAN;
@@ -173,14 +175,13 @@ VAR
 BEGIN
   interp[0] := 0C;
   IF len < 2 THEN RETURN END;
-  bp := buf;
-  IF (bp^[0] # '#') OR (bp^[1] # '!') THEN RETURN END;
+  IF (GetCh(buf, 0) # '#') OR (GetCh(buf, 1) # '!') THEN RETURN END;
 
   (* Find end of first line *)
   lineEnd := len;
   i := 2;
   WHILE i < len DO
-    IF (Byte(bp, i) = 0AH) OR (Byte(bp, i) = 0DH) THEN
+    IF (Byte(buf, i) = 0AH) OR (Byte(buf, i) = 0DH) THEN
       lineEnd := i;
       i := len (* break *)
     END;
@@ -189,7 +190,7 @@ BEGIN
 
   (* Skip whitespace after #! *)
   i := 2;
-  WHILE (i < lineEnd) AND ((bp^[i] = ' ') OR (bp^[i] = CHR(9))) DO
+  WHILE (i < lineEnd) AND ((GetCh(buf, i) = ' ') OR (GetCh(buf, i) = CHR(9))) DO
     INC(i)
   END;
   IF i >= lineEnd THEN RETURN END;
@@ -198,13 +199,12 @@ BEGIN
   hasEnv := FALSE;
   envPos := i;
   IF lineEnd - i >= 4 THEN
-    (* Search for "/env " or "/env\t" within the path *)
     start := i;
     WHILE start + 4 <= lineEnd DO
-      IF (bp^[start] = '/') AND (bp^[start + 1] = 'e') AND
-         (bp^[start + 2] = 'n') AND (bp^[start + 3] = 'v') AND
+      IF (GetCh(buf, start) = '/') AND (GetCh(buf, start + 1) = 'e') AND
+         (GetCh(buf, start + 2) = 'n') AND (GetCh(buf, start + 3) = 'v') AND
          (start + 4 < lineEnd) AND
-         ((bp^[start + 4] = ' ') OR (bp^[start + 4] = CHR(9))) THEN
+         ((GetCh(buf, start + 4) = ' ') OR (GetCh(buf, start + 4) = CHR(9))) THEN
         hasEnv := TRUE;
         envPos := start + 5;
         start := lineEnd (* break *)
@@ -214,15 +214,13 @@ BEGIN
   END;
 
   IF hasEnv THEN
-    (* Skip whitespace after "env " *)
     WHILE (envPos < lineEnd) AND
-          ((bp^[envPos] = ' ') OR (bp^[envPos] = CHR(9))) DO
+          ((GetCh(buf, envPos) = ' ') OR (GetCh(buf, envPos) = CHR(9))) DO
       INC(envPos)
     END;
-    (* Extract the interpreter word *)
     start := envPos;
     WHILE (envPos < lineEnd) AND
-          (bp^[envPos] # ' ') AND (bp^[envPos] # CHR(9)) DO
+          (GetCh(buf, envPos) # ' ') AND (GetCh(buf, envPos) # CHR(9)) DO
       INC(envPos)
     END;
     nameLen := envPos - start;
@@ -230,26 +228,23 @@ BEGIN
     IF nameLen > maxLen THEN nameLen := maxLen END;
     i := 0;
     WHILE i < nameLen DO
-      interp[i] := bp^[start + i];
+      interp[i] := GetCh(buf, start + i);
       INC(i)
     END;
     IF i <= maxLen THEN
       interp[i] := 0C
     END
   ELSE
-    (* Find basename: after last '/' in the path *)
     start := i;
-    (* Find end of path word *)
     envPos := i;
     WHILE (envPos < lineEnd) AND
-          (bp^[envPos] # ' ') AND (bp^[envPos] # CHR(9)) DO
+          (GetCh(buf, envPos) # ' ') AND (GetCh(buf, envPos) # CHR(9)) DO
       INC(envPos)
     END;
-    (* Find last slash *)
     i := envPos;
     WHILE i > start DO
       DEC(i);
-      IF bp^[i] = '/' THEN
+      IF GetCh(buf, i) = '/' THEN
         start := i + 1;
         i := start (* break *)
       END
@@ -259,7 +254,7 @@ BEGIN
     IF nameLen > maxLen THEN nameLen := maxLen END;
     i := 0;
     WHILE i < nameLen DO
-      interp[i] := bp^[start + i];
+      interp[i] := GetCh(buf, start + i);
       INC(i)
     END;
     IF i <= maxLen THEN
@@ -272,23 +267,21 @@ END ParseShebang;
 
 PROCEDURE DetectLineEnding(buf: ADDRESS; len: CARDINAL): INTEGER;
 VAR
-  bp: BytePtr;
   i: CARDINAL;
   b: CARDINAL;
   crlfCount, lfCount, crCount: CARDINAL;
   types: CARDINAL;
 BEGIN
   IF len = 0 THEN RETURN LineEndNone END;
-  bp := buf;
   crlfCount := 0;
   lfCount := 0;
   crCount := 0;
   i := 0;
   WHILE i < len DO
-    b := Byte(bp, i);
+    b := Byte(buf, i);
     IF b = 0DH THEN
       (* CR: check if followed by LF *)
-      IF (i + 1 < len) AND (Byte(bp, i + 1) = 0AH) THEN
+      IF (i + 1 < len) AND (Byte(buf, i + 1) = 0AH) THEN
         INC(crlfCount);
         INC(i, 2)
       ELSE

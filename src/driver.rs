@@ -825,6 +825,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         } else if opts.opt_level > 0 {
             cmd.arg(format!("-O{}", opts.opt_level));
         }
+        cmd.args(["-ffunction-sections", "-fdata-sections"]);
         cmd.arg("-w"); // suppress warnings for generated code
 
         if opts.verbose {
@@ -869,6 +870,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .arg("-o").arg(&obj_file)
                 .arg(&c_file)
                 .args(["-g", "-O0", "-fno-omit-frame-pointer", "-fno-inline", "-gno-column-info"])
+                .args(["-ffunction-sections", "-fdata-sections"])
                 .arg("-w");
             for flag in &opts.extra_cflags {
                 compile_cmd.arg(flag);
@@ -896,6 +898,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .arg(&obj_file)
                 .arg("-g")
                 .arg("-lm");
+            if cfg!(target_os = "macos") {
+                link_cmd.arg("-Wl,-dead_strip");
+            } else {
+                link_cmd.arg("-Wl,--gc-sections");
+            }
             for extra in &opts.extra_c_files {
                 link_cmd.arg(extra);
             }
@@ -983,6 +990,12 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
             if opts.opt_level > 0 {
                 cmd.arg(format!("-O{}", opts.opt_level));
+            }
+            cmd.args(["-ffunction-sections", "-fdata-sections"]);
+            if cfg!(target_os = "macos") {
+                cmd.arg("-Wl,-dead_strip");
+            } else {
+                cmd.arg("-Wl,--gc-sections");
             }
             cmd.arg("-w");
 

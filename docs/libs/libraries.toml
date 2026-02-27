@@ -72,3 +72,9 @@ category = "Helpers"
 
 [m2text]
 category = "Helpers"
+
+[m2hash]
+category = "Helpers"
+
+[m2tok]
+category = "Helpers"

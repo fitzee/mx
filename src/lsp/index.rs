@@ -696,10 +696,11 @@ fn add_definition_symbols(
             });
         }
         Definition::Var(v) => {
-            for name in &v.names {
+            for (i, name) in v.names.iter().enumerate() {
+                let loc = v.name_locs.get(i).unwrap_or(&v.loc);
                 push_symbol(symbols, by_name, WorkspaceSymbol {
                     name: name.clone(), kind: SymbolKindTag::Variable,
-                    file_uri: uri.to_string(), line: v.loc.line, col: v.loc.col,
+                    file_uri: uri.to_string(), line: loc.line, col: loc.col,
                     container: Some(module_name.to_string()),
                 });
             }
@@ -738,10 +739,11 @@ fn add_declaration_symbols(
             });
         }
         Declaration::Var(v) => {
-            for name in &v.names {
+            for (i, name) in v.names.iter().enumerate() {
+                let loc = v.name_locs.get(i).unwrap_or(&v.loc);
                 push_symbol(symbols, by_name, WorkspaceSymbol {
                     name: name.clone(), kind: SymbolKindTag::Variable,
-                    file_uri: uri.to_string(), line: v.loc.line, col: v.loc.col,
+                    file_uri: uri.to_string(), line: loc.line, col: loc.col,
                     container: Some(module_name.to_string()),
                 });
             }

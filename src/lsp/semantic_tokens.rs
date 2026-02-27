@@ -136,18 +136,36 @@ fn classify_ident(name: &str, line_1: usize, col_1: usize, result: &AnalysisResu
     let lsp_line = line_1.saturating_sub(1);
     let lsp_col = col_1.saturating_sub(1);
 
+    let debug = name.contains("skip");
+
     // Primary path: use ref_index for exact position lookup
     if let Some(reference) = result.ref_index.at_position(lsp_line, lsp_col) {
-        if let Some(sym) = result.symtab.lookup_in_scope(reference.def_scope, &reference.name) {
-            return symbol_to_token_type(sym, &result.symtab, reference.def_scope, &reference.name);
+        if debug {
+            eprintln!("[semtok] {} @{}:{} → ref_index hit: def_scope={} name={}",
+                name, line_1, col_1, reference.def_scope, reference.name);
         }
+        if let Some(sym) = result.symtab.lookup_in_scope(reference.def_scope, &reference.name) {
+            let tt = symbol_to_token_type(sym, &result.symtab, reference.def_scope, &reference.name);
+            if debug {
+                eprintln!("[semtok] {} → kind={:?} tt={}", name, sym.kind, tt);
+            }
+            return tt;
+        }
+    } else if debug {
+        eprintln!("[semtok] {} @{}:{} → ref_index MISS (lsp {}:{})",
+            name, line_1, col_1, lsp_line, lsp_col);
     }
 
     // Fallback: scope-aware lookup (handles imports and other identifiers
     // not in ref_index, same approach as hover/completion)
     let scope_id = result.scope_map.scope_at(line_1, col_1);
     if let Some(sym) = result.symtab.lookup_in_scope(scope_id, name) {
-        return symbol_to_token_type(sym, &result.symtab, scope_id, name);
+        let tt = symbol_to_token_type(sym, &result.symtab, scope_id, name);
+        if debug {
+            eprintln!("[semtok] {} @{}:{} → fallback scope={} kind={:?} tt={}",
+                name, line_1, col_1, scope_id, sym.kind, tt);
+        }
+        return tt;
     }
 
     // Last resort: check if it's a well-known builtin type
@@ -155,6 +173,9 @@ fn classify_ident(name: &str, line_1: usize, col_1: usize, result: &AnalysisResu
         return TT_TYPE;
     }
 
+    if debug {
+        eprintln!("[semtok] {} @{}:{} → NOT FOUND, defaulting to TT_VARIABLE", name, line_1, col_1);
+    }
     TT_VARIABLE // unknown identifiers default to variable
 }
 
@@ -182,14 +203,17 @@ fn symbol_to_token_type(
 }
 
 fn is_parameter(symtab: &crate::symtab::SymbolTable, def_scope: usize, name: &str) -> bool {
-    // A parameter is a Variable in a scope whose parent scope contains
-    // a Procedure with this name in its params list.
+    // A parameter is a Variable defined in a procedure's body scope.
+    // The body scope is named after its procedure, so find the matching
+    // procedure in the parent scope and check its param list.
+    let scope_name = match symtab.scope_name(def_scope) {
+        Some(n) => n,
+        None => return false,
+    };
     if let Some(parent_id) = symtab.scope_parent(def_scope) {
-        for sym in symtab.scope_symbols(parent_id) {
+        if let Some(sym) = symtab.lookup_in_scope_direct(parent_id, scope_name) {
             if let SymbolKind::Procedure { params, .. } = &sym.kind {
-                if params.iter().any(|p| p.name == name) {
-                    return true;
-                }
+                return params.iter().any(|p| p.name == name);
             }
         }
     }
@@ -357,6 +381,152 @@ mod tests {
         if let Some(gt) = g_token {
             assert_eq!(gt.3, TT_VARIABLE, "g should be variable, got {}", gt.3);
         }
+    }
+
+    #[test]
+    fn test_semantic_tokens_multi_var_declaration() {
+        // Multi-var: a, b: INTEGER should both be TT_VARIABLE
+        let source = "MODULE Test;\nVAR\n  a, b: INTEGER;\nBEGIN\nEND Test.\n";
+        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let data = collect_semantic_tokens(source, "test.mod", &result);
+
+        // Decode to absolute positions
+        let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
+        let mut pl = 0u32;
+        let mut pc = 0u32;
+        let mut i = 0;
+        // Also re-lex to get token text
+        let mut lexer = crate::lexer::Lexer::new(source, "test.mod");
+        let all_tokens = lexer.tokenize().unwrap();
+        let _tok_idx = 0;
+        while i + 4 < data.len() {
+            let dl = data[i]; let dc = data[i+1]; let len = data[i+2]; let tt = data[i+3];
+            let line = pl + dl;
+            let col = if dl == 0 { pc + dc } else { dc };
+            // Find token name from source
+            let name = source.lines().nth(line as usize)
+                .map(|l| &l[col as usize..(col as usize + len as usize).min(l.len())])
+                .unwrap_or("?");
+            tokens_abs.push((line, col, len, tt, name.to_string()));
+            pl = line; pc = col;
+            i += 5;
+        }
+
+        // Find "a" and "b" tokens on line 2 (0-based)
+        let a_token = tokens_abs.iter().find(|t| t.4 == "a" && t.0 == 2);
+        let b_token = tokens_abs.iter().find(|t| t.4 == "b" && t.0 == 2);
+
+        assert!(a_token.is_some(), "token 'a' not found; tokens: {:?}", tokens_abs);
+        assert!(b_token.is_some(), "token 'b' not found; tokens: {:?}", tokens_abs);
+        assert_eq!(a_token.unwrap().3, TT_VARIABLE,
+            "'a' should be TT_VARIABLE({}), got {}. All tokens: {:?}",
+            TT_VARIABLE, a_token.unwrap().3, tokens_abs);
+        assert_eq!(b_token.unwrap().3, TT_VARIABLE,
+            "'b' should be TT_VARIABLE({}), got {}. All tokens: {:?}",
+            TT_VARIABLE, b_token.unwrap().3, tokens_abs);
+    }
+
+    #[test]
+    fn test_semantic_tokens_impl_module_multi_var() {
+        // Replicate exact scenario: IMPLEMENTATION MODULE with module-level multi-var
+        let source = "IMPLEMENTATION MODULE Scan;\n\nVAR\n  storeEntries: BOOLEAN;\n  skipVendored, skipGenerated: BOOLEAN;\n\nPROCEDURE Foo;\nBEGIN\n  skipVendored := TRUE;\n  skipGenerated := FALSE\nEND Foo;\n\nBEGIN\nEND Scan.\n";
+        let result = analyze::analyze_source(source, "Scan.mod", &[]);
+        let data = collect_semantic_tokens(source, "Scan.mod", &result);
+
+        // Decode to absolute positions with names
+        let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
+        let mut pl = 0u32;
+        let mut pc = 0u32;
+        let mut i = 0;
+        while i + 4 < data.len() {
+            let dl = data[i]; let dc = data[i+1]; let len = data[i+2]; let tt = data[i+3];
+            let line = pl + dl;
+            let col = if dl == 0 { pc + dc } else { dc };
+            let name = source.lines().nth(line as usize)
+                .map(|l| {
+                    let start = col as usize;
+                    let end = (start + len as usize).min(l.len());
+                    if start <= l.len() { &l[start..end] } else { "?" }
+                })
+                .unwrap_or("?");
+            tokens_abs.push((line, col, len, tt, name.to_string()));
+            pl = line; pc = col;
+            i += 5;
+        }
+
+        // Check both vars get TT_VARIABLE at definition sites (line 4, 0-based)
+        let sv_def = tokens_abs.iter().find(|t| t.4 == "skipVendored" && t.0 == 4);
+        let sg_def = tokens_abs.iter().find(|t| t.4 == "skipGenerated" && t.0 == 4);
+
+        assert!(sv_def.is_some(), "skipVendored def not found; tokens: {:?}", tokens_abs);
+        assert!(sg_def.is_some(), "skipGenerated def not found; tokens: {:?}", tokens_abs);
+        assert_eq!(sv_def.unwrap().3, TT_VARIABLE,
+            "skipVendored def: expected TT_VARIABLE({}), got {}.\nAll tokens: {:?}",
+            TT_VARIABLE, sv_def.unwrap().3, tokens_abs);
+        assert_eq!(sg_def.unwrap().3, TT_VARIABLE,
+            "skipGenerated def: expected TT_VARIABLE({}), got {}.\nAll tokens: {:?}",
+            TT_VARIABLE, sg_def.unwrap().3, tokens_abs);
+
+        // Check use sites
+        let sv_use = tokens_abs.iter().find(|t| t.4 == "skipVendored" && t.0 == 8);
+        let sg_use = tokens_abs.iter().find(|t| t.4 == "skipGenerated" && t.0 == 9);
+        if let Some(t) = sv_use {
+            assert_eq!(t.3, TT_VARIABLE, "skipVendored use: expected TT_VARIABLE, got {}", t.3);
+        }
+        if let Some(t) = sg_use {
+            assert_eq!(t.3, TT_VARIABLE, "skipGenerated use: expected TT_VARIABLE, got {}", t.3);
+        }
+    }
+
+    #[test]
+    fn test_semantic_tokens_multi_var_in_procedure() {
+        // Multi-var inside a procedure: both should be TT_VARIABLE, not TT_PARAMETER
+        let source = "MODULE Test;\nPROCEDURE Foo;\nVAR\n  skipVendored, skipGenerated: BOOLEAN;\nBEGIN\n  skipVendored := TRUE;\n  skipGenerated := FALSE\nEND Foo;\nBEGIN\nEND Test.\n";
+        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let data = collect_semantic_tokens(source, "test.mod", &result);
+
+        // Decode to absolute positions with names
+        let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
+        let mut pl = 0u32;
+        let mut pc = 0u32;
+        let mut i = 0;
+        while i + 4 < data.len() {
+            let dl = data[i]; let dc = data[i+1]; let len = data[i+2]; let tt = data[i+3];
+            let line = pl + dl;
+            let col = if dl == 0 { pc + dc } else { dc };
+            let name = source.lines().nth(line as usize)
+                .map(|l| &l[col as usize..(col as usize + len as usize).min(l.len())])
+                .unwrap_or("?");
+            tokens_abs.push((line, col, len, tt, name.to_string()));
+            pl = line; pc = col;
+            i += 5;
+        }
+
+        // Check definition sites (line 3, 0-based)
+        let sv_def = tokens_abs.iter().find(|t| t.4 == "skipVendored" && t.0 == 3);
+        let sg_def = tokens_abs.iter().find(|t| t.4 == "skipGenerated" && t.0 == 3);
+
+        assert!(sv_def.is_some(), "skipVendored def not found; tokens: {:?}", tokens_abs);
+        assert!(sg_def.is_some(), "skipGenerated def not found; tokens: {:?}", tokens_abs);
+        assert_eq!(sv_def.unwrap().3, TT_VARIABLE,
+            "skipVendored def should be TT_VARIABLE({}), got {}. All: {:?}",
+            TT_VARIABLE, sv_def.unwrap().3, tokens_abs);
+        assert_eq!(sg_def.unwrap().3, TT_VARIABLE,
+            "skipGenerated def should be TT_VARIABLE({}), got {}. All: {:?}",
+            TT_VARIABLE, sg_def.unwrap().3, tokens_abs);
+
+        // Check use sites (lines 5 and 6, 0-based)
+        let sv_use = tokens_abs.iter().find(|t| t.4 == "skipVendored" && t.0 == 5);
+        let sg_use = tokens_abs.iter().find(|t| t.4 == "skipGenerated" && t.0 == 6);
+
+        assert!(sv_use.is_some(), "skipVendored use not found; tokens: {:?}", tokens_abs);
+        assert!(sg_use.is_some(), "skipGenerated use not found; tokens: {:?}", tokens_abs);
+        assert_eq!(sv_use.unwrap().3, TT_VARIABLE,
+            "skipVendored use should be TT_VARIABLE({}), got {}",
+            TT_VARIABLE, sv_use.unwrap().3);
+        assert_eq!(sg_use.unwrap().3, TT_VARIABLE,
+            "skipGenerated use should be TT_VARIABLE({}), got {}",
+            TT_VARIABLE, sg_use.unwrap().3);
     }
 
     #[test]

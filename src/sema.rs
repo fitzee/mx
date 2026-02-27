@@ -173,6 +173,21 @@ impl SemanticAnalyzer {
             doc: None,
         };
         self.define_sym(sym, &m.loc);
+
+        // Re-export names from EXPORT clause into the parent (current) scope
+        if let Some(ref export) = m.export {
+            for name in &export.names {
+                if let Some(sym) = self.symtab.lookup_in_scope_direct(scope_id, name) {
+                    let mut forwarded = sym.clone();
+                    forwarded.exported = false; // not exported further
+                    self.define_sym(forwarded, &export.loc);
+                } else {
+                    self.error(&export.loc, format!(
+                        "exported name '{}' not found in local module '{}'", name, m.name
+                    ));
+                }
+            }
+        }
     }
 
     fn analyze_definition_module(&mut self, m: &DefinitionModule) {
@@ -231,7 +246,7 @@ impl SemanticAnalyzer {
                 }
                 Definition::Var(v) => {
                     let type_id = self.resolve_type_node(&v.typ);
-                    for name in &v.names {
+                    for (i, name) in v.names.iter().enumerate() {
                         let sym = Symbol {
                             name: name.clone(),
                             kind: SymbolKind::Variable,
@@ -241,7 +256,8 @@ impl SemanticAnalyzer {
                             loc: SourceLoc::default(),
                             doc: v.doc.clone(),
                         };
-                        self.define_sym(sym, &v.loc);
+                        let loc = v.name_locs.get(i).unwrap_or(&v.loc);
+                        self.define_sym(sym, loc);
                     }
                 }
                 Definition::Procedure(h) => {
@@ -487,7 +503,7 @@ impl SemanticAnalyzer {
             }
             Declaration::Var(v) => {
                 let type_id = self.resolve_type_node(&v.typ);
-                for name in &v.names {
+                for (i, name) in v.names.iter().enumerate() {
                     let sym = Symbol {
                         name: name.clone(),
                         kind: SymbolKind::Variable,
@@ -497,7 +513,8 @@ impl SemanticAnalyzer {
                         loc: SourceLoc::default(),
                         doc: v.doc.clone(),
                     };
-                    self.define_sym(sym, &v.loc);
+                    let loc = v.name_locs.get(i).unwrap_or(&v.loc);
+                    self.define_sym(sym, loc);
                 }
             }
             Declaration::Procedure(p) => {

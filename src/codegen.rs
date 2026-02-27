@@ -1352,6 +1352,18 @@ impl CodeGen {
             self.emitln(&format!("{}_init();", mod_name));
         }
 
+        // Initialize local (nested) modules — run their BEGIN bodies
+        for decl in &m.block.decls {
+            if let Declaration::Module(local_mod) = decl {
+                if let Some(stmts) = &local_mod.block.body {
+                    self.emitln(&format!("/* Init local module {} */", local_mod.name));
+                    for stmt in stmts {
+                        self.gen_statement(stmt);
+                    }
+                }
+            }
+        }
+
         self.in_module_body = true;
         if let Some(stmts) = &m.block.body {
             self.emit_line_directive(&m.block.loc);
