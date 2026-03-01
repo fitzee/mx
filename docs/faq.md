@@ -24,7 +24,7 @@ The LSP server uses a synchronous event loop with two background threads (stdin 
 
 ## How do I report a bug?
 
-File an issue at https://github.com/anthropics/claude-code/issues with:
+File an issue at https://github.com/fitzee/m2c/issues with:
 
 - The `.mod` source that triggers the bug
 - The compiler command you ran
