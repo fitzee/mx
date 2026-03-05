@@ -34,7 +34,7 @@ PROCEDURE m2sys_strlen(s: ADDRESS): INTEGER;
 
 (* File operations *)
 PROCEDURE m2sys_sha256_file(path: ADDRESS; hexOut: ADDRESS): INTEGER;
-PROCEDURE m2sys_file_size(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_file_size(path: ADDRESS): LONGINT;
 PROCEDURE m2sys_copy_file(src: ADDRESS; dst: ADDRESS): INTEGER;
 PROCEDURE m2sys_rename(oldPath: ADDRESS; newPath: ADDRESS): INTEGER;
 

@@ -22,7 +22,8 @@ IMPLEMENTATION MODULE Http2Server;
                                SetServerDispatch, SetConnCleanup;
   FROM Http2ServerMetrics IMPORT Metrics, MetricsInit,
                                   IncConnsAccepted, IncConnsActive,
-                                  DecConnsActive, IncConnsClosed;
+                                  DecConnsActive, IncConnsClosed,
+                                  IncConnsRejected;
   FROM Http2ServerLog IMPORT LogInit, LogConn, LogProtocol;
   FROM Log IMPORT Logger;
   FROM Sockets IMPORT Socket, SockAddr, SocketCreate, Bind, Listen,
@@ -56,6 +57,8 @@ IMPLEMENTATION MODULE Http2Server;
       conns:        ARRAY [0..MaxServerConns-1] OF ConnPtr;
       numConns:     CARDINAL;
       nextConnId:   CARDINAL;
+      connLimit:    CARDINAL;    (* effective max connections, <= MaxServerConns *)
+      streamLimit:  CARDINAL;    (* effective max streams per conn, <= MaxStreamSlots *)
       running:      BOOLEAN;
       draining:     BOOLEAN;
     END;
@@ -124,6 +127,16 @@ IMPLEMENTATION MODULE Http2Server;
     sp^.nextConnId := 1;
     sp^.running := FALSE;
     sp^.draining := FALSE;
+
+    (* Compute effective limits: clamp to compile-time upper bounds *)
+    sp^.connLimit := opts.maxConns;
+    IF (sp^.connLimit = 0) OR (sp^.connLimit > MaxServerConns) THEN
+      sp^.connLimit := MaxServerConns;
+    END;
+    sp^.streamLimit := opts.maxStreams;
+    IF (sp^.streamLimit = 0) OR (sp^.streamLimit > MaxStreamSlots) THEN
+      sp^.streamLimit := MaxStreamSlots;
+    END;
 
     FOR i := 0 TO MaxServerConns - 1 DO
       sp^.conns[i] := NIL;
@@ -272,6 +285,8 @@ IMPLEMENTATION MODULE Http2Server;
     tlsSess: TLSSession;
     tlsSt: TLS.Status;
     sched: Scheduler.Scheduler;
+    extraFd: Socket;
+    extraPeer: SockAddr;
   BEGIN
     sp := ServerRecPtr(user);
     IF sp = NIL THEN RETURN END;
@@ -284,13 +299,31 @@ IMPLEMENTATION MODULE Http2Server;
 
     IncConnsAccepted(sp^.metrics);
 
-    (* Find a free slot *)
+    (* Find a free slot within the runtime connLimit *)
     idx := 0;
-    WHILE (idx < MaxServerConns) AND (sp^.conns[idx] # NIL) DO
+    WHILE (idx < sp^.connLimit) AND (sp^.conns[idx] # NIL) DO
       INC(idx);
     END;
-    IF idx >= MaxServerConns THEN
+    IF idx >= sp^.connLimit THEN
+      (* At capacity — refuse at TCP level.
+         We cannot send HTTP/2 GOAWAY without completing TLS + H2 setup,
+         so the only practical option is to close immediately. *)
       CloseSocket(clientFd);
+      IncConnsRejected(sp^.metrics);
+      LogProtocol(sp^.lg, 0, "reject", "conn limit reached");
+
+      (* Drain any remaining pending connections from the backlog
+         to avoid the event loop busy-looping on the still-readable
+         listen socket. *)
+      LOOP
+        sockSt := Accept(Socket(fd), extraFd, extraPeer);
+        IF sockSt # Sockets.OK THEN
+          EXIT;
+        END;
+        CloseSocket(extraFd);
+        IncConnsAccepted(sp^.metrics);
+        IncConnsRejected(sp^.metrics);
+      END;
       RETURN;
     END;
 
@@ -322,6 +355,8 @@ IMPLEMENTATION MODULE Http2Server;
                   INTEGER(clientFd), peer, cp) THEN
       cp^.tlsSess := tlsSess;
       cp^.loop := sp^.loop;
+      (* Apply runtime stream limit *)
+      cp^.localSettings.maxConcurrentStreams := sp^.streamLimit;
       sp^.conns[idx] := cp;
       INC(sp^.numConns);
       INC(sp^.nextConnId);

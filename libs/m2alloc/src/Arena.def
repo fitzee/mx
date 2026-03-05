@@ -20,6 +20,8 @@ DEFINITION MODULE Arena;
 FROM SYSTEM IMPORT ADDRESS;
 
 TYPE
+  OverflowProc = PROCEDURE(ADDRESS, CARDINAL);
+
   Arena = RECORD
     base:      ADDRESS;
     size:      CARDINAL;
@@ -27,6 +29,7 @@ TYPE
     highwater: CARDINAL;
     failed:    CARDINAL;
     poison:    BOOLEAN;
+    overflow:  OverflowProc;
   END;
 
 (* ── Lifecycle ───────────────────────────────────────── *)
@@ -73,5 +76,13 @@ PROCEDURE PoisonOn(VAR a: Arena);
 
 (* Disable poison. *)
 PROCEDURE PoisonOff(VAR a: Arena);
+
+(* ── Overflow handling ─────────────────────────────── *)
+
+(* Set a callback invoked when Alloc would fail.
+   The handler receives the arena address and requested size.
+   It may grow the backing store, log, or HALT.
+   If the handler does not resolve the overflow, Alloc returns NIL. *)
+PROCEDURE SetOverflowHandler(VAR a: Arena; handler: OverflowProc);
 
 END Arena.

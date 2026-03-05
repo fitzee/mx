@@ -66,6 +66,7 @@ DEFINITION MODULE Gfx;
 
   (* Renderer *)
   PROCEDURE CreateRenderer(win: Window; flags: INTEGER): Renderer;
+  PROCEDURE UpdateLogicalSize(ren: Renderer; win: Window);
   PROCEDURE DestroyRenderer(ren: Renderer);
   PROCEDURE Present(ren: Renderer);
   PROCEDURE OutputWidth(ren: Renderer): INTEGER;

@@ -129,6 +129,31 @@ PROCEDURE All(s: Scheduler; fs: ARRAY OF Future;
 PROCEDURE Race(s: Scheduler; fs: ARRAY OF Future;
                VAR out: Future): Status;
 
+(* ---- Cancellation ---- *)
+
+TYPE
+  CancelToken = ADDRESS;  (* opaque *)
+
+(* Create a new cancellation token on scheduler s. *)
+PROCEDURE CancelTokenCreate(s: Scheduler; VAR ct: CancelToken): Status;
+
+(* Signal cancellation on the token. *)
+PROCEDURE Cancel(ct: CancelToken);
+
+(* Check if a token has been cancelled. *)
+PROCEDURE IsCancelled(ct: CancelToken): BOOLEAN;
+
+(* Register a callback to be called when the token is cancelled.
+   If already cancelled, fn is enqueued immediately. *)
+PROCEDURE OnCancel(ct: CancelToken; fn: VoidFn; ctx: ADDRESS);
+
+(* Like Map, but checks the cancel token before invoking fn.
+   If cancelled, rejects with error code -1 ("cancelled"). *)
+PROCEDURE MapCancellable(s: Scheduler; f: Future;
+                         fn: ThenFn; user: ADDRESS;
+                         ct: CancelToken;
+                         VAR out: Future): Status;
+
 (* ---- Helpers ---- *)
 
 PROCEDURE MakeValue(tag: INTEGER; ptr: ADDRESS; VAR v: Value);

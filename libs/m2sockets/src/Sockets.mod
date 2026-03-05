@@ -6,6 +6,8 @@ FROM SocketsBridge IMPORT
      m2_bind_any, m2_listen, m2_accept,
      m2_connect_host_port,
      m2_send, m2_recv,
+     m2_sendto, m2_recvfrom,
+     m2_set_multicast, m2_set_broadcast,
      m2_set_nonblocking, m2_set_reuseaddr,
      m2_errno, m2_strerror;
 
@@ -211,6 +213,62 @@ BEGIN
     (* If buffer full, keep reading until LF to consume the line *)
   END
 END RecvLine;
+
+(* ── UDP (datagram) I/O ──────────────────────────────── *)
+
+PROCEDURE SendTo(s: Socket; VAR buf: ARRAY OF BYTE;
+                 len: CARDINAL;
+                 VAR addr: SockAddr): INTEGER;
+VAR n: INTEGER;
+BEGIN
+  IF s = InvalidSocket THEN RETURN -1 END;
+  n := m2_sendto(s, ADR(buf), INTEGER(len),
+                 ORD(addr.addrV4[0]),
+                 ORD(addr.addrV4[1]),
+                 ORD(addr.addrV4[2]),
+                 ORD(addr.addrV4[3]),
+                 INTEGER(addr.port));
+  RETURN n
+END SendTo;
+
+PROCEDURE RecvFrom(s: Socket; VAR buf: ARRAY OF BYTE;
+                   maxLen: CARDINAL;
+                   VAR addr: SockAddr): INTEGER;
+VAR n, pt: INTEGER;
+    addr4: ARRAY [0..3] OF BYTE;
+BEGIN
+  IF s = InvalidSocket THEN RETURN -1 END;
+  pt := 0;
+  n := m2_recvfrom(s, ADR(buf), INTEGER(maxLen), ADR(addr4), pt);
+  IF n >= 0 THEN
+    addr.family := AF_INET;
+    addr.port := CARDINAL(pt);
+    addr.addrV4[0] := addr4[0];
+    addr.addrV4[1] := addr4[1];
+    addr.addrV4[2] := addr4[2];
+    addr.addrV4[3] := addr4[3]
+  END;
+  RETURN n
+END RecvFrom;
+
+PROCEDURE SetMulticastGroup(s: Socket; group: ARRAY OF CHAR;
+                            join: BOOLEAN): Status;
+VAR flag: INTEGER;
+BEGIN
+  IF s = InvalidSocket THEN RETURN Invalid END;
+  IF join THEN flag := 1 ELSE flag := 0 END;
+  IF m2_set_multicast(s, ADR(group), flag) < 0 THEN RETURN MapError() END;
+  RETURN OK
+END SetMulticastGroup;
+
+PROCEDURE SetBroadcast(s: Socket; enable: BOOLEAN): Status;
+VAR flag: INTEGER;
+BEGIN
+  IF s = InvalidSocket THEN RETURN Invalid END;
+  IF enable THEN flag := 1 ELSE flag := 0 END;
+  IF m2_set_broadcast(s, flag) < 0 THEN RETURN MapError() END;
+  RETURN OK
+END SetBroadcast;
 
 (* ── Non-blocking ───────────────────────────────────── *)
 

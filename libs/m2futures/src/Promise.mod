@@ -576,6 +576,174 @@ BEGIN
 END Race;
 
 (* ================================================================
+   Public API -- Cancellation
+   ================================================================ *)
+
+CONST
+  POOL_CT = 64;      (* cancel-token pool capacity *)
+  MaxCancelCBs = 8;  (* max callbacks per token *)
+
+TYPE
+  CancelCB = RECORD
+    fn:  VoidFn;
+    ctx: ADDRESS;
+  END;
+
+  CancelRec = RECORD
+    cancelled: BOOLEAN;
+    sched:     Scheduler;
+    cbs:       ARRAY [0..MaxCancelCBs-1] OF CancelCB;
+    cbCount:   INTEGER;
+    poolIdx:   CARDINAL;
+  END;
+
+  CancelPtr = POINTER TO CancelRec;
+
+VAR
+  ctPool:  ARRAY [0..POOL_CT-1] OF CancelRec;
+  ctFree:  ARRAY [0..POOL_CT-1] OF CARDINAL;
+  ctTop:   INTEGER;
+  ctReady: BOOLEAN;
+
+PROCEDURE InitCtPool;
+VAR i: CARDINAL;
+BEGIN
+  FOR i := 0 TO POOL_CT - 1 DO
+    ctPool[i].poolIdx   := i;
+    ctPool[i].cancelled := FALSE;
+    ctPool[i].cbCount   := 0;
+    ctFree[i] := i;
+  END;
+  ctTop := POOL_CT - 1;
+  ctReady := TRUE
+END InitCtPool;
+
+PROCEDURE AllocCancel(VAR p: CancelPtr): BOOLEAN;
+VAR idx: CARDINAL;
+BEGIN
+  IF ctTop < 0 THEN RETURN FALSE END;
+  idx := ctFree[ctTop];
+  ctTop := ctTop - 1;
+  p := ADR(ctPool[idx]);
+  RETURN TRUE
+END AllocCancel;
+
+PROCEDURE CancelTokenCreate(s: Scheduler; VAR ct: CancelToken): Status;
+VAR cp: CancelPtr;
+BEGIN
+  IF NOT ctReady THEN InitCtPool END;
+  IF s = NIL THEN
+    ct := NIL;
+    RETURN Invalid
+  END;
+  IF NOT AllocCancel(cp) THEN
+    ct := NIL;
+    RETURN OutOfMemory
+  END;
+  cp^.cancelled := FALSE;
+  cp^.sched     := s;
+  cp^.cbCount   := 0;
+  ct := cp;
+  RETURN OK
+END CancelTokenCreate;
+
+PROCEDURE Cancel(ct: CancelToken);
+VAR
+  cp: CancelPtr;
+  i: INTEGER;
+  r: Result;
+BEGIN
+  IF ct = NIL THEN RETURN END;
+  cp := ct;
+  IF cp^.cancelled THEN RETURN END;
+  cp^.cancelled := TRUE;
+  r.isOk := FALSE;
+  r.e.code := -1;
+  r.e.ptr := NIL;
+  FOR i := 0 TO cp^.cbCount - 1 DO
+    cp^.cbs[i].fn(r, cp^.cbs[i].ctx)
+  END;
+  cp^.cbCount := 0
+END Cancel;
+
+PROCEDURE IsCancelled(ct: CancelToken): BOOLEAN;
+VAR cp: CancelPtr;
+BEGIN
+  IF ct = NIL THEN RETURN FALSE END;
+  cp := ct;
+  RETURN cp^.cancelled
+END IsCancelled;
+
+PROCEDURE OnCancel(ct: CancelToken; fn: VoidFn; ctx: ADDRESS);
+VAR
+  cp: CancelPtr;
+  r: Result;
+BEGIN
+  IF ct = NIL THEN RETURN END;
+  cp := ct;
+  IF cp^.cancelled THEN
+    r.isOk := FALSE;
+    r.e.code := -1;
+    r.e.ptr := NIL;
+    fn(r, ctx);
+    RETURN
+  END;
+  IF cp^.cbCount < MaxCancelCBs THEN
+    cp^.cbs[cp^.cbCount].fn  := fn;
+    cp^.cbs[cp^.cbCount].ctx := ctx;
+    INC(cp^.cbCount)
+  END
+END OnCancel;
+
+PROCEDURE CancellableThen(inRes: Result; user: ADDRESS; VAR outRes: Result);
+(* Internal: wrapper for MapCancellable. user points to a CancMapRec. *)
+VAR
+  cm: CancMapPtr;
+  cp: CancelPtr;
+  e: Error;
+BEGIN
+  cm := user;
+  cp := cm^.ct;
+  IF cp^.cancelled THEN
+    outRes.isOk := FALSE;
+    outRes.e.code := -1;
+    outRes.e.ptr := NIL;
+    RETURN
+  END;
+  cm^.fn(inRes, cm^.user, outRes)
+END CancellableThen;
+
+TYPE
+  CancMapRec = RECORD
+    fn:   ThenFn;
+    user: ADDRESS;
+    ct:   CancelToken;
+  END;
+  CancMapPtr = POINTER TO CancMapRec;
+
+VAR
+  cancMaps: ARRAY [0..63] OF CancMapRec;
+  cancMapTop: INTEGER;
+
+PROCEDURE MapCancellable(s: Scheduler; f: Future;
+                         fn: ThenFn; user: ADDRESS;
+                         ct: CancelToken;
+                         VAR out: Future): Status;
+VAR cm: CancMapPtr;
+BEGIN
+  IF cancMapTop < 0 THEN
+    out := NIL;
+    RETURN OutOfMemory
+  END;
+  cm := ADR(cancMaps[cancMapTop]);
+  DEC(cancMapTop);
+  cm^.fn   := fn;
+  cm^.user := user;
+  cm^.ct   := ct;
+  RETURN Map(s, f, CancellableThen, cm, out)
+END MapCancellable;
+
+(* ================================================================
    Public API -- Helpers
    ================================================================ *)
 
@@ -605,5 +773,7 @@ END Fail;
 
 BEGIN
   poolsReady := FALSE;
+  ctReady := FALSE;
+  cancMapTop := 63;
   execContProc := ExecuteCont
 END Promise.

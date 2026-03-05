@@ -28,6 +28,14 @@ int32_t m2_recv(int32_t fd, void *buf, int32_t max);
 int32_t m2_set_nonblocking(int32_t fd, int32_t enable);
 int32_t m2_set_reuseaddr(int32_t fd, int32_t enable);
 
+/* UDP I/O */
+int32_t m2_sendto(int32_t fd, void *buf, int32_t len,
+                   uint8_t a, uint8_t b, uint8_t c, uint8_t d, int32_t port);
+int32_t m2_recvfrom(int32_t fd, void *buf, int32_t maxlen,
+                     void *addr_out, int32_t *port_out);
+int32_t m2_set_multicast(int32_t fd, const char *group, int32_t join);
+int32_t m2_set_broadcast(int32_t fd, int32_t enable);
+
 /* Error */
 int32_t m2_errno(void);
 void    m2_strerror(int32_t errnum, void *buf, int32_t buflen);

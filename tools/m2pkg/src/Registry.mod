@@ -941,6 +941,7 @@ VAR
   ctype: ARRAY [0..31] OF CHAR;
   rmode: ARRAY [0..1] OF CHAR;
   rc, vl, fh, fileSize, bytesRead: INTEGER;
+  fileSize64: LONGINT;
   jwtLen: CARDINAL;
   bodyPtr: ADDRESS;
   resp: ResponsePtr;
@@ -987,11 +988,12 @@ BEGIN
   END;
 
   (* Read tarball into memory *)
-  fileSize := m2sys_file_size(ADR(tarPath));
-  IF fileSize <= 0 THEN
+  fileSize64 := m2sys_file_size(ADR(tarPath));
+  IF fileSize64 <= 0 THEN
     WriteString("m2pkg: tarball is empty or unreadable"); WriteLn;
     RAISE RegistryError
   END;
+  fileSize := INTEGER(fileSize64);
   ALLOCATE(bodyPtr, fileSize);
   IF bodyPtr = NIL THEN
     WriteString("m2pkg: out of memory reading tarball"); WriteLn;

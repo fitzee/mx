@@ -144,6 +144,71 @@ int32_t m2_set_reuseaddr(int32_t fd, int32_t enable)
                       &val, sizeof(val)) == 0 ? 0 : -1;
 }
 
+/* ── UDP I/O ───────────────────────────────────────────── */
+
+int32_t m2_sendto(int32_t fd, void *buf, int32_t len,
+                   uint8_t a, uint8_t b, uint8_t c, uint8_t d, int32_t port)
+{
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port   = htons((uint16_t)port);
+    sa.sin_addr.s_addr = htonl(
+        ((uint32_t)a << 24) |
+        ((uint32_t)b << 16) |
+        ((uint32_t)c <<  8) |
+        ((uint32_t)d)
+    );
+
+    ssize_t n = sendto(fd, buf, (size_t)len, 0,
+                        (struct sockaddr *)&sa, sizeof(sa));
+    return (int32_t)n;  /* -1 on error, else bytes sent */
+}
+
+int32_t m2_recvfrom(int32_t fd, void *buf, int32_t maxlen,
+                     void *addr_out, int32_t *port_out)
+{
+    struct sockaddr_in sa;
+    socklen_t slen = sizeof(sa);
+    memset(&sa, 0, sizeof(sa));
+
+    ssize_t n = recvfrom(fd, buf, (size_t)maxlen, 0,
+                          (struct sockaddr *)&sa, &slen);
+    if (n < 0) return -1;
+
+    /* Copy sender address from network to host byte order */
+    uint32_t addr = ntohl(sa.sin_addr.s_addr);
+    uint8_t *dst = (uint8_t *)addr_out;
+    dst[0] = (uint8_t)(addr >> 24);
+    dst[1] = (uint8_t)(addr >> 16);
+    dst[2] = (uint8_t)(addr >>  8);
+    dst[3] = (uint8_t)(addr);
+    *port_out = (int32_t)ntohs(sa.sin_port);
+
+    return (int32_t)n;
+}
+
+int32_t m2_set_multicast(int32_t fd, const char *group, int32_t join)
+{
+    struct ip_mreq mreq;
+    memset(&mreq, 0, sizeof(mreq));
+
+    if (inet_pton(AF_INET, group, &mreq.imr_multiaddr) != 1)
+        return -1;
+
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+
+    int opt = join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP;
+    return setsockopt(fd, IPPROTO_IP, opt, &mreq, sizeof(mreq)) == 0 ? 0 : -1;
+}
+
+int32_t m2_set_broadcast(int32_t fd, int32_t enable)
+{
+    int val = enable ? 1 : 0;
+    return setsockopt(fd, SOL_SOCKET, SO_BROADCAST,
+                      &val, sizeof(val)) == 0 ? 0 : -1;
+}
+
 /* ── Error ──────────────────────────────────────────────── */
 
 int32_t m2_errno(void)

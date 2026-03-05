@@ -105,6 +105,35 @@ DEFINITION MODULE Sockets;
      Returns Closed if peer disconnects before any data. *)
   PROCEDURE RecvLine(s: Socket; VAR line: ARRAY OF CHAR): Status;
 
+  (* ── UDP (datagram) I/O ──────────────────────────────── *)
+
+  (* Send len bytes from buf to the specified address.
+     Pre:  s is an open SOCK_DGRAM socket.
+     Post: returns the number of bytes actually sent, or -1 on error.
+           Use GetLastErrno()/GetLastErrorText() for details. *)
+  PROCEDURE SendTo(s: Socket; VAR buf: ARRAY OF BYTE;
+                   len: CARDINAL;
+                   VAR addr: SockAddr): INTEGER;
+
+  (* Receive up to maxLen bytes into buf.
+     Post: addr is filled with the sender's address and port.
+           Returns the number of bytes received, 0 on peer close,
+           or -1 on error. *)
+  PROCEDURE RecvFrom(s: Socket; VAR buf: ARRAY OF BYTE;
+                     maxLen: CARDINAL;
+                     VAR addr: SockAddr): INTEGER;
+
+  (* Join or leave an IP multicast group.
+     group is a dotted-quad multicast address (e.g. "239.1.2.3").
+     join = TRUE to join, FALSE to leave.
+     Pre:  s is an open SOCK_DGRAM socket. *)
+  PROCEDURE SetMulticastGroup(s: Socket; group: ARRAY OF CHAR;
+                              join: BOOLEAN): Status;
+
+  (* Enable or disable SO_BROADCAST on the socket.
+     Required before sending to the broadcast address. *)
+  PROCEDURE SetBroadcast(s: Socket; enable: BOOLEAN): Status;
+
   (* ── Non-blocking ───────────────────────────────────── *)
 
   (* Set or clear O_NONBLOCK on the socket. *)

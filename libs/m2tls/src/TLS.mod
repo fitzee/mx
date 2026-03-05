@@ -8,6 +8,8 @@ FROM TlsBridge IMPORT m2_tls_init,
     m2_tls_ctx_load_system_roots, m2_tls_ctx_load_ca_file,
     m2_tls_ctx_set_client_cert,
     m2_tls_ctx_create_server, m2_tls_ctx_set_server_cert,
+    m2_tls_set_client_ca, m2_tls_require_client_cert,
+    m2_tls_get_peer_cert_dn,
     m2_tls_ctx_set_alpn, m2_tls_ctx_set_alpn_server,
     m2_tls_get_alpn,
     m2_tls_session_create, m2_tls_session_create_server,
@@ -17,6 +19,7 @@ FROM TlsBridge IMPORT m2_tls_init,
     m2_tls_get_verify_result, m2_tls_get_peer_summary,
     m2_tls_get_last_error;
 IMPORT EventLoop;
+FROM EventLoop IMPORT Loop;
 FROM Poller IMPORT EvRead, EvWrite;
 IMPORT Scheduler;
 FROM Promise IMPORT Future, Promise, Value, Error,
@@ -298,6 +301,39 @@ BEGIN
   IF rc < 0 THEN RETURN SysError END;
   RETURN OK
 END SetServerCert;
+
+(* ── Mutual TLS ──────────────────────────────────────────────────── *)
+
+PROCEDURE SetClientCA(ctx: TLSContext;
+                      VAR caPath: ARRAY OF CHAR): Status;
+VAR rc: INTEGER;
+BEGIN
+  IF ctx = NIL THEN RETURN Invalid END;
+  rc := m2_tls_set_client_ca(ctx, ADR(caPath));
+  IF rc < 0 THEN RETURN SysError END;
+  RETURN OK
+END SetClientCA;
+
+PROCEDURE RequireClientCert(ctx: TLSContext;
+                            require: BOOLEAN): Status;
+VAR rc, flag: INTEGER;
+BEGIN
+  IF ctx = NIL THEN RETURN Invalid END;
+  IF require THEN flag := 1 ELSE flag := 0 END;
+  rc := m2_tls_require_client_cert(ctx, flag);
+  IF rc < 0 THEN RETURN SysError END;
+  RETURN OK
+END RequireClientCert;
+
+PROCEDURE GetPeerCertDN(s: TLSSession;
+                         VAR buf: ARRAY OF CHAR): BOOLEAN;
+VAR sp: SessPtr; rc: INTEGER;
+BEGIN
+  IF s = NIL THEN RETURN FALSE END;
+  sp := s;
+  rc := m2_tls_get_peer_cert_dn(sp^.ssl, ADR(buf), HIGH(buf) + 1);
+  RETURN rc >= 0
+END GetPeerCertDN;
 
 (* ── ALPN ────────────────────────────────────────────────────────── *)
 

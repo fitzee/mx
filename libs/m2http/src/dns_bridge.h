@@ -25,6 +25,26 @@ int32_t m2_dns_resolve_a(const void *host,
                          int32_t *out_port,
                          int32_t port);
 
+/* ── Async DNS resolution ────────────────────────────────────────── */
+
+/* Callback signature for async DNS resolution.
+   callback_id: opaque integer passed through from the caller.
+   a,b,c,d: IPv4 address octets (valid only when err == 0).
+   port: port number (passed through from the caller).
+   err: 0 on success, -1 on resolution failure. */
+typedef void (*m2_dns_callback)(int32_t callback_id,
+                                 uint8_t a, uint8_t b, uint8_t c, uint8_t d,
+                                 int32_t port, int32_t err);
+
+/* Resolve host asynchronously via a detached pthread.
+   The callback is invoked from the background thread when resolution
+   completes.  The caller must arrange thread-safe delivery of the
+   result (e.g. a pipe write to wake the event loop).
+   host must remain valid only until this function returns (it is
+   copied internally). */
+void m2_dns_resolve_async(const char *host, int32_t port,
+                           int32_t callback_id, m2_dns_callback cb);
+
 /* ── Socket helpers ──────────────────────────────────────────────── */
 
 /* Non-blocking connect to IPv4 address.

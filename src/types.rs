@@ -298,8 +298,8 @@ pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bo
     if dst == TY_LONGCOMPLEX && src == TY_COMPLEX {
         return true;
     }
-    // NIL can be assigned to any pointer
-    if dt.is_pointer() && matches!(st, Type::Nil) {
+    // NIL can be assigned to any pointer or procedure variable
+    if (dt.is_pointer() || matches!(dt, Type::ProcedureType { .. })) && matches!(st, Type::Nil) {
         return true;
     }
     // Pointer-to-pointer assignment: any pointer can be assigned to another pointer

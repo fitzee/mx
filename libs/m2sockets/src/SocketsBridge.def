@@ -26,6 +26,15 @@ DEFINITION MODULE FOR "C" SocketsBridge;
   PROCEDURE m2_set_nonblocking(fd, enable: INTEGER): INTEGER;
   PROCEDURE m2_set_reuseaddr(fd, enable: INTEGER): INTEGER;
 
+  (* UDP I/O *)
+  PROCEDURE m2_sendto(fd: INTEGER; buf: ADDRESS; len: INTEGER;
+                      a, b, c, d: INTEGER; port: INTEGER): INTEGER;
+  PROCEDURE m2_recvfrom(fd: INTEGER; buf: ADDRESS; maxlen: INTEGER;
+                        addrOut: ADDRESS; VAR portOut: INTEGER): INTEGER;
+  PROCEDURE m2_set_multicast(fd: INTEGER; group: ADDRESS;
+                             join: INTEGER): INTEGER;
+  PROCEDURE m2_set_broadcast(fd: INTEGER; enable: INTEGER): INTEGER;
+
   (* Error *)
   PROCEDURE m2_errno(): INTEGER;
   PROCEDURE m2_strerror(errnum: INTEGER; buf: ADDRESS; buflen: INTEGER);

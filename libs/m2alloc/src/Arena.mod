@@ -12,7 +12,8 @@ BEGIN
   a.pos := 0;
   a.highwater := 0;
   a.failed := 0;
-  a.poison := FALSE
+  a.poison := FALSE;
+  a.overflow := NIL
 END Init;
 
 (* ── Allocation ──────────────────────────────────────── *)
@@ -26,10 +27,25 @@ BEGIN
   END;
   aligned := AlignUp(a.pos, align);
   IF (aligned > a.size) OR (n > a.size - aligned) THEN
-    p := NIL;
-    ok := FALSE;
-    INC(a.failed);
-    RETURN
+    (* Call overflow handler if set — it may grow the arena *)
+    IF a.overflow # NIL THEN
+      a.overflow(ADR(a), n);
+      (* Retry after handler *)
+      aligned := AlignUp(a.pos, align);
+      IF (aligned <= a.size) AND (n <= a.size - aligned) THEN
+        (* Handler resolved the overflow — fall through to allocate *)
+      ELSE
+        p := NIL;
+        ok := FALSE;
+        INC(a.failed);
+        RETURN
+      END
+    ELSE
+      p := NIL;
+      ok := FALSE;
+      INC(a.failed);
+      RETURN
+    END
   END;
   p := PtrAdd(a.base, aligned);
   IF a.poison THEN
@@ -91,5 +107,12 @@ PROCEDURE PoisonOff(VAR a: Arena);
 BEGIN
   a.poison := FALSE
 END PoisonOff;
+
+(* ── Overflow handling ─────────────────────────────── *)
+
+PROCEDURE SetOverflowHandler(VAR a: Arena; handler: OverflowProc);
+BEGIN
+  a.overflow := handler
+END SetOverflowHandler;
 
 END Arena.

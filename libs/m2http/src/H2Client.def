@@ -2,7 +2,8 @@ DEFINITION MODULE H2Client;
 
   (* HTTP/2 client using non-blocking sockets, TLS, and Futures.
 
-     Same interface as HTTPClient (Get/Put/FreeResponse/SetSkipVerify)
+     Same interface as HTTPClient (Get/Put/Post/Delete/Patch/
+     FreeResponse/SetSkipVerify)
      but speaks HTTP/2 over TLS with ALPN "h2".
 
      Uses the m2http2 library (Http2Conn, Http2Frame, Http2Hpack)
@@ -28,6 +29,38 @@ DEFINITION MODULE H2Client;
                 VAR contentType: ARRAY OF CHAR;
                 VAR authorization: ARRAY OF CHAR;
                 VAR outFuture: Future): Status;
+
+  (* Issue an HTTP/2 POST request with a body.
+     bodyData/bodyLen: raw payload to upload.
+     contentType: e.g. "application/json".
+     authorization: e.g. "Bearer <token>", or empty string.
+     Future resolves with Value.ptr -> heap ResponsePtr. *)
+  PROCEDURE Post(lp: Loop; sched: Scheduler;
+                 VAR uri: URIRec;
+                 bodyData: ADDRESS; bodyLen: INTEGER;
+                 VAR contentType: ARRAY OF CHAR;
+                 VAR authorization: ARRAY OF CHAR;
+                 VAR outFuture: Future): Status;
+
+  (* Issue an HTTP/2 DELETE request.
+     authorization: e.g. "Bearer <token>", or empty string.
+     Future resolves with Value.ptr -> heap ResponsePtr. *)
+  PROCEDURE Delete(lp: Loop; sched: Scheduler;
+                   VAR uri: URIRec;
+                   VAR authorization: ARRAY OF CHAR;
+                   VAR outFuture: Future): Status;
+
+  (* Issue an HTTP/2 PATCH request with a body.
+     bodyData/bodyLen: raw payload.
+     contentType: e.g. "application/json".
+     authorization: e.g. "Bearer <token>", or empty string.
+     Future resolves with Value.ptr -> heap ResponsePtr. *)
+  PROCEDURE Patch(lp: Loop; sched: Scheduler;
+                  VAR uri: URIRec;
+                  bodyData: ADDRESS; bodyLen: INTEGER;
+                  VAR contentType: ARRAY OF CHAR;
+                  VAR authorization: ARRAY OF CHAR;
+                  VAR outFuture: Future): Status;
 
   PROCEDURE FreeResponse(VAR resp: ResponsePtr);
 

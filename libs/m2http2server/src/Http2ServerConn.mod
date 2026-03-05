@@ -334,8 +334,8 @@ IMPLEMENTATION MODULE Http2ServerConn;
         DecodeWindowUpdate(payload, increment, ok);
         IF ok AND (increment > 0) THEN
           IF hdr.streamId = 0 THEN
-            (* Connection-level window update *)
-            cp^.connRecvWindow := cp^.connRecvWindow + INTEGER(increment);
+            (* Connection-level window update — peer is granting us more send budget *)
+            cp^.connSendWindow := cp^.connSendWindow + INTEGER(increment);
           ELSE
             (* Stream-level window update *)
             slotIdx := FindSlot(cp^.slots, hdr.streamId);
@@ -385,6 +385,12 @@ IMPLEMENTATION MODULE Http2ServerConn;
           RETURN;
         END;
         cp^.lastPeerStream := hdr.streamId;
+
+        (* Enforce advertised max concurrent streams limit *)
+        IF cp^.numActive >= cp^.localSettings.maxConcurrentStreams THEN
+          SendRstStream(cp, hdr.streamId, 7); (* REFUSED_STREAM *)
+          RETURN;
+        END;
 
         (* Allocate a stream slot *)
         slotIdx := AllocSlot(cp^.slots, hdr.streamId,
@@ -712,11 +718,10 @@ IMPLEMENTATION MODULE Http2ServerConn;
       dummy := TLS.SessionDestroy(cp^.tlsSess);
     END;
 
-    (* Free stream slots *)
+    (* Free stream slots — free ALL slots, not just active ones,
+       because idle slots still hold a req.body buffer from SlotInit *)
     FOR i := 0 TO MaxStreamSlots - 1 DO
-      IF cp^.slots[i].active THEN
-        SlotFree(cp^.slots[i]);
-      END;
+      FreeRequest(cp^.slots[i].req);
     END;
 
     (* Free I/O buffers *)

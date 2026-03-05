@@ -1189,6 +1189,480 @@ BEGIN
                            contentType, authorization, outFuture)
 END Put;
 
+PROCEDURE Post(lp: EventLoop.Loop; sched: Scheduler;
+               VAR uri: URIRec;
+               bodyData: ADDRESS; bodyLen: INTEGER;
+               VAR contentType: ARRAY OF CHAR;
+               VAR authorization: ARRAY OF CHAR;
+               VAR outFuture: Future): Status;
+VAR method: ARRAY [0..4] OF CHAR;
+BEGIN
+  method[0] := 'P'; method[1] := 'O'; method[2] := 'S';
+  method[3] := 'T'; method[4] := 0C;
+  RETURN DoRequestWithBody(lp, sched, uri, method, bodyData, bodyLen,
+                           contentType, authorization, outFuture)
+END Post;
+
+PROCEDURE Delete(lp: EventLoop.Loop; sched: Scheduler;
+                 VAR uri: URIRec;
+                 VAR authorization: ARRAY OF CHAR;
+                 VAR outFuture: Future): Status;
+VAR method: ARRAY [0..6] OF CHAR;
+BEGIN
+  method[0] := 'D'; method[1] := 'E'; method[2] := 'L'; method[3] := 'E';
+  method[4] := 'T'; method[5] := 'E'; method[6] := 0C;
+  RETURN DoRequestWithDelete(lp, sched, uri, method, authorization, outFuture)
+END Delete;
+
+PROCEDURE Patch(lp: EventLoop.Loop; sched: Scheduler;
+                VAR uri: URIRec;
+                bodyData: ADDRESS; bodyLen: INTEGER;
+                VAR contentType: ARRAY OF CHAR;
+                VAR authorization: ARRAY OF CHAR;
+                VAR outFuture: Future): Status;
+VAR method: ARRAY [0..5] OF CHAR;
+BEGIN
+  method[0] := 'P'; method[1] := 'A'; method[2] := 'T';
+  method[3] := 'C'; method[4] := 'H'; method[5] := 0C;
+  RETURN DoRequestWithBody(lp, sched, uri, method, bodyData, bodyLen,
+                           contentType, authorization, outFuture)
+END Patch;
+
+(* ── DELETE with auth header ───────────────────────────────────── *)
+
+PROCEDURE BuildRequestWithAuth(c: ConnPtr; VAR method: ARRAY OF CHAR;
+                                VAR uri: URIRec;
+                                VAR authorization: ARRAY OF CHAR);
+VAR
+  rpath: ARRAY [0..2047] OF CHAR;
+  rpLen: INTEGER;
+  ust: URI.Status;
+BEGIN
+  c^.reqLen := 0;
+  AppendStr(c, method);
+  AppendCh(c, ' ');
+
+  ust := RequestPath(uri, rpath, rpLen);
+  IF rpLen > 0 THEN
+    AppendStr(c, rpath)
+  ELSE
+    AppendCh(c, '/')
+  END;
+
+  AppendStr(c, " HTTP/1.1");
+  AppendCRLF(c);
+  AppendStr(c, "Host: ");
+  AppendStr(c, uri.host);
+  AppendCRLF(c);
+  AppendStr(c, "Connection: close");
+  AppendCRLF(c);
+  AppendStr(c, "User-Agent: m2http/0.1");
+  AppendCRLF(c);
+  IF StrLen(authorization) > 0 THEN
+    AppendStr(c, "Authorization: ");
+    AppendStr(c, authorization);
+    AppendCRLF(c)
+  END;
+  AppendCRLF(c)
+END BuildRequestWithAuth;
+
+PROCEDURE DoRequestWithDelete(lp: EventLoop.Loop; sched: Scheduler;
+                              VAR uri: URIRec;
+                              VAR method: ARRAY OF CHAR;
+                              VAR authorization: ARRAY OF CHAR;
+                              VAR outFuture: Future): Status;
+VAR
+  c: ConnPtr;
+  dnsFuture: Future;
+  dnsSettled: BOOLEAN;
+  dnsResult: Result;
+  ap: AddrPtr;
+  pst: Promise.Status;
+  dst: DNS.Status;
+  sst: Sockets.Status;
+  bst: Buffers.Status;
+  est: EventLoop.Status;
+  tst: TLS.Status;
+  crc: INTEGER;
+  wantTLS: BOOLEAN;
+BEGIN
+  IF (lp = NIL) OR (sched = NIL) THEN RETURN Invalid END;
+
+  wantTLS := IsHTTPS(uri);
+
+  dst := DNS.ResolveA(lp, sched, uri.host, uri.port, dnsFuture);
+  IF dst # DNS.OK THEN RETURN DNSFailed END;
+  pst := GetResultIfSettled(dnsFuture, dnsSettled, dnsResult);
+  IF (NOT dnsSettled) OR (NOT dnsResult.isOk) THEN
+    RETURN DNSFailed
+  END;
+  ap := dnsResult.v.ptr;
+
+  ALLOCATE(c, TSIZE(ConnRec));
+  IF c = NIL THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    RETURN OutOfMemory
+  END;
+  c^.state := StConnecting;
+  c^.loop := lp;
+  c^.sched := sched;
+  c^.headOnly := FALSE;
+  c^.contentLen := -1;
+  c^.bodyRead := 0;
+  c^.chunked := FALSE;
+  c^.chunkState := ChSize;
+  c^.chunkRem := 0;
+  c^.reqSent := 0;
+  c^.reqBody := NIL;
+  c^.reqBodyLen := 0;
+  c^.reqBodySent := 0;
+  c^.sock := InvalidSocket;
+  c^.recvBuf := NIL;
+  c^.resp := NIL;
+  c^.useTLS := wantTLS;
+  c^.tlsCtx := NIL;
+  c^.tlsSess := NIL;
+  c^.stream := NIL;
+
+  pst := PromiseCreate(sched, c^.promise, outFuture);
+  IF pst # Promise.OK THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+
+  ALLOCATE(c^.resp, TSIZE(Response));
+  IF c^.resp = NIL THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+  c^.resp^.statusCode := 0;
+  c^.resp^.headerCount := 0;
+  c^.resp^.body := NIL;
+  c^.resp^.contentLength := -1;
+
+  bst := Buffers.Create(RecvBufCap, Buffers.Growable, c^.recvBuf);
+  IF bst # Buffers.OK THEN
+    DEALLOCATE(c^.resp, TSIZE(Response));
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+
+  BuildRequestWithAuth(c, method, uri, authorization);
+
+  sst := SocketCreate(AF_INET, SOCK_STREAM, c^.sock);
+  IF sst # Sockets.OK THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+  sst := SetNonBlocking(c^.sock, TRUE);
+
+  IF wantTLS THEN
+    tst := TLS.ContextCreate(c^.tlsCtx);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    IF mSkipVerify THEN
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.NoVerify)
+    ELSE
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.VerifyPeer)
+    END;
+    tst := TLS.SetMinVersion(c^.tlsCtx, TLS.TLS12);
+    tst := TLS.LoadSystemRoots(c^.tlsCtx);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    tst := TLS.SessionCreate(lp, sched, c^.tlsCtx, c^.sock,
+                              c^.tlsSess);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    tst := TLS.SetSNI(c^.tlsSess, uri.host)
+  END;
+
+  crc := m2_connect_ipv4(c^.sock,
+                          ORD(ap^.addrV4[0]),
+                          ORD(ap^.addrV4[1]),
+                          ORD(ap^.addrV4[2]),
+                          ORD(ap^.addrV4[3]),
+                          uri.port);
+  DEALLOCATE(ap, TSIZE(AddrRec));
+
+  IF crc < 0 THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+
+  est := EventLoop.WatchFd(lp, c^.sock, EvWrite, OnSocketEvent, c);
+  IF est # EventLoop.OK THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+
+  RETURN OK
+END DoRequestWithDelete;
+
+(* ── Chunked request support ──────────────────────────────────── *)
+
+PROCEDURE IntToHex(val: INTEGER; VAR buf: ARRAY OF CHAR; VAR len: INTEGER);
+VAR
+  tmp: ARRAY [0..15] OF CHAR;
+  i, j, d: INTEGER;
+BEGIN
+  IF val = 0 THEN
+    buf[0] := '0'; len := 1; RETURN
+  END;
+  i := 0;
+  WHILE (val > 0) AND (i < 15) DO
+    d := val MOD 16;
+    IF d < 10 THEN
+      tmp[i] := CHR(ORD('0') + d)
+    ELSE
+      tmp[i] := CHR(ORD('a') + d - 10)
+    END;
+    val := val DIV 16;
+    INC(i)
+  END;
+  j := 0;
+  WHILE i > 0 DO
+    DEC(i);
+    IF j <= HIGH(buf) THEN buf[j] := tmp[i]; INC(j) END
+  END;
+  len := j
+END IntToHex;
+
+PROCEDURE BuildChunkedRequest(c: ConnPtr; VAR method: ARRAY OF CHAR;
+                               VAR uri: URIRec;
+                               VAR contentType: ARRAY OF CHAR;
+                               VAR authorization: ARRAY OF CHAR);
+VAR
+  rpath: ARRAY [0..2047] OF CHAR;
+  rpLen: INTEGER;
+  ust: URI.Status;
+BEGIN
+  c^.reqLen := 0;
+  AppendStr(c, method);
+  AppendCh(c, ' ');
+
+  ust := RequestPath(uri, rpath, rpLen);
+  IF rpLen > 0 THEN
+    AppendStr(c, rpath)
+  ELSE
+    AppendCh(c, '/')
+  END;
+
+  AppendStr(c, " HTTP/1.1");
+  AppendCRLF(c);
+  AppendStr(c, "Host: ");
+  AppendStr(c, uri.host);
+  AppendCRLF(c);
+  AppendStr(c, "Connection: close");
+  AppendCRLF(c);
+  AppendStr(c, "User-Agent: m2http/0.1");
+  AppendCRLF(c);
+  IF StrLen(contentType) > 0 THEN
+    AppendStr(c, "Content-Type: ");
+    AppendStr(c, contentType);
+    AppendCRLF(c)
+  END;
+  AppendStr(c, "Transfer-Encoding: chunked");
+  AppendCRLF(c);
+  IF StrLen(authorization) > 0 THEN
+    AppendStr(c, "Authorization: ");
+    AppendStr(c, authorization);
+    AppendCRLF(c)
+  END;
+  AppendCRLF(c)
+END BuildChunkedRequest;
+
+PROCEDURE PostChunked(lp: EventLoop.Loop; sched: Scheduler;
+                      VAR uri: URIRec;
+                      chunker: ChunkProc; ctx: ADDRESS;
+                      VAR contentType: ARRAY OF CHAR;
+                      VAR authorization: ARRAY OF CHAR;
+                      VAR outFuture: Future): Status;
+VAR
+  c: ConnPtr;
+  dnsFuture: Future;
+  dnsSettled: BOOLEAN;
+  dnsResult: Result;
+  ap: AddrPtr;
+  pst: Promise.Status;
+  dst: DNS.Status;
+  sst: Sockets.Status;
+  bst: Buffers.Status;
+  est: EventLoop.Status;
+  tst: TLS.Status;
+  crc: INTEGER;
+  wantTLS: BOOLEAN;
+  method: ARRAY [0..4] OF CHAR;
+  chunkBuf: ARRAY [0..4095] OF CHAR;
+  hexBuf: ARRAY [0..15] OF CHAR;
+  hexLen, chunkLen, total, i: INTEGER;
+BEGIN
+  IF (lp = NIL) OR (sched = NIL) THEN RETURN Invalid END;
+
+  wantTLS := IsHTTPS(uri);
+
+  dst := DNS.ResolveA(lp, sched, uri.host, uri.port, dnsFuture);
+  IF dst # DNS.OK THEN RETURN DNSFailed END;
+  pst := GetResultIfSettled(dnsFuture, dnsSettled, dnsResult);
+  IF (NOT dnsSettled) OR (NOT dnsResult.isOk) THEN
+    RETURN DNSFailed
+  END;
+  ap := dnsResult.v.ptr;
+
+  ALLOCATE(c, TSIZE(ConnRec));
+  IF c = NIL THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    RETURN OutOfMemory
+  END;
+  c^.state := StConnecting;
+  c^.loop := lp;
+  c^.sched := sched;
+  c^.headOnly := FALSE;
+  c^.contentLen := -1;
+  c^.bodyRead := 0;
+  c^.chunked := FALSE;
+  c^.chunkState := ChSize;
+  c^.chunkRem := 0;
+  c^.reqSent := 0;
+  c^.reqBody := NIL;
+  c^.reqBodyLen := 0;
+  c^.reqBodySent := 0;
+  c^.sock := InvalidSocket;
+  c^.recvBuf := NIL;
+  c^.resp := NIL;
+  c^.useTLS := wantTLS;
+  c^.tlsCtx := NIL;
+  c^.tlsSess := NIL;
+  c^.stream := NIL;
+
+  pst := PromiseCreate(sched, c^.promise, outFuture);
+  IF pst # Promise.OK THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+
+  ALLOCATE(c^.resp, TSIZE(Response));
+  IF c^.resp = NIL THEN
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+  c^.resp^.statusCode := 0;
+  c^.resp^.headerCount := 0;
+  c^.resp^.body := NIL;
+  c^.resp^.contentLength := -1;
+
+  bst := Buffers.Create(RecvBufCap, Buffers.Growable, c^.recvBuf);
+  IF bst # Buffers.OK THEN
+    DEALLOCATE(c^.resp, TSIZE(Response));
+    DEALLOCATE(ap, TSIZE(AddrRec));
+    DEALLOCATE(c, TSIZE(ConnRec));
+    RETURN OutOfMemory
+  END;
+
+  method[0] := 'P'; method[1] := 'O'; method[2] := 'S';
+  method[3] := 'T'; method[4] := 0C;
+  BuildChunkedRequest(c, method, uri, contentType, authorization);
+
+  (* Collect chunked body into reqBody buffer *)
+  bst := Buffers.Create(RecvBufCap, Buffers.Growable, c^.resp^.body);
+  (* Reuse a temporary growable buffer for building the chunked body *)
+  total := 0;
+  LOOP
+    chunkLen := chunker(ctx, ADR(chunkBuf), 4096);
+    IF chunkLen <= 0 THEN EXIT END;
+    (* Append hex-length + CRLF + data + CRLF to request body area *)
+    IntToHex(chunkLen, hexBuf, hexLen);
+    FOR i := 0 TO hexLen - 1 DO
+      bst := Buffers.AppendByte(c^.resp^.body, hexBuf[i])
+    END;
+    bst := Buffers.AppendByte(c^.resp^.body, CHR(13));
+    bst := Buffers.AppendByte(c^.resp^.body, CHR(10));
+    FOR i := 0 TO chunkLen - 1 DO
+      bst := Buffers.AppendByte(c^.resp^.body, chunkBuf[i])
+    END;
+    bst := Buffers.AppendByte(c^.resp^.body, CHR(13));
+    bst := Buffers.AppendByte(c^.resp^.body, CHR(10));
+    total := total + chunkLen
+  END;
+  (* Append final chunk: 0\r\n\r\n *)
+  bst := Buffers.AppendByte(c^.resp^.body, '0');
+  bst := Buffers.AppendByte(c^.resp^.body, CHR(13));
+  bst := Buffers.AppendByte(c^.resp^.body, CHR(10));
+  bst := Buffers.AppendByte(c^.resp^.body, CHR(13));
+  bst := Buffers.AppendByte(c^.resp^.body, CHR(10));
+
+  (* Move chunked body to reqBody *)
+  c^.reqBody := Buffers.SlicePtr(c^.resp^.body);
+  c^.reqBodyLen := Buffers.Length(c^.resp^.body);
+  c^.reqBodySent := 0;
+  (* Keep resp^.body buffer alive — it holds the chunked data.
+     The body will be replaced after response is received. *)
+
+  sst := SocketCreate(AF_INET, SOCK_STREAM, c^.sock);
+  IF sst # Sockets.OK THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+  sst := SetNonBlocking(c^.sock, TRUE);
+
+  IF wantTLS THEN
+    tst := TLS.ContextCreate(c^.tlsCtx);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    IF mSkipVerify THEN
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.NoVerify)
+    ELSE
+      tst := TLS.SetVerifyMode(c^.tlsCtx, TLS.VerifyPeer)
+    END;
+    tst := TLS.SetMinVersion(c^.tlsCtx, TLS.TLS12);
+    tst := TLS.LoadSystemRoots(c^.tlsCtx);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    tst := TLS.SessionCreate(lp, sched, c^.tlsCtx, c^.sock,
+                              c^.tlsSess);
+    IF tst # TLS.OK THEN
+      FailConn(c, 6);
+      RETURN TLSFailed
+    END;
+    tst := TLS.SetSNI(c^.tlsSess, uri.host)
+  END;
+
+  crc := m2_connect_ipv4(c^.sock,
+                          ORD(ap^.addrV4[0]),
+                          ORD(ap^.addrV4[1]),
+                          ORD(ap^.addrV4[2]),
+                          ORD(ap^.addrV4[3]),
+                          uri.port);
+  DEALLOCATE(ap, TSIZE(AddrRec));
+
+  IF crc < 0 THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+
+  est := EventLoop.WatchFd(lp, c^.sock, EvWrite, OnSocketEvent, c);
+  IF est # EventLoop.OK THEN
+    FailConn(c, 1);
+    RETURN ConnectFailed
+  END;
+
+  RETURN OK
+END PostChunked;
+
 (* ── Response helpers ──────────────────────────────────────────── *)
 
 PROCEDURE FindHeader(resp: ResponsePtr;

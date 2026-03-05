@@ -1,5 +1,5 @@
 DEFINITION MODULE Glob;
-(* Gitignore-grade glob pattern matching.
+(* Gitignore-grade glob pattern matching and directory walking.
 
    Pattern syntax:
    - *       matches any sequence of non-/ characters
@@ -13,7 +13,19 @@ DEFINITION MODULE Glob;
 
    Utility procedures detect negation (leading !), anchoring
    (leading /), and path separators for gitignore-style rule
-   classification. *)
+   classification.
+
+   Walk expands a glob pattern against the real filesystem. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* ── Callback type for Walk ──────────────────────────── *)
+
+TYPE
+  MatchProc = PROCEDURE(ARRAY OF CHAR, ADDRESS): BOOLEAN;
+    (* Called per matching path. Return FALSE to stop walking. *)
+
+(* ── Pattern matching ────────────────────────────────── *)
 
 (* Full glob match of pattern against text.
    Returns TRUE if the entire text matches the pattern. *)
@@ -37,5 +49,15 @@ PROCEDURE StripNegation(pattern: ARRAY OF CHAR;
 (* Copy pattern without leading '/' into out. *)
 PROCEDURE StripAnchor(pattern: ARRAY OF CHAR;
                       VAR out: ARRAY OF CHAR);
+
+(* ── Directory walking ───────────────────────────────── *)
+
+(* Expand a glob pattern against the filesystem.
+   Calls callback for each matching path; ctx is passed through.
+   Supports *, ?, **, [abc].  Returns the match count.
+   If callback returns FALSE, walking stops early. *)
+PROCEDURE Walk(pattern: ARRAY OF CHAR;
+               callback: MatchProc;
+               ctx: ADDRESS): CARDINAL;
 
 END Glob.

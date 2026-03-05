@@ -2,14 +2,15 @@ DEFINITION MODULE Http2Hpack;
 (* HPACK header compression (RFC 7541).
 
    Implements integer encoding/decoding, static table lookup,
-   dynamic table with FIFO eviction, and header block decode/encode.
+   dynamic table with FIFO eviction, header block decode/encode,
+   and Huffman encoding/decoding (RFC 7541 Appendix B).
 
-   No Huffman encoding/decoding (documented limitation).
    Uses fixed-size arrays -- no heap allocation.
 
    Static table: 61 entries (RFC 7541 Appendix A).
    Dynamic table: ring buffer with configurable max size. *)
 
+FROM SYSTEM IMPORT ADDRESS;
 FROM Http2Types IMPORT HeaderEntry;
 FROM ByteBuf IMPORT BytesView, Buf;
 
@@ -99,5 +100,27 @@ PROCEDURE EncodeHeaderBlock(VAR b: Buf;
                             VAR dt: DynTable;
                             VAR headers: ARRAY OF HeaderEntry;
                             numHeaders: CARDINAL);
+
+(* ── Huffman codec (RFC 7541 Appendix B) ─────────────── *)
+
+(* Decode Huffman-encoded bytes from src[0..srcLen-1] into dst.
+   dst must have at least dstMax bytes of space.
+   Sets dstLen to the number of decoded bytes.
+   Returns TRUE on success, FALSE on decode error or overflow. *)
+PROCEDURE HuffmanDecode(src: ADDRESS; srcLen: CARDINAL;
+                        dst: ADDRESS; dstMax: CARDINAL;
+                        VAR dstLen: CARDINAL): BOOLEAN;
+
+(* Encode raw bytes from src[0..srcLen-1] using Huffman coding.
+   dst must have at least dstMax bytes of space.
+   Sets dstLen to the number of encoded bytes (including padding).
+   Returns TRUE on success, FALSE if dst is too small. *)
+PROCEDURE HuffmanEncode(src: ADDRESS; srcLen: CARDINAL;
+                        dst: ADDRESS; dstMax: CARDINAL;
+                        VAR dstLen: CARDINAL): BOOLEAN;
+
+(* Return the number of bytes needed to hold the decoded form
+   of a Huffman-encoded buffer.  Returns 0 on decode error. *)
+PROCEDURE HuffmanDecodedLength(src: ADDRESS; srcLen: CARDINAL): CARDINAL;
 
 END Http2Hpack.

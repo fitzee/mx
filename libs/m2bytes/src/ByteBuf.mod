@@ -154,6 +154,11 @@ BEGIN
   IF newLen < b.len THEN b.len := newLen END
 END Truncate;
 
+PROCEDURE DataPtr(VAR b: Buf): ADDRESS;
+BEGIN
+  RETURN b.data
+END DataPtr;
+
 (* ── View helpers ───────────────────────────────────── *)
 
 PROCEDURE ViewGetByte(v: BytesView; idx: CARDINAL): CARDINAL;

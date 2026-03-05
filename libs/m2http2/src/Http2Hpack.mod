@@ -1,5 +1,6 @@
 IMPLEMENTATION MODULE Http2Hpack;
 
+FROM SYSTEM IMPORT ADDRESS;
 FROM Http2Types IMPORT HeaderEntry, HeaderName, HeaderValue,
                        HpackStaticTableSize, HpackMaxDynEntries,
                        HpackMaxNameLen, HpackMaxValueLen;
@@ -960,7 +961,393 @@ BEGIN
   END
 END EncodeHeaderBlock;
 
+(* ── Huffman encode table (RFC 7541 Appendix B) ──────── *)
+
+(* Each entry stores the Huffman code and its bit length for one symbol.
+   Codes are right-aligned: the lowest 'bits' bits hold the code.
+   257 entries: 0..255 are byte values, 256 is EOS. *)
+
+TYPE
+  HuffEncEntry = RECORD
+    code: LONGCARD;
+    bits: CARDINAL;
+  END;
+
+VAR
+  huffEnc: ARRAY [0..256] OF HuffEncEntry;
+  huffEncReady: BOOLEAN;
+
+PROCEDURE SetHE(sym: CARDINAL; c: LONGCARD; b: CARDINAL);
+BEGIN
+  huffEnc[sym].code := c;
+  huffEnc[sym].bits := b
+END SetHE;
+
+PROCEDURE InitHuffEnc;
+BEGIN
+  IF huffEncReady THEN RETURN END;
+
+  (* Control codes 0-31 *)
+  SetHE(0,8184,13); SetHE(1,8388568,23); SetHE(2,268435426,28);
+  SetHE(3,268435427,28); SetHE(4,268435428,28); SetHE(5,268435429,28);
+  SetHE(6,268435430,28); SetHE(7,268435431,28); SetHE(8,268435432,28);
+  SetHE(9,16777194,24); SetHE(10,1073741820,30); SetHE(11,268435433,28);
+  SetHE(12,268435434,28); SetHE(13,1073741821,30); SetHE(14,268435435,28);
+  SetHE(15,268435436,28); SetHE(16,268435437,28); SetHE(17,268435438,28);
+  SetHE(18,268435439,28); SetHE(19,268435440,28); SetHE(20,268435441,28);
+  SetHE(21,268435442,28); SetHE(22,1073741822,30); SetHE(23,268435443,28);
+  SetHE(24,268435444,28); SetHE(25,268435445,28); SetHE(26,268435446,28);
+  SetHE(27,268435447,28); SetHE(28,268435448,28); SetHE(29,268435449,28);
+  SetHE(30,268435450,28); SetHE(31,268435451,28);
+
+  (* Printable ASCII 32-126 *)
+  SetHE(32,20,6); SetHE(33,1016,10); SetHE(34,1017,10);
+  SetHE(35,4090,12); SetHE(36,8185,13); SetHE(37,21,6);
+  SetHE(38,248,8); SetHE(39,2042,11); SetHE(40,1018,10);
+  SetHE(41,1019,10); SetHE(42,249,8); SetHE(43,2043,11);
+  SetHE(44,250,8); SetHE(45,22,6); SetHE(46,23,6);
+  SetHE(47,24,6); SetHE(48,0,5); SetHE(49,1,5);
+  SetHE(50,2,5); SetHE(51,25,6); SetHE(52,26,6);
+  SetHE(53,27,6); SetHE(54,28,6); SetHE(55,29,6);
+  SetHE(56,30,6); SetHE(57,31,6); SetHE(58,92,7);
+  SetHE(59,251,8); SetHE(60,32764,15); SetHE(61,32,6);
+  SetHE(62,4091,12); SetHE(63,1020,10); SetHE(64,8186,13);
+  SetHE(65,33,6); SetHE(66,93,7); SetHE(67,94,7);
+  SetHE(68,95,7); SetHE(69,96,7); SetHE(70,97,7);
+  SetHE(71,98,7); SetHE(72,99,7); SetHE(73,100,7);
+  SetHE(74,101,7); SetHE(75,102,7); SetHE(76,103,7);
+  SetHE(77,104,7); SetHE(78,105,7); SetHE(79,106,7);
+  SetHE(80,107,7); SetHE(81,108,7); SetHE(82,109,7);
+  SetHE(83,110,7); SetHE(84,111,7); SetHE(85,112,7);
+  SetHE(86,113,7); SetHE(87,114,7); SetHE(88,252,8);
+  SetHE(89,115,7); SetHE(90,253,8); SetHE(91,8187,13);
+  SetHE(92,524272,19); SetHE(93,8188,13); SetHE(94,16382,14);
+  SetHE(95,34,6); SetHE(96,32765,15); SetHE(97,3,5);
+  SetHE(98,35,6); SetHE(99,4,5); SetHE(100,36,6);
+  SetHE(101,5,5); SetHE(102,37,6); SetHE(103,38,6);
+  SetHE(104,39,6); SetHE(105,6,5); SetHE(106,116,7);
+  SetHE(107,117,7); SetHE(108,40,6); SetHE(109,41,6);
+  SetHE(110,42,6); SetHE(111,7,5); SetHE(112,43,6);
+  SetHE(113,118,7); SetHE(114,44,6); SetHE(115,8,5);
+  SetHE(116,9,5); SetHE(117,45,6); SetHE(118,119,7);
+  SetHE(119,120,7); SetHE(120,121,7); SetHE(121,122,7);
+  SetHE(122,123,7); SetHE(123,32766,15); SetHE(124,2044,11);
+  SetHE(125,16383,14); SetHE(126,8189,13);
+
+  (* High bytes 127-255 *)
+  SetHE(127,268435452,28); SetHE(128,1048550,20); SetHE(129,4194258,22);
+  SetHE(130,1048551,20); SetHE(131,1048552,20); SetHE(132,4194259,22);
+  SetHE(133,4194260,22); SetHE(134,4194261,22); SetHE(135,8388569,23);
+  SetHE(136,4194262,22); SetHE(137,8388570,23); SetHE(138,8388571,23);
+  SetHE(139,8388572,23); SetHE(140,8388573,23); SetHE(141,8388574,23);
+  SetHE(142,16777195,24); SetHE(143,8388575,23); SetHE(144,16777196,24);
+  SetHE(145,16777197,24); SetHE(146,4194263,22); SetHE(147,8388576,23);
+  SetHE(148,16777198,24); SetHE(149,8388577,23); SetHE(150,8388578,23);
+  SetHE(151,8388579,23); SetHE(152,8388580,23); SetHE(153,2097116,21);
+  SetHE(154,4194264,22); SetHE(155,8388581,23); SetHE(156,4194265,22);
+  SetHE(157,8388582,23); SetHE(158,8388583,23); SetHE(159,16777199,24);
+  SetHE(160,4194266,22); SetHE(161,2097117,21); SetHE(162,1048553,20);
+  SetHE(163,4194267,22); SetHE(164,4194268,22); SetHE(165,8388584,23);
+  SetHE(166,8388585,23); SetHE(167,2097118,21); SetHE(168,8388586,23);
+  SetHE(169,4194269,22); SetHE(170,4194270,22); SetHE(171,16777200,24);
+  SetHE(172,2097119,21); SetHE(173,4194271,22); SetHE(174,8388587,23);
+  SetHE(175,8388588,23); SetHE(176,2097120,21); SetHE(177,2097121,21);
+  SetHE(178,4194272,22); SetHE(179,2097122,21); SetHE(180,8388589,23);
+  SetHE(181,4194273,22); SetHE(182,8388590,23); SetHE(183,8388591,23);
+  SetHE(184,1048554,20); SetHE(185,4194274,22); SetHE(186,4194275,22);
+  SetHE(187,4194276,22); SetHE(188,8388592,23); SetHE(189,4194277,22);
+  SetHE(190,4194278,22); SetHE(191,8388593,23); SetHE(192,67108832,26);
+  SetHE(193,67108833,26); SetHE(194,1048555,20); SetHE(195,524273,19);
+  SetHE(196,4194279,22); SetHE(197,8388594,23); SetHE(198,4194280,22);
+  SetHE(199,33554412,25); SetHE(200,67108834,26); SetHE(201,67108835,26);
+  SetHE(202,67108836,26); SetHE(203,134217694,27); SetHE(204,134217695,27);
+  SetHE(205,67108837,26); SetHE(206,16777201,24); SetHE(207,33554413,25);
+  SetHE(208,524274,19); SetHE(209,2097123,21); SetHE(210,67108838,26);
+  SetHE(211,134217696,27); SetHE(212,134217697,27); SetHE(213,67108839,26);
+  SetHE(214,134217698,27); SetHE(215,16777202,24); SetHE(216,2097124,21);
+  SetHE(217,2097125,21); SetHE(218,67108840,26); SetHE(219,67108841,26);
+  SetHE(220,268435453,28); SetHE(221,134217699,27); SetHE(222,134217700,27);
+  SetHE(223,134217701,27); SetHE(224,1048556,20); SetHE(225,16777203,24);
+  SetHE(226,1048557,20); SetHE(227,2097126,21); SetHE(228,4194281,22);
+  SetHE(229,2097127,21); SetHE(230,2097128,21); SetHE(231,8388595,23);
+  SetHE(232,4194282,22); SetHE(233,4194283,22); SetHE(234,33554414,25);
+  SetHE(235,33554415,25); SetHE(236,16777204,24); SetHE(237,16777205,24);
+  SetHE(238,67108842,26); SetHE(239,8388596,23); SetHE(240,67108843,26);
+  SetHE(241,134217702,27); SetHE(242,67108844,26); SetHE(243,67108845,26);
+  SetHE(244,134217703,27); SetHE(245,134217704,27); SetHE(246,134217705,27);
+  SetHE(247,134217706,27); SetHE(248,134217707,27); SetHE(249,268435454,28);
+  SetHE(250,134217708,27); SetHE(251,134217709,27); SetHE(252,134217710,27);
+  SetHE(253,134217711,27); SetHE(254,134217712,27); SetHE(255,67108846,26);
+
+  (* EOS *)
+  SetHE(256,1073741823,30);
+
+  huffEncReady := TRUE
+END InitHuffEnc;
+
+(* ── Public Huffman API ──────────────────────────────── *)
+
+(* Byte pointer type for ADDRESS-based buffer access *)
+TYPE
+  BytePtr = POINTER TO ARRAY [0..65535] OF CHAR;
+
+PROCEDURE HuffmanDecode(src: ADDRESS; srcLen: CARDINAL;
+                        dst: ADDRESS; dstMax: CARDINAL;
+                        VAR dstLen: CARDINAL): BOOLEAN;
+VAR
+  node, bIdx, endIdx: CARDINAL;
+  byt: CARDINAL;
+  rem, i: CARDINAL;
+  a: HuffAccelEntry;
+  sym: INTEGER;
+  sp: BytePtr;
+  dp: BytePtr;
+BEGIN
+  InitHuffTree;
+  sp := src;
+  dp := dst;
+  dstLen := 0;
+  node := 0;
+  bIdx := 0;
+  endIdx := srcLen;
+
+  WHILE bIdx < endIdx DO
+    byt := ORD(sp^[bIdx]);
+    INC(bIdx);
+
+    IF node = 0 THEN
+      (* At root: use 8-bit acceleration table *)
+      a := huffAccel[byt];
+      IF a.sym >= 0 THEN
+        IF CARDINAL(a.sym) = HuffEOS THEN RETURN FALSE END;
+        IF dstLen >= dstMax THEN RETURN FALSE END;
+        dp^[dstLen] := CHR(CARDINAL(a.sym) MOD 256);
+        INC(dstLen);
+        node := 0;
+        (* Process remaining bits *)
+        CASE a.bitsUsed OF
+          1: byt := (byt MOD 128) * 2;   rem := 7
+        | 2: byt := (byt MOD 64) * 4;    rem := 6
+        | 3: byt := (byt MOD 32) * 8;    rem := 5
+        | 4: byt := (byt MOD 16) * 16;   rem := 4
+        | 5: byt := (byt MOD 8) * 32;    rem := 3
+        | 6: byt := (byt MOD 4) * 64;    rem := 2
+        | 7: byt := (byt MOD 2) * 128;   rem := 1
+        | 8: rem := 0
+        ELSE rem := 0
+        END;
+        i := 0;
+        WHILE i < rem DO
+          IF byt >= 128 THEN
+            IF huffRight[node] = -1 THEN RETURN FALSE END;
+            node := CARDINAL(huffRight[node])
+          ELSE
+            IF huffLeft[node] = -1 THEN RETURN FALSE END;
+            node := CARDINAL(huffLeft[node])
+          END;
+          byt := (byt MOD 128) * 2;
+          sym := huffSym[node];
+          IF sym >= 0 THEN
+            IF CARDINAL(sym) = HuffEOS THEN RETURN FALSE END;
+            IF dstLen >= dstMax THEN RETURN FALSE END;
+            dp^[dstLen] := CHR(CARDINAL(sym) MOD 256);
+            INC(dstLen);
+            node := 0
+          END;
+          INC(i)
+        END
+      ELSE
+        node := a.nodeAfter8
+      END
+    ELSE
+      (* Not at root: process 8 bits individually *)
+      i := 0;
+      WHILE i < 8 DO
+        IF byt >= 128 THEN
+          IF huffRight[node] = -1 THEN RETURN FALSE END;
+          node := CARDINAL(huffRight[node])
+        ELSE
+          IF huffLeft[node] = -1 THEN RETURN FALSE END;
+          node := CARDINAL(huffLeft[node])
+        END;
+        byt := (byt MOD 128) * 2;
+        sym := huffSym[node];
+        IF sym >= 0 THEN
+          IF CARDINAL(sym) = HuffEOS THEN RETURN FALSE END;
+          IF dstLen >= dstMax THEN RETURN FALSE END;
+          dp^[dstLen] := CHR(CARDINAL(sym) MOD 256);
+          INC(dstLen);
+          node := 0
+        END;
+        INC(i)
+      END
+    END
+  END;
+
+  (* Accept if remaining state is root or only 1-padding left *)
+  RETURN TRUE
+END HuffmanDecode;
+
+PROCEDURE HuffmanEncode(src: ADDRESS; srcLen: CARDINAL;
+                        dst: ADDRESS; dstMax: CARDINAL;
+                        VAR dstLen: CARDINAL): BOOLEAN;
+VAR
+  sp: BytePtr;
+  dp: BytePtr;
+  i, sym: CARDINAL;
+  code: LONGCARD;
+  bits, bitPos: CARDINAL;
+  curByte: CARDINAL;
+  outIdx: CARDINAL;
+  b: CARDINAL;
+  codeBit: CARDINAL;
+BEGIN
+  InitHuffEnc;
+  sp := src;
+  dp := dst;
+  dstLen := 0;
+  curByte := 0;
+  bitPos := 0;  (* bits written into curByte, 0..7 *)
+  outIdx := 0;
+
+  i := 0;
+  WHILE i < srcLen DO
+    sym := ORD(sp^[i]);
+    code := huffEnc[sym].code;
+    bits := huffEnc[sym].bits;
+
+    (* Emit bits from MSB to LSB of the code *)
+    b := 0;
+    WHILE b < bits DO
+      (* Extract bit (bits-1-b) from code *)
+      codeBit := CARDINAL(code DIV PowerOf2(bits - 1 - b)) MOD 2;
+      curByte := curByte * 2 + codeBit;
+      INC(bitPos);
+      IF bitPos = 8 THEN
+        IF outIdx >= dstMax THEN RETURN FALSE END;
+        dp^[outIdx] := CHR(curByte);
+        INC(outIdx);
+        curByte := 0;
+        bitPos := 0
+      END;
+      INC(b)
+    END;
+    INC(i)
+  END;
+
+  (* Pad remaining bits with 1s (EOS prefix) *)
+  IF bitPos > 0 THEN
+    WHILE bitPos < 8 DO
+      curByte := curByte * 2 + 1;
+      INC(bitPos)
+    END;
+    IF outIdx >= dstMax THEN RETURN FALSE END;
+    dp^[outIdx] := CHR(curByte);
+    INC(outIdx)
+  END;
+
+  dstLen := outIdx;
+  RETURN TRUE
+END HuffmanEncode;
+
+PROCEDURE PowerOf2(n: CARDINAL): LONGCARD;
+VAR result: LONGCARD; i: CARDINAL;
+BEGIN
+  result := 1;
+  i := 0;
+  WHILE i < n DO
+    result := result * 2;
+    INC(i)
+  END;
+  RETURN result
+END PowerOf2;
+
+PROCEDURE HuffmanDecodedLength(src: ADDRESS; srcLen: CARDINAL): CARDINAL;
+VAR
+  node, bIdx, endIdx: CARDINAL;
+  byt: CARDINAL;
+  rem, i: CARDINAL;
+  a: HuffAccelEntry;
+  sym: INTEGER;
+  sp: BytePtr;
+  count: CARDINAL;
+BEGIN
+  InitHuffTree;
+  sp := src;
+  count := 0;
+  node := 0;
+  bIdx := 0;
+  endIdx := srcLen;
+
+  WHILE bIdx < endIdx DO
+    byt := ORD(sp^[bIdx]);
+    INC(bIdx);
+
+    IF node = 0 THEN
+      a := huffAccel[byt];
+      IF a.sym >= 0 THEN
+        IF CARDINAL(a.sym) = HuffEOS THEN RETURN 0 END;
+        INC(count);
+        node := 0;
+        CASE a.bitsUsed OF
+          1: byt := (byt MOD 128) * 2;   rem := 7
+        | 2: byt := (byt MOD 64) * 4;    rem := 6
+        | 3: byt := (byt MOD 32) * 8;    rem := 5
+        | 4: byt := (byt MOD 16) * 16;   rem := 4
+        | 5: byt := (byt MOD 8) * 32;    rem := 3
+        | 6: byt := (byt MOD 4) * 64;    rem := 2
+        | 7: byt := (byt MOD 2) * 128;   rem := 1
+        | 8: rem := 0
+        ELSE rem := 0
+        END;
+        i := 0;
+        WHILE i < rem DO
+          IF byt >= 128 THEN
+            IF huffRight[node] = -1 THEN RETURN 0 END;
+            node := CARDINAL(huffRight[node])
+          ELSE
+            IF huffLeft[node] = -1 THEN RETURN 0 END;
+            node := CARDINAL(huffLeft[node])
+          END;
+          byt := (byt MOD 128) * 2;
+          sym := huffSym[node];
+          IF sym >= 0 THEN
+            IF CARDINAL(sym) = HuffEOS THEN RETURN 0 END;
+            INC(count);
+            node := 0
+          END;
+          INC(i)
+        END
+      ELSE
+        node := a.nodeAfter8
+      END
+    ELSE
+      i := 0;
+      WHILE i < 8 DO
+        IF byt >= 128 THEN
+          IF huffRight[node] = -1 THEN RETURN 0 END;
+          node := CARDINAL(huffRight[node])
+        ELSE
+          IF huffLeft[node] = -1 THEN RETURN 0 END;
+          node := CARDINAL(huffLeft[node])
+        END;
+        byt := (byt MOD 128) * 2;
+        sym := huffSym[node];
+        IF sym >= 0 THEN
+          IF CARDINAL(sym) = HuffEOS THEN RETURN 0 END;
+          INC(count);
+          node := 0
+        END;
+        INC(i)
+      END
+    END
+  END;
+
+  RETURN count
+END HuffmanDecodedLength;
+
 BEGIN
   staticReady := FALSE;
-  huffReady := FALSE
+  huffReady := FALSE;
+  huffEncReady := FALSE
 END Http2Hpack.

@@ -10,8 +10,10 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -57,6 +59,82 @@ int32_t m2_dns_resolve_a(const void *host,
     freeaddrinfo(res);
     errno = ENOENT;
     return -1;
+}
+
+/* ── Async DNS resolution ────────────────────────────────────────── */
+
+/* Thread argument for async resolution */
+typedef struct {
+    char             host[256];
+    int32_t          port;
+    int32_t          callback_id;
+    m2_dns_callback  cb;
+} m2_dns_async_arg;
+
+static void *m2_dns_resolve_thread(void *arg)
+{
+    m2_dns_async_arg *a = (m2_dns_async_arg *)arg;
+    struct addrinfo hints, *res, *rp;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int rc = getaddrinfo(a->host, NULL, &hints, &res);
+    if (rc != 0) {
+        a->cb(a->callback_id, 0, 0, 0, 0, a->port, -1);
+        free(a);
+        return NULL;
+    }
+
+    /* Take the first A record */
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        if (rp->ai_family == AF_INET) {
+            struct sockaddr_in *sa = (struct sockaddr_in *)rp->ai_addr;
+            uint32_t addr = ntohl(sa->sin_addr.s_addr);
+            uint8_t aa = (uint8_t)(addr >> 24);
+            uint8_t bb = (uint8_t)(addr >> 16);
+            uint8_t cc = (uint8_t)(addr >>  8);
+            uint8_t dd = (uint8_t)(addr);
+            freeaddrinfo(res);
+            a->cb(a->callback_id, aa, bb, cc, dd, a->port, 0);
+            free(a);
+            return NULL;
+        }
+    }
+
+    freeaddrinfo(res);
+    a->cb(a->callback_id, 0, 0, 0, 0, a->port, -1);
+    free(a);
+    return NULL;
+}
+
+void m2_dns_resolve_async(const char *host, int32_t port,
+                           int32_t callback_id, m2_dns_callback cb)
+{
+    m2_dns_async_arg *a = (m2_dns_async_arg *)malloc(sizeof(m2_dns_async_arg));
+    if (!a) {
+        /* Cannot allocate — invoke callback with error immediately */
+        cb(callback_id, 0, 0, 0, 0, port, -1);
+        return;
+    }
+
+    /* Copy hostname (safe; truncates at 255 chars) */
+    strncpy(a->host, host, sizeof(a->host) - 1);
+    a->host[sizeof(a->host) - 1] = '\0';
+    a->port        = port;
+    a->callback_id = callback_id;
+    a->cb          = cb;
+
+    pthread_t tid;
+    int rc = pthread_create(&tid, NULL, m2_dns_resolve_thread, a);
+    if (rc != 0) {
+        /* Thread creation failed — invoke callback with error */
+        cb(callback_id, 0, 0, 0, 0, port, -1);
+        free(a);
+        return;
+    }
+    pthread_detach(tid);
 }
 
 /* ── Socket helpers ──────────────────────────────────────────────── */

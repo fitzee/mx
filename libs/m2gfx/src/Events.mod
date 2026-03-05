@@ -2,7 +2,7 @@ IMPLEMENTATION MODULE Events;
 
 FROM SYSTEM IMPORT ADR;
 FROM GfxBridge IMPORT gfx_poll_event, gfx_wait_event, gfx_wait_event_timeout,
-     gfx_event_key, gfx_event_scancode, gfx_event_mod,
+     gfx_event_key, gfx_event_scancode, gfx_event_key_repeat, gfx_event_mod,
      gfx_event_mouse_x, gfx_event_mouse_y, gfx_event_mouse_btn,
      gfx_event_wheel_x, gfx_event_wheel_y,
      gfx_event_win_id, gfx_event_win_event,
@@ -34,6 +34,11 @@ PROCEDURE ScanCode(): INTEGER;
 BEGIN
   RETURN gfx_event_scancode()
 END ScanCode;
+
+PROCEDURE KeyRepeat(): BOOLEAN;
+BEGIN
+  RETURN gfx_event_key_repeat() # 0
+END KeyRepeat;
 
 PROCEDURE KeyMod(): INTEGER;
 BEGIN

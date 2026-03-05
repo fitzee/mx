@@ -136,6 +136,43 @@ int m2_tls_ctx_set_server_cert(void *ctx,
     return 0;
 }
 
+/* ── Mutual TLS (client certificate verification) ──── */
+
+int m2_tls_set_client_ca(void *ctx, const char *ca_path) {
+    if (!ctx || !ca_path) return -1;
+    return SSL_CTX_load_verify_locations((SSL_CTX *)ctx, ca_path, NULL) == 1
+               ? 0 : -1;
+}
+
+int m2_tls_require_client_cert(void *ctx, int require) {
+    if (!ctx) return -1;
+    if (require)
+        SSL_CTX_set_verify((SSL_CTX *)ctx,
+                            SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                            NULL);
+    else
+        SSL_CTX_set_verify((SSL_CTX *)ctx, SSL_VERIFY_NONE, NULL);
+    return 0;
+}
+
+int m2_tls_get_peer_cert_dn(void *ssl, void *buf, int buflen) {
+    X509 *cert;
+    X509_NAME *subj;
+    char *dst = (char *)buf;
+    if (!ssl || !buf || buflen <= 0) return -1;
+    dst[0] = '\0';
+    cert = M2_GET_PEER_CERT((SSL *)ssl);
+    if (!cert) return -1;
+    subj = X509_get_subject_name(cert);
+    if (subj) {
+        X509_NAME_oneline(subj, dst, buflen);
+    } else {
+        dst[0] = '\0';
+    }
+    X509_free(cert);
+    return (int)strlen(dst);
+}
+
 /* ── ALPN ────────────────────────────────────────────── */
 
 int m2_tls_ctx_set_alpn(void *ctx,

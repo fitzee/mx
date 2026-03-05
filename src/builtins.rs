@@ -247,7 +247,7 @@ pub fn codegen_builtin(name: &str, args: &[String]) -> String {
         "MAX" => format!("m2_max({})", args[0]),
         "MIN" => format!("m2_min({})", args[0]),
         "ODD" => format!("(({}) & 1)", args[0]),
-        "ORD" => format!("((uint32_t)({}))", args[0]),
+        "ORD" => format!("((uint32_t)((unsigned char)({})))", args[0]),
         "SIZE" => {
             // Map Modula-2 type names to C type names
             let c_type = match args[0].as_str() {

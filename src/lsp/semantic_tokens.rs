@@ -569,4 +569,149 @@ mod tests {
         assert_eq!(inout.unwrap().3, TT_NAMESPACE,
             "InOut at import site should be namespace, got {}", inout.unwrap().3);
     }
+
+    #[test]
+    fn test_semantic_tokens_def_module_imports() {
+        // Imports from pre-registered .def modules should be classified by
+        // their actual kind (type, function, constant), not all as functions.
+        use crate::ast::DefinitionModule;
+        use crate::lexer::Lexer;
+        use crate::parser::Parser;
+        use crate::ast::CompilationUnit;
+
+        // Parse a .def module
+        let gfx_def_src = "DEFINITION MODULE Gfx;\nTYPE Renderer = ADDRESS;\nCONST WIN_CENTERED = 1;\nPROCEDURE Init(): BOOLEAN;\nEND Gfx.\n";
+        let mut lex = Lexer::new(gfx_def_src, "Gfx.def");
+        let tokens = lex.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let gfx_unit = parser.parse_compilation_unit().unwrap();
+        let gfx_def = match gfx_unit {
+            CompilationUnit::DefinitionModule(d) => d,
+            _ => panic!("expected def module"),
+        };
+
+        // Analyze the main module with the .def pre-registered
+        let main_src = "MODULE Test;\nFROM Gfx IMPORT Renderer, WIN_CENTERED, Init;\nBEGIN\nEND Test.\n";
+        let result = analyze::analyze_source(main_src, "test.mod", &[&gfx_def]);
+        let data = collect_semantic_tokens(main_src, "test.mod", &result);
+
+        // Decode tokens
+        let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
+        let mut pl = 0u32;
+        let mut pc = 0u32;
+        let mut i = 0;
+        while i + 4 < data.len() {
+            let dl = data[i]; let dc = data[i+1]; let len = data[i+2]; let tt = data[i+3];
+            let line = pl + dl;
+            let col = if dl == 0 { pc + dc } else { dc };
+            let name = main_src.lines().nth(line as usize)
+                .map(|l| {
+                    let s = col as usize;
+                    let e = (s + len as usize).min(l.len());
+                    if s <= l.len() { &l[s..e] } else { "?" }
+                })
+                .unwrap_or("?");
+            tokens_abs.push((line, col, len, tt, name.to_string()));
+            pl = line; pc = col;
+            i += 5;
+        }
+
+        // "Renderer" on line 1 should be TT_TYPE
+        let renderer = tokens_abs.iter().find(|t| t.4 == "Renderer" && t.0 == 1);
+        assert!(renderer.is_some(), "Renderer not found; tokens: {:?}", tokens_abs);
+        assert_eq!(renderer.unwrap().3, TT_TYPE,
+            "Renderer should be TT_TYPE({}), got {}. All: {:?}",
+            TT_TYPE, renderer.unwrap().3, tokens_abs);
+
+        // "WIN_CENTERED" on line 1 should be TT_VARIABLE (constant maps to variable)
+        let wc = tokens_abs.iter().find(|t| t.4 == "WIN_CENTERED" && t.0 == 1);
+        assert!(wc.is_some(), "WIN_CENTERED not found; tokens: {:?}", tokens_abs);
+        assert_eq!(wc.unwrap().3, TT_VARIABLE,
+            "WIN_CENTERED should be TT_VARIABLE({}), got {}",
+            TT_VARIABLE, wc.unwrap().3);
+
+        // "Init" on line 1 should be TT_FUNCTION
+        let init = tokens_abs.iter().find(|t| t.4 == "Init" && t.0 == 1);
+        assert!(init.is_some(), "Init not found; tokens: {:?}", tokens_abs);
+        assert_eq!(init.unwrap().3, TT_FUNCTION,
+            "Init should be TT_FUNCTION({}), got {}",
+            TT_FUNCTION, init.unwrap().3);
+
+    }
+
+    #[test]
+    fn test_semantic_tokens_impl_module_imports() {
+        // Same as above but for IMPLEMENTATION MODULE (hexed files are impl modules)
+        use crate::ast::DefinitionModule;
+        use crate::lexer::Lexer;
+        use crate::parser::Parser;
+        use crate::ast::CompilationUnit;
+
+        // Parse Events.def with constants and procedures
+        let events_def_src = "DEFINITION MODULE Events;\nCONST KEYDOWN = 2; QUIT_EVENT = 1;\nPROCEDURE KeyCode(): INTEGER;\nPROCEDURE KeyMod(): INTEGER;\nEND Events.\n";
+        let mut lex = Lexer::new(events_def_src, "Events.def");
+        let tokens = lex.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let events_def = match parser.parse_compilation_unit().unwrap() {
+            CompilationUnit::DefinitionModule(d) => d,
+            _ => panic!("expected def module"),
+        };
+
+        // Parse Keymap.def (the own .def for the impl module)
+        let keymap_def_src = "DEFINITION MODULE Keymap;\nTYPE Action = (ActNone, ActQuit);\nPROCEDURE HandleEvent(evType: INTEGER): Action;\nEND Keymap.\n";
+        let mut lex2 = Lexer::new(keymap_def_src, "Keymap.def");
+        let tokens2 = lex2.tokenize().unwrap();
+        let mut parser2 = Parser::new(tokens2);
+        let keymap_def = match parser2.parse_compilation_unit().unwrap() {
+            CompilationUnit::DefinitionModule(d) => d,
+            _ => panic!("expected def module"),
+        };
+
+        // Analyze an IMPLEMENTATION MODULE that imports from Events
+        let impl_src = "IMPLEMENTATION MODULE Keymap;\nFROM Events IMPORT KeyCode, KeyMod, KEYDOWN, QUIT_EVENT;\nBEGIN\nEND Keymap.\n";
+        let result = analyze::analyze_source(impl_src, "Keymap.mod", &[&keymap_def, &events_def]);
+        let data = collect_semantic_tokens(impl_src, "Keymap.mod", &result);
+
+        // Decode tokens
+        let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
+        let mut pl = 0u32;
+        let mut pc = 0u32;
+        let mut i = 0;
+        while i + 4 < data.len() {
+            let dl = data[i]; let dc = data[i+1]; let len = data[i+2]; let tt = data[i+3];
+            let line = pl + dl;
+            let col = if dl == 0 { pc + dc } else { dc };
+            let name = impl_src.lines().nth(line as usize)
+                .map(|l| {
+                    let s = col as usize;
+                    let e = (s + len as usize).min(l.len());
+                    if s <= l.len() { &l[s..e] } else { "?" }
+                })
+                .unwrap_or("?");
+            tokens_abs.push((line, col, len, tt, name.to_string()));
+            pl = line; pc = col;
+            i += 5;
+        }
+
+        // "KeyCode" on line 1 should be TT_FUNCTION
+        let kc = tokens_abs.iter().find(|t| t.4 == "KeyCode" && t.0 == 1);
+        assert!(kc.is_some(), "KeyCode not found; tokens: {:?}", tokens_abs);
+        assert_eq!(kc.unwrap().3, TT_FUNCTION,
+            "KeyCode should be TT_FUNCTION({}), got {}. All: {:?}",
+            TT_FUNCTION, kc.unwrap().3, tokens_abs);
+
+        // "KEYDOWN" on line 1 should be TT_VARIABLE (constant)
+        let kd = tokens_abs.iter().find(|t| t.4 == "KEYDOWN" && t.0 == 1);
+        assert!(kd.is_some(), "KEYDOWN not found; tokens: {:?}", tokens_abs);
+        assert_eq!(kd.unwrap().3, TT_VARIABLE,
+            "KEYDOWN should be TT_VARIABLE({}), got {}",
+            TT_VARIABLE, kd.unwrap().3);
+
+        // "QUIT_EVENT" on line 1 should be TT_VARIABLE (constant)
+        let qe = tokens_abs.iter().find(|t| t.4 == "QUIT_EVENT" && t.0 == 1);
+        assert!(qe.is_some(), "QUIT_EVENT not found; tokens: {:?}", tokens_abs);
+        assert_eq!(qe.unwrap().3, TT_VARIABLE,
+            "QUIT_EVENT should be TT_VARIABLE({}), got {}",
+            TT_VARIABLE, qe.unwrap().3);
+    }
 }

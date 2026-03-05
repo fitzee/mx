@@ -14,6 +14,7 @@ IMPLEMENTATION MODULE Http2ServerMetrics;
     m.resp2xx := 0;
     m.resp4xx := 0;
     m.resp5xx := 0;
+    m.connsRejected := 0;
     m.protoErrors := 0;
     m.bytesIn := 0;
     m.bytesOut := 0;
@@ -50,6 +51,11 @@ IMPLEMENTATION MODULE Http2ServerMetrics;
   BEGIN
     INC(m.alpnReject);
   END IncALPNReject;
+
+  PROCEDURE IncConnsRejected(VAR m: Metrics);
+  BEGIN
+    INC(m.connsRejected);
+  END IncConnsRejected;
 
   PROCEDURE IncStreamsOpened(VAR m: Metrics);
   BEGIN
@@ -89,22 +95,23 @@ IMPLEMENTATION MODULE Http2ServerMetrics;
 
   PROCEDURE MetricsLog(VAR m: Metrics; VAR lg: Logger);
   VAR
-    fields: ARRAY [0..12] OF Field;
+    fields: ARRAY [0..13] OF Field;
   BEGIN
     KVInt("connsAccepted", VAL(INTEGER, m.connsAccepted), fields[0]);
     KVInt("connsActive", VAL(INTEGER, m.connsActive), fields[1]);
     KVInt("connsClosed", VAL(INTEGER, m.connsClosed), fields[2]);
-    KVInt("tlsHandshakeFail", VAL(INTEGER, m.tlsHandshakeFail), fields[3]);
-    KVInt("alpnReject", VAL(INTEGER, m.alpnReject), fields[4]);
-    KVInt("streamsOpened", VAL(INTEGER, m.streamsOpened), fields[5]);
-    KVInt("reqTotal", VAL(INTEGER, m.reqTotal), fields[6]);
-    KVInt("resp2xx", VAL(INTEGER, m.resp2xx), fields[7]);
-    KVInt("resp4xx", VAL(INTEGER, m.resp4xx), fields[8]);
-    KVInt("resp5xx", VAL(INTEGER, m.resp5xx), fields[9]);
-    KVInt("protoErrors", VAL(INTEGER, m.protoErrors), fields[10]);
-    KVInt("bytesIn", VAL(INTEGER, m.bytesIn), fields[11]);
-    KVInt("bytesOut", VAL(INTEGER, m.bytesOut), fields[12]);
-    LogKV(lg, INFO, "metrics", fields, 13);
+    KVInt("connsRejected", VAL(INTEGER, m.connsRejected), fields[3]);
+    KVInt("tlsHandshakeFail", VAL(INTEGER, m.tlsHandshakeFail), fields[4]);
+    KVInt("alpnReject", VAL(INTEGER, m.alpnReject), fields[5]);
+    KVInt("streamsOpened", VAL(INTEGER, m.streamsOpened), fields[6]);
+    KVInt("reqTotal", VAL(INTEGER, m.reqTotal), fields[7]);
+    KVInt("resp2xx", VAL(INTEGER, m.resp2xx), fields[8]);
+    KVInt("resp4xx", VAL(INTEGER, m.resp4xx), fields[9]);
+    KVInt("resp5xx", VAL(INTEGER, m.resp5xx), fields[10]);
+    KVInt("protoErrors", VAL(INTEGER, m.protoErrors), fields[11]);
+    KVInt("bytesIn", VAL(INTEGER, m.bytesIn), fields[12]);
+    KVInt("bytesOut", VAL(INTEGER, m.bytesOut), fields[13]);
+    LogKV(lg, INFO, "metrics", fields, 14);
   END MetricsLog;
 
 END Http2ServerMetrics.

@@ -60,6 +60,22 @@ int  m2_tls_ctx_set_server_cert(void *ctx,
                                  const char *cert_path,
                                  const char *key_path);
 
+/* ── Mutual TLS (client certificate verification) ──── */
+
+/* Load CA file for verifying client certificates.
+   Returns 0 on success, -1 on failure. */
+int  m2_tls_set_client_ca(void *ctx, const char *ca_path);
+
+/* Enable/disable mandatory client certificate verification.
+   require: 1 = SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+            0 = SSL_VERIFY_NONE
+   Returns 0 on success, -1 on failure. */
+int  m2_tls_require_client_cert(void *ctx, int require);
+
+/* Copy the peer certificate subject DN into buf (one-line format).
+   Returns number of bytes written on success, -1 if no peer cert. */
+int  m2_tls_get_peer_cert_dn(void *ssl, void *buf, int buflen);
+
 /* ── ALPN ───────────────────────────────────────────── */
 
 /* Client-side ALPN: set protocol list in wire format

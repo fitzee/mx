@@ -31,6 +31,15 @@ DEFINITION MODULE FOR "C" TlsBridge;
                                         certPath: ADDRESS;
                                         keyPath: ADDRESS): INTEGER;
 
+  (* Mutual TLS *)
+  PROCEDURE m2_tls_set_client_ca(ctx: ADDRESS;
+                                  caPath: ADDRESS): INTEGER;
+  PROCEDURE m2_tls_require_client_cert(ctx: ADDRESS;
+                                        require: INTEGER): INTEGER;
+  PROCEDURE m2_tls_get_peer_cert_dn(ssl: ADDRESS;
+                                     buf: ADDRESS;
+                                     buflen: INTEGER): INTEGER;
+
   (* ALPN *)
   PROCEDURE m2_tls_ctx_set_alpn(ctx: ADDRESS;
                                  protos: ADDRESS;

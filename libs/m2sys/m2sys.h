@@ -38,9 +38,10 @@ int32_t m2sys_str_contains_ci(const void *haystack, const void *needle);
 
 /* File operations */
 int32_t m2sys_sha256_file(void *path, void *hex_out);
-int32_t m2sys_file_size(void *path);
+int64_t m2sys_file_size(void *path);
 int32_t m2sys_copy_file(void *src, void *dst);
 int32_t m2sys_rename(void *old_path, void *new_path);
+int32_t m2sys_fseek(int32_t handle, int64_t offset, int32_t whence);
 
 /* Directory listing */
 int32_t m2sys_list_dir(void *dir, void *buf, int32_t bufSize);

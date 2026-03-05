@@ -29,6 +29,7 @@ DEFINITION MODULE FOR "C" GfxBridge;
 
   (* Renderer *)
   PROCEDURE gfx_create_renderer(win: ADDRESS; flags: INTEGER): ADDRESS;
+  PROCEDURE gfx_update_logical_size(ren, win: ADDRESS);
   PROCEDURE gfx_destroy_renderer(ren: ADDRESS);
   PROCEDURE gfx_present(ren: ADDRESS);
   PROCEDURE gfx_output_width(ren: ADDRESS): INTEGER;
@@ -66,6 +67,7 @@ DEFINITION MODULE FOR "C" GfxBridge;
   PROCEDURE gfx_wait_event_timeout(ms: INTEGER): INTEGER;
   PROCEDURE gfx_event_key(): INTEGER;
   PROCEDURE gfx_event_scancode(): INTEGER;
+  PROCEDURE gfx_event_key_repeat(): INTEGER;
   PROCEDURE gfx_event_mod(): INTEGER;
   PROCEDURE gfx_event_mouse_x(): INTEGER;
   PROCEDURE gfx_event_mouse_y(): INTEGER;
@@ -86,6 +88,8 @@ DEFINITION MODULE FOR "C" GfxBridge;
 
   (* Font *)
   PROCEDURE gfx_open_font(path: ADDRESS; size: INTEGER): ADDRESS;
+  PROCEDURE gfx_open_font_physical(path: ADDRESS; size: INTEGER): ADDRESS;
+  PROCEDURE gfx_dpi_scale(): INTEGER;
   PROCEDURE gfx_close_font(font: ADDRESS);
   PROCEDURE gfx_font_style(font: ADDRESS; style: INTEGER);
   PROCEDURE gfx_font_get_style(font: ADDRESS): INTEGER;

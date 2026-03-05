@@ -102,7 +102,7 @@ static void test_sha256_file(void) {
 static void test_file_size(void) {
     char path[512];
     snprintf(path, sizeof(path), "%s/test.txt", tmpdir);
-    int32_t sz = m2sys_file_size(path);
+    int64_t sz = m2sys_file_size(path);
     CHECK(sz > 0, "file_size > 0");
     CHECK(m2sys_file_size("/nonexistent_xyz") == -1, "file_size nonexistent");
 }

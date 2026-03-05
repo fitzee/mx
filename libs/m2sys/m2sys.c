@@ -303,10 +303,15 @@ int32_t m2sys_sha256_file(void *path, void *hex_out) {
     return 0;
 }
 
-int32_t m2sys_file_size(void *path) {
+int64_t m2sys_file_size(void *path) {
     struct stat st;
     if (stat((const char *)path, &st) != 0) return -1;
-    return (int32_t)st.st_size;
+    return (int64_t)st.st_size;
+}
+
+int32_t m2sys_fseek(int32_t handle, int64_t offset, int32_t whence) {
+    if (handle < 0 || handle >= MAX_HANDLES || !handle_table[handle]) return -1;
+    return fseeko(handle_table[handle], (off_t)offset, whence) == 0 ? 0 : -1;
 }
 
 int32_t m2sys_copy_file(void *src, void *dst) {

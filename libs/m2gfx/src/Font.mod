@@ -1,7 +1,7 @@
 IMPLEMENTATION MODULE Font;
 
 FROM SYSTEM IMPORT ADR;
-FROM GfxBridge IMPORT gfx_open_font, gfx_close_font,
+FROM GfxBridge IMPORT gfx_open_font, gfx_open_font_physical, gfx_dpi_scale, gfx_close_font,
      gfx_font_style, gfx_font_get_style, gfx_font_set_hinting,
      gfx_draw_text, gfx_draw_text_wrapped,
      gfx_text_width, gfx_text_height,
@@ -12,6 +12,16 @@ PROCEDURE Open(path: ARRAY OF CHAR; size: INTEGER): FontHandle;
 BEGIN
   RETURN gfx_open_font(ADR(path), size)
 END Open;
+
+PROCEDURE OpenPhysical(path: ARRAY OF CHAR; size: INTEGER): FontHandle;
+BEGIN
+  RETURN gfx_open_font_physical(ADR(path), size)
+END OpenPhysical;
+
+PROCEDURE DpiScale(): INTEGER;
+BEGIN
+  RETURN gfx_dpi_scale()
+END DpiScale;
 
 PROCEDURE Close(font: FontHandle);
 BEGIN

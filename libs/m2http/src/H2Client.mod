@@ -75,7 +75,8 @@ TYPE
     gotHeaders:   BOOLEAN;
     gotEndStream: BOOLEAN;
     goawayRecv:   BOOLEAN;
-    isPut:      BOOLEAN;
+    method:     ARRAY [0..7] OF CHAR;
+    hasBody:    BOOLEAN;
     host:       ARRAY [0..255] OF CHAR;
     authority:  ARRAY [0..271] OF CHAR;
     path:       ARRAY [0..2047] OF CHAR;
@@ -329,7 +330,7 @@ VAR
   headers: ARRAY [0..9] OF HeaderEntry;
   numHdrs: CARDINAL;
   nMethod, nPath, nScheme, nAuth: ARRAY [0..15] OF CHAR;
-  vGet, vPut, vScheme: ARRAY [0..7] OF CHAR;
+  vScheme: ARRAY [0..7] OF CHAR;
   nCT, nCL, nAZ, nUA: ARRAY [0..15] OF CHAR;
   vUA: ARRAY [0..15] OF CHAR;
   clBuf: ARRAY [0..15] OF CHAR;
@@ -339,13 +340,7 @@ BEGIN
   numHdrs := 0;
 
   nMethod := ":method";
-  vGet := "GET";
-  vPut := "PUT";
-  IF c^.isPut THEN
-    SetHdrS(headers[numHdrs], nMethod, vPut)
-  ELSE
-    SetHdrS(headers[numHdrs], nMethod, vGet)
-  END;
+  SetHdr(headers[numHdrs], nMethod, 7, c^.method, StrLen(c^.method));
   INC(numHdrs);
 
   nPath := ":path";
@@ -367,7 +362,7 @@ BEGIN
   SetHdr(headers[numHdrs], nAuth, 10, c^.authority, StrLen(c^.authority));
   INC(numHdrs);
 
-  IF c^.isPut THEN
+  IF c^.hasBody THEN
     IF StrLen(c^.contentType) > 0 THEN
       nCT := "content-type";
       SetHdr(headers[numHdrs], nCT, 12,
@@ -378,14 +373,15 @@ BEGIN
     nCL := "content-length";
     IntToStr(c^.bodyLen, clBuf);
     SetHdr(headers[numHdrs], nCL, 14, clBuf, StrLen(clBuf));
-    INC(numHdrs);
+    INC(numHdrs)
+  END;
 
-    IF StrLen(c^.authorization) > 0 THEN
-      nAZ := "authorization";
-      SetHdr(headers[numHdrs], nAZ, 13,
-             c^.authorization, StrLen(c^.authorization));
-      INC(numHdrs)
-    END
+  (* Authorization header — sent for any method that provides it *)
+  IF StrLen(c^.authorization) > 0 THEN
+    nAZ := "authorization";
+    SetHdr(headers[numHdrs], nAZ, 13,
+           c^.authorization, StrLen(c^.authorization));
+    INC(numHdrs)
   END;
 
   nUA := "user-agent";
@@ -411,7 +407,7 @@ BEGIN
 
   BuildRequestHeaders(c);
 
-  endStream := NOT c^.isPut;
+  endStream := NOT c^.hasBody;
   hdrView := ByteBuf.AsView(c^.hdrBuf);
 
   (* HEADERS frame *)
@@ -421,8 +417,8 @@ BEGIN
                    flags, c^.streamId);
   ByteBuf.AppendView(c^.outBuf, hdrView);
 
-  (* For PUT: DATA frame(s) with body *)
-  IF c^.isPut THEN
+  (* For body-bearing methods: DATA frame(s) *)
+  IF c^.hasBody THEN
     IF c^.bodyLen > 0 THEN
       maxFrame := c^.remoteMaxFrame;
       remaining := c^.bodyLen;
@@ -804,7 +800,8 @@ END BuildAuthority;
 
 PROCEDURE DoConnect(lp: EventLoop.Loop; sched: Scheduler;
                     VAR uri: URIRec;
-                    isPut: BOOLEAN;
+                    VAR method: ARRAY OF CHAR;
+                    withBody: BOOLEAN;
                     bodyData: ADDRESS; bodyLen: INTEGER;
                     VAR contentType: ARRAY OF CHAR;
                     VAR authorization: ARRAY OF CHAR;
@@ -858,7 +855,8 @@ BEGIN
   c^.gotHeaders := FALSE;
   c^.gotEndStream := FALSE;
   c^.goawayRecv := FALSE;
-  c^.isPut := isPut;
+  StrCopy(method, c^.method);
+  c^.hasBody := withBody;
   c^.reqBody := bodyData;
   c^.reqBodyLen := bodyLen;
   c^.bodyLen := bodyLen;
@@ -867,13 +865,8 @@ BEGIN
   StrCopy(uri.host, c^.host);
   BuildAuthority(c, uri);
   ust := RequestPath(uri, c^.path, c^.pathLen);
-  IF isPut THEN
-    StrCopy(contentType, c^.contentType);
-    StrCopy(authorization, c^.authorization)
-  ELSE
-    c^.contentType[0] := 0C;
-    c^.authorization[0] := 0C
-  END;
+  StrCopy(contentType, c^.contentType);
+  StrCopy(authorization, c^.authorization);
 
   (* 3. Initialize H2 state — inline buffers and HPACK tables *)
   ByteBuf.Init(c^.outBuf, 1024);
@@ -968,10 +961,12 @@ END DoConnect;
 PROCEDURE Get(lp: EventLoop.Loop; sched: Scheduler;
               VAR uri: URIRec;
               VAR outFuture: Future): Status;
-VAR dummy: ARRAY [0..0] OF CHAR;
+VAR method: ARRAY [0..3] OF CHAR;
+    dummy: ARRAY [0..0] OF CHAR;
 BEGIN
+  method[0] := 'G'; method[1] := 'E'; method[2] := 'T'; method[3] := 0C;
   dummy[0] := 0C;
-  RETURN DoConnect(lp, sched, uri, FALSE, NIL, 0, dummy, dummy,
+  RETURN DoConnect(lp, sched, uri, method, FALSE, NIL, 0, dummy, dummy,
                    outFuture)
 END Get;
 
@@ -981,10 +976,54 @@ PROCEDURE Put(lp: EventLoop.Loop; sched: Scheduler;
               VAR contentType: ARRAY OF CHAR;
               VAR authorization: ARRAY OF CHAR;
               VAR outFuture: Future): Status;
+VAR method: ARRAY [0..3] OF CHAR;
 BEGIN
-  RETURN DoConnect(lp, sched, uri, TRUE, bodyData, bodyLen,
+  method[0] := 'P'; method[1] := 'U'; method[2] := 'T'; method[3] := 0C;
+  RETURN DoConnect(lp, sched, uri, method, TRUE, bodyData, bodyLen,
                    contentType, authorization, outFuture)
 END Put;
+
+PROCEDURE Post(lp: EventLoop.Loop; sched: Scheduler;
+               VAR uri: URIRec;
+               bodyData: ADDRESS; bodyLen: INTEGER;
+               VAR contentType: ARRAY OF CHAR;
+               VAR authorization: ARRAY OF CHAR;
+               VAR outFuture: Future): Status;
+VAR method: ARRAY [0..4] OF CHAR;
+BEGIN
+  method[0] := 'P'; method[1] := 'O'; method[2] := 'S';
+  method[3] := 'T'; method[4] := 0C;
+  RETURN DoConnect(lp, sched, uri, method, TRUE, bodyData, bodyLen,
+                   contentType, authorization, outFuture)
+END Post;
+
+PROCEDURE Delete(lp: EventLoop.Loop; sched: Scheduler;
+                 VAR uri: URIRec;
+                 VAR authorization: ARRAY OF CHAR;
+                 VAR outFuture: Future): Status;
+VAR method: ARRAY [0..6] OF CHAR;
+    dummy: ARRAY [0..0] OF CHAR;
+BEGIN
+  method[0] := 'D'; method[1] := 'E'; method[2] := 'L'; method[3] := 'E';
+  method[4] := 'T'; method[5] := 'E'; method[6] := 0C;
+  dummy[0] := 0C;
+  RETURN DoConnect(lp, sched, uri, method, FALSE, NIL, 0, dummy,
+                   authorization, outFuture)
+END Delete;
+
+PROCEDURE Patch(lp: EventLoop.Loop; sched: Scheduler;
+                VAR uri: URIRec;
+                bodyData: ADDRESS; bodyLen: INTEGER;
+                VAR contentType: ARRAY OF CHAR;
+                VAR authorization: ARRAY OF CHAR;
+                VAR outFuture: Future): Status;
+VAR method: ARRAY [0..5] OF CHAR;
+BEGIN
+  method[0] := 'P'; method[1] := 'A'; method[2] := 'T';
+  method[3] := 'C'; method[4] := 'H'; method[5] := 0C;
+  RETURN DoConnect(lp, sched, uri, method, TRUE, bodyData, bodyLen,
+                   contentType, authorization, outFuture)
+END Patch;
 
 PROCEDURE FreeResponse(VAR resp: ResponsePtr);
 BEGIN

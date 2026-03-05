@@ -25,13 +25,29 @@ DEFINITION MODULE DNS;
 
     Status = (OK, Invalid, ResolveFailed, OutOfMemory);
 
-  (* Resolve hostname to IPv4 address.
+  (* Resolve hostname to IPv4 address (synchronous).
      Post: outFuture resolves with Value.ptr -> heap AddrRec.
      Caller must DEALLOCATE the AddrRec when done.
-     Currently blocks during resolution. *)
+     Blocks during resolution. *)
   PROCEDURE ResolveA(lp: Loop; sched: Scheduler;
                      VAR host: ARRAY OF CHAR;
                      port: INTEGER;
                      VAR outFuture: Future): Status;
+
+  (* Resolve hostname to IPv4 address (asynchronous).
+     Spawns a background pthread for DNS resolution.
+     The returned Future is pending until the background thread
+     completes, at which point it is resolved or rejected.
+
+     Post: outFuture resolves with Value.ptr -> heap AddrRec.
+     Caller must DEALLOCATE the AddrRec when done.
+
+     IMPORTANT: The callback is invoked from a background thread.
+     Callers must use thread-safe mechanisms to deliver the result
+     to the event loop thread (e.g. a notification pipe). *)
+  PROCEDURE ResolveAsync(lp: Loop; sched: Scheduler;
+                         VAR host: ARRAY OF CHAR;
+                         port: INTEGER;
+                         VAR outFuture: Future): Status;
 
 END DNS.

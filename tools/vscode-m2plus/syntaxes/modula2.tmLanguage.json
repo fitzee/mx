@@ -29,18 +29,12 @@
         {
           "name": "string.quoted.double.modula2",
           "begin": "\"",
-          "end": "\"",
-          "patterns": [
-            { "name": "constant.character.escape.modula2", "match": "\\\\." }
-          ]
+          "end": "\""
         },
         {
           "name": "string.quoted.single.modula2",
           "begin": "'",
-          "end": "'",
-          "patterns": [
-            { "name": "constant.character.escape.modula2", "match": "\\\\." }
-          ]
+          "end": "'"
         }
       ]
     },

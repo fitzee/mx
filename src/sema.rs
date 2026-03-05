@@ -65,6 +65,17 @@ impl SemanticAnalyzer {
         self.analyze_definition_module(def);
     }
 
+    /// Reset position-dependent artifacts (scope_map, ref_index, etc.)
+    /// after pre-registering .def modules. Their scope spans and refs refer
+    /// to positions in other files and must not interfere with the main file.
+    pub fn reset_position_artifacts(&mut self) {
+        self.scope_map = ScopeMap::new();
+        self.ref_index = ReferenceIndex::new();
+        self.scope_start_stack.clear();
+        self.last_line = 0;
+        self.last_col = 0;
+    }
+
     pub fn analyze(&mut self, unit: &CompilationUnit) -> Result<(), Vec<CompileError>> {
         match unit {
             CompilationUnit::ProgramModule(m) => self.analyze_program_module(m),
@@ -349,22 +360,35 @@ impl SemanticAnalyzer {
     fn process_imports(&mut self, imports: &[Import]) {
         for imp in imports {
             if let Some(from_mod) = &imp.from_module {
-                // FROM Module IMPORT names -- register as stdlib stubs
-                let scope_id = self.enter_scope(from_mod);
-                crate::stdlib::register_module(&mut self.symtab, &mut self.types, scope_id, from_mod);
-                self.leave_scope();
+                // Check if this module was already registered (e.g. from a .def file)
+                let existing_scope = self.symtab.lookup_in_scope(self.current_scope, from_mod)
+                    .and_then(|sym| if let SymbolKind::Module { scope_id } = &sym.kind {
+                        Some(*scope_id)
+                    } else {
+                        None
+                    });
 
-                // Register module
-                let mod_sym = Symbol {
-                    name: from_mod.clone(),
-                    kind: SymbolKind::Module { scope_id },
-                    typ: TY_VOID,
-                    exported: false,
-                    module: None,
-                    loc: SourceLoc::default(),
-                    doc: None,
+                let scope_id = if let Some(sid) = existing_scope {
+                    sid
+                } else {
+                    // FROM Module IMPORT names -- register as stdlib stubs
+                    let sid = self.enter_scope(from_mod);
+                    crate::stdlib::register_module(&mut self.symtab, &mut self.types, sid, from_mod);
+                    self.leave_scope();
+
+                    // Register module
+                    let mod_sym = Symbol {
+                        name: from_mod.clone(),
+                        kind: SymbolKind::Module { scope_id: sid },
+                        typ: TY_VOID,
+                        exported: false,
+                        module: None,
+                        loc: SourceLoc::default(),
+                        doc: None,
+                    };
+                    let _ = self.symtab.define(self.current_scope, mod_sym);
+                    sid
                 };
-                let _ = self.symtab.define(self.current_scope, mod_sym);
 
                 // Import specific names into current scope
                 for import_name in &imp.names {
@@ -1320,6 +1344,7 @@ impl SemanticAnalyzer {
                             match self.types.get(current_type) {
                                 Type::Array { elem_type, .. } => current_type = *elem_type,
                                 Type::OpenArray { elem_type } => current_type = *elem_type,
+                                Type::StringLit(_) => current_type = TY_CHAR,
                                 _ => {
                                     self.error(loc, "indexing non-array type");
                                     current_type = TY_VOID;

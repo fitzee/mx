@@ -2,10 +2,18 @@ DEFINITION MODULE FOR "C" DnsBridge;
 
   FROM SYSTEM IMPORT ADDRESS;
 
-  (* DNS resolution *)
+  (* DNS resolution — synchronous *)
   PROCEDURE m2_dns_resolve_a(host, outAddr4: ADDRESS;
                              VAR outPort: INTEGER;
                              port: INTEGER): INTEGER;
+
+  (* DNS resolution — asynchronous (background pthread).
+     cb is a procedure variable: PROCEDURE(INTEGER, INTEGER, INTEGER,
+       INTEGER, INTEGER, INTEGER, INTEGER).
+     The callback receives (callbackId, a, b, c, d, port, err). *)
+  PROCEDURE m2_dns_resolve_async(host: ADDRESS; port: INTEGER;
+                                  callbackId: INTEGER;
+                                  cb: ADDRESS);
 
   (* Socket helpers *)
   PROCEDURE m2_connect_ipv4(fd, a, b, c, d, port: INTEGER): INTEGER;

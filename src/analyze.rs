@@ -227,6 +227,11 @@ pub fn analyze_source(
     for def in def_modules {
         sema.register_def_module(def);
     }
+    // Clear scope_map/ref_index from .def registration — their position data
+    // refers to other files and would shadow the main file's scopes.
+    if !def_modules.is_empty() {
+        sema.reset_position_artifacts();
+    }
     let _ = sema.analyze(&unit); // errors are captured inside sema
 
     let (symtab, types, scope_map, ref_index, errors) = sema.into_results();

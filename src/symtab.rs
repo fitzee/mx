@@ -100,8 +100,11 @@ impl SymbolTable {
 
     pub fn define(&mut self, scope_id: usize, sym: Symbol) -> Result<(), String> {
         let scope = &mut self.scopes[scope_id];
-        if scope.symbols.contains_key(&sym.name) {
-            return Err(format!("'{}' is already defined in this scope", sym.name));
+        if let Some(existing) = scope.symbols.get(&sym.name) {
+            // Local definitions shadow imported names (PIM4 §11)
+            if existing.module.is_none() || sym.module.is_some() {
+                return Err(format!("'{}' is already defined in this scope", sym.name));
+            }
         }
         scope.symbols.insert(sym.name.clone(), sym);
         Ok(())

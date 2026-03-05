@@ -89,6 +89,29 @@ DEFINITION MODULE TLS;
   PROCEDURE SetServerCert(ctx: TLSContext;
                           VAR certPath, keyPath: ARRAY OF CHAR): Status;
 
+  (* ── Mutual TLS (client certificate verification) ─── *)
+
+  (* Load a CA file for verifying client certificates.
+     Typically used on a server context.
+     The CA is used to build the trusted chain for client cert verification.
+     Returns SysError if the CA cannot be loaded. *)
+  PROCEDURE SetClientCA(ctx: TLSContext;
+                        VAR caPath: ARRAY OF CHAR): Status;
+
+  (* Require (or stop requiring) that clients present a certificate.
+     When require = TRUE, the handshake will fail if the client does
+     not present a certificate signed by a trusted CA.
+     Must be called before any sessions are created.
+     Typically paired with SetClientCA. *)
+  PROCEDURE RequireClientCert(ctx: TLSContext;
+                              require: BOOLEAN): Status;
+
+  (* Copy the peer certificate's distinguished name (subject) into buf.
+     Must be called after a successful handshake.
+     Returns TRUE if a peer certificate is present, FALSE otherwise. *)
+  PROCEDURE GetPeerCertDN(s: TLSSession;
+                           VAR buf: ARRAY OF CHAR): BOOLEAN;
+
   (* ── ALPN (Application-Layer Protocol Negotiation) ── *)
 
   (* Set client-side ALPN protocol list.

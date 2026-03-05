@@ -18,6 +18,8 @@ DEFINITION MODULE Font;
     FontHandle = ADDRESS;
 
   PROCEDURE Open(path: ARRAY OF CHAR; size: INTEGER): FontHandle;
+  PROCEDURE OpenPhysical(path: ARRAY OF CHAR; size: INTEGER): FontHandle;
+  PROCEDURE DpiScale(): INTEGER;
   PROCEDURE Close(font: FontHandle);
 
   PROCEDURE SetStyle(font: FontHandle; style: INTEGER);

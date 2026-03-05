@@ -258,6 +258,18 @@ void *gfx_create_renderer(void *win, int32_t flags)
     return (void *)ren;
 }
 
+void gfx_update_logical_size(void *ren, void *win)
+{
+    if (!ren || !win) return;
+    if (g_dpi_scale > 1) {
+        int ww = 0, wh = 0;
+        SDL_GetWindowSize((SDL_Window *)win, &ww, &wh);
+        if (ww > 0 && wh > 0) {
+            SDL_RenderSetLogicalSize((SDL_Renderer *)ren, ww, wh);
+        }
+    }
+}
+
 void gfx_destroy_renderer(void *ren)
 {
     if (ren) SDL_DestroyRenderer((SDL_Renderer *)ren);
@@ -510,9 +522,18 @@ int32_t gfx_event_scancode(void)
     return (int32_t)g_event.key.keysym.scancode;
 }
 
+int32_t gfx_event_key_repeat(void)
+{
+    return (int32_t)g_event.key.repeat;
+}
+
 int32_t gfx_event_mod(void)
 {
-    Uint16 m = g_event.key.keysym.mod;
+    /* Use SDL_GetModState() instead of g_event.key.keysym.mod so that
+       modifier state is correct for ALL event types, not just keyboard.
+       Reading the key union member during a mouse event returns garbage
+       (e.g. the mouse Y coordinate aliased over keysym.mod). */
+    Uint16 m = SDL_GetModState();
     int32_t out = 0;
     if (m & KMOD_SHIFT) out |= 1;
     if (m & KMOD_CTRL)  out |= 2;
@@ -674,6 +695,17 @@ void *gfx_open_font(const char *path, int32_t size)
 {
     /* Open at physical DPI size so text textures are native resolution. */
     return (void *)TTF_OpenFont(path, size * g_dpi_scale);
+}
+
+void *gfx_open_font_physical(const char *path, int32_t physical_size)
+{
+    /* Open at exact physical pixel size — no DPI scaling applied. */
+    return (void *)TTF_OpenFont(path, physical_size);
+}
+
+int32_t gfx_dpi_scale(void)
+{
+    return (int32_t)g_dpi_scale;
 }
 
 void gfx_close_font(void *font)

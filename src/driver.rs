@@ -602,20 +602,36 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     }
 
     // If this is an implementation module, look for the corresponding definition module
-    if let CompilationUnit::ImplementationModule(ref m) = unit {
+    let own_def = if let CompilationUnit::ImplementationModule(ref m) = unit {
         if let Some(def_path) = find_def_file(&m.name, &opts.input, &opts.include_paths) {
             if opts.verbose {
                 eprintln!("m2c: found definition module: {}", def_path.display());
             }
-            let _def_unit = parse_file(&def_path, opts.case_sensitive)?;
+            let def_unit = parse_file(&def_path, opts.case_sensitive)?;
+            if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
+                Some(def_mod)
+            } else {
+                None
+            }
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
     // Generate C
     let mut codegen = CodeGen::new();
     codegen.set_m2plus(opts.m2plus);
     codegen.set_debug(opts.debug);
     codegen.multi_tu = opts.emit_per_module;
+
+    // Register the implementation module's own definition module first,
+    // so that types/constants from the .def are visible in the .mod
+    // (PIM4: implementation module implicitly sees its definition module)
+    if let Some(ref def_mod) = own_def {
+        codegen.register_def_module(def_mod);
+    }
 
     // For FROM Module IMPORT and IMPORT Module, find and load dependency modules
     let imports = match &unit {
@@ -639,6 +655,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     // First pass: parse and register definition modules for all non-stdlib imports
     // This allows sema to resolve types and procedures from imported modules
     let mut registered_defs = std::collections::HashSet::new();
+    // Mark own def as already registered so the import loop doesn't re-parse it
+    if let Some(ref def_mod) = own_def {
+        registered_defs.insert(def_mod.name.clone());
+    }
     let mut def_queue: Vec<String> = all_imported_modules.clone();
     while let Some(mod_name) = def_queue.pop() {
         if crate::stdlib::is_stdlib_module(&mod_name) || registered_defs.contains(&mod_name) {

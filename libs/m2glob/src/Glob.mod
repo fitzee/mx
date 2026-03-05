@@ -1,6 +1,8 @@
 IMPLEMENTATION MODULE Glob;
 
+FROM SYSTEM IMPORT ADDRESS, ADR;
 FROM Strings IMPORT Assign, Length;
+IMPORT Sys;
 
 (* ── String helpers ──────────────────────────────────── *)
 
@@ -470,5 +472,340 @@ BEGIN
     Assign(pattern, out)
   END
 END StripAnchor;
+
+(* ── Directory walking ───────────────────────────────── *)
+
+CONST
+  MaxPath = 1024;
+  MaxDirBuf = 8192;
+  MaxSegments = 32;
+  MaxRecurse = 32;
+
+(* ── Path helper: append component to path with / separator ── *)
+
+PROCEDURE PathAppend(VAR base: ARRAY OF CHAR;
+                     VAR baseLen: CARDINAL;
+                     VAR comp: ARRAY OF CHAR;
+                     compLen: CARDINAL;
+                     maxLen: CARDINAL);
+VAR i: CARDINAL;
+BEGIN
+  IF (baseLen > 0) AND (baseLen < maxLen) THEN
+    base[baseLen] := '/';
+    INC(baseLen)
+  END;
+  i := 0;
+  WHILE (i < compLen) AND (baseLen < maxLen) DO
+    base[baseLen] := comp[i];
+    INC(baseLen);
+    INC(i)
+  END;
+  IF baseLen <= HIGH(base) THEN
+    base[baseLen] := 0C
+  END
+END PathAppend;
+
+(* ── Copy null-terminated string ─────────────────────── *)
+
+PROCEDURE CopyStr(VAR src: ARRAY OF CHAR; srcLen: CARDINAL;
+                  VAR dst: ARRAY OF CHAR; VAR dstLen: CARDINAL);
+VAR i: CARDINAL;
+BEGIN
+  i := 0;
+  WHILE (i < srcLen) AND (i <= HIGH(dst)) DO
+    dst[i] := src[i];
+    INC(i)
+  END;
+  dstLen := i;
+  IF i <= HIGH(dst) THEN
+    dst[i] := 0C
+  END
+END CopyStr;
+
+(* ── Check if segment is ** ──────────────────────────── *)
+
+PROCEDURE IsDoubleStar(VAR seg: ARRAY OF CHAR; segLen: CARDINAL): BOOLEAN;
+BEGIN
+  RETURN (segLen = 2) AND (seg[0] = '*') AND (seg[1] = '*')
+END IsDoubleStar;
+
+(* ── Split pattern into segments by '/' ──────────────── *)
+
+TYPE
+  Segment = RECORD
+    start: CARDINAL;
+    len:   CARDINAL;
+  END;
+
+PROCEDURE SplitPattern(VAR pat: ARRAY OF CHAR; patLen: CARDINAL;
+                       VAR segs: ARRAY OF Segment;
+                       VAR nSegs: CARDINAL);
+VAR i, segStart: CARDINAL;
+BEGIN
+  nSegs := 0;
+  IF patLen = 0 THEN RETURN END;
+  segStart := 0;
+  i := 0;
+  WHILE i < patLen DO
+    IF pat[i] = '/' THEN
+      IF (nSegs < MaxSegments) AND (i > segStart) THEN
+        segs[nSegs].start := segStart;
+        segs[nSegs].len := i - segStart;
+        INC(nSegs)
+      END;
+      segStart := i + 1
+    END;
+    INC(i)
+  END;
+  (* Last segment *)
+  IF (segStart <= patLen) AND (nSegs < MaxSegments) THEN
+    segs[nSegs].start := segStart;
+    segs[nSegs].len := patLen - segStart;
+    IF segs[nSegs].len > 0 THEN
+      INC(nSegs)
+    END
+  END
+END SplitPattern;
+
+(* ── Extract a segment as a null-terminated string ───── *)
+
+PROCEDURE ExtractSeg(VAR pat: ARRAY OF CHAR;
+                     VAR seg: Segment;
+                     VAR out: ARRAY OF CHAR;
+                     VAR outLen: CARDINAL);
+VAR i: CARDINAL;
+BEGIN
+  i := 0;
+  WHILE (i < seg.len) AND (i <= HIGH(out)) DO
+    out[i] := pat[seg.start + i];
+    INC(i)
+  END;
+  outLen := i;
+  IF i <= HIGH(out) THEN
+    out[i] := 0C
+  END
+END ExtractSeg;
+
+(* ── Parse directory listing buffer (newline-separated) ── *)
+
+PROCEDURE NextEntry(VAR buf: ARRAY OF CHAR; bufLen: CARDINAL;
+                    VAR pos: CARDINAL;
+                    VAR name: ARRAY OF CHAR;
+                    VAR nameLen: CARDINAL): BOOLEAN;
+VAR start, i: CARDINAL;
+BEGIN
+  IF pos >= bufLen THEN RETURN FALSE END;
+  start := pos;
+  WHILE (pos < bufLen) AND (buf[pos] # 12C) DO  (* 12C = newline *)
+    INC(pos)
+  END;
+  nameLen := pos - start;
+  IF nameLen = 0 THEN
+    IF pos < bufLen THEN INC(pos) END;
+    RETURN FALSE
+  END;
+  i := 0;
+  WHILE (i < nameLen) AND (i <= HIGH(name)) DO
+    name[i] := buf[start + i];
+    INC(i)
+  END;
+  IF i <= HIGH(name) THEN
+    name[i] := 0C
+  END;
+  IF pos < bufLen THEN INC(pos) END;  (* skip newline *)
+  RETURN TRUE
+END NextEntry;
+
+(* ── Recursive walk engine ───────────────────────────── *)
+
+PROCEDURE WalkRecurse(VAR basePath: ARRAY OF CHAR;
+                      baseLen: CARDINAL;
+                      VAR pat: ARRAY OF CHAR;
+                      VAR segs: ARRAY OF Segment;
+                      nSegs: CARDINAL;
+                      segIdx: CARDINAL;
+                      callback: MatchProc;
+                      ctx: ADDRESS;
+                      VAR count: CARDINAL;
+                      VAR stopped: BOOLEAN;
+                      depth: CARDINAL);
+VAR
+  dirBuf: ARRAY [0..MaxDirBuf-1] OF CHAR;
+  entName: ARRAY [0..255] OF CHAR;
+  segStr: ARRAY [0..255] OF CHAR;
+  childPath: ARRAY [0..MaxPath-1] OF CHAR;
+  entLen, segLen: CARDINAL;
+  dirResult: INTEGER;
+  dirLen, pos: CARDINAL;
+  childLen, i: CARDINAL;
+  isDir: BOOLEAN;
+  dirPath: ARRAY [0..MaxPath-1] OF CHAR;
+BEGIN
+  IF stopped THEN RETURN END;
+  IF depth > MaxRecurse THEN RETURN END;
+
+  (* If we've consumed all segments, the current basePath is a match *)
+  IF segIdx >= nSegs THEN
+    IF NOT callback(basePath, ctx) THEN
+      stopped := TRUE
+    END;
+    INC(count);
+    RETURN
+  END;
+
+  (* Extract current segment *)
+  ExtractSeg(pat, segs[segIdx], segStr, segLen);
+
+  IF IsDoubleStar(segStr, segLen) THEN
+    (* ** : try matching remaining segments from here (skip **),
+       and also recurse into every subdirectory *)
+
+    (* First: try without descending (** matches zero directories) *)
+    WalkRecurse(basePath, baseLen, pat, segs, nSegs, segIdx + 1,
+                callback, ctx, count, stopped, depth);
+    IF stopped THEN RETURN END;
+
+    (* List directory *)
+    (* Build null-terminated directory path *)
+    IF baseLen = 0 THEN
+      dirPath[0] := '.';
+      dirPath[1] := 0C
+    ELSE
+      i := 0;
+      WHILE i < baseLen DO
+        dirPath[i] := basePath[i];
+        INC(i)
+      END;
+      dirPath[baseLen] := 0C
+    END;
+
+    dirResult := Sys.m2sys_list_dir(ADR(dirPath), ADR(dirBuf), MaxDirBuf);
+    IF dirResult <= 0 THEN RETURN END;
+    dirLen := CARDINAL(dirResult);
+
+    pos := 0;
+    WHILE NextEntry(dirBuf, dirLen, pos, entName, entLen) AND
+          (NOT stopped) DO
+      (* Build child path *)
+      childLen := 0;
+      IF baseLen > 0 THEN
+        i := 0;
+        WHILE i < baseLen DO
+          childPath[i] := basePath[i];
+          INC(i)
+        END;
+        childLen := baseLen
+      END;
+      PathAppend(childPath, childLen, entName, entLen, MaxPath - 1);
+
+      (* Check if directory *)
+      isDir := Sys.m2sys_is_dir(ADR(childPath)) = 1;
+
+      IF isDir THEN
+        (* Recurse with same segIdx (** can match more levels) *)
+        WalkRecurse(childPath, childLen, pat, segs, nSegs, segIdx,
+                    callback, ctx, count, stopped, depth + 1)
+      ELSE
+        (* Try matching remaining segments against this file *)
+        IF segIdx + 1 >= nSegs THEN
+          (* ** at end matches everything *)
+          IF NOT callback(childPath, ctx) THEN
+            stopped := TRUE
+          END;
+          INC(count)
+        ELSIF segIdx + 1 = nSegs - 1 THEN
+          (* One more segment after **: match filename *)
+          ExtractSeg(pat, segs[segIdx + 1], segStr, segLen);
+          IF Match(segStr, entName) THEN
+            IF NOT callback(childPath, ctx) THEN
+              stopped := TRUE
+            END;
+            INC(count)
+          END
+        END
+      END
+    END
+
+  ELSE
+    (* Normal segment: list directory and match entries *)
+    IF baseLen = 0 THEN
+      dirPath[0] := '.';
+      dirPath[1] := 0C
+    ELSE
+      i := 0;
+      WHILE i < baseLen DO
+        dirPath[i] := basePath[i];
+        INC(i)
+      END;
+      dirPath[baseLen] := 0C
+    END;
+
+    dirResult := Sys.m2sys_list_dir(ADR(dirPath), ADR(dirBuf), MaxDirBuf);
+    IF dirResult <= 0 THEN RETURN END;
+    dirLen := CARDINAL(dirResult);
+
+    pos := 0;
+    WHILE NextEntry(dirBuf, dirLen, pos, entName, entLen) AND
+          (NOT stopped) DO
+      IF Match(segStr, entName) THEN
+        (* Build child path *)
+        childLen := 0;
+        IF baseLen > 0 THEN
+          i := 0;
+          WHILE i < baseLen DO
+            childPath[i] := basePath[i];
+            INC(i)
+          END;
+          childLen := baseLen
+        END;
+        PathAppend(childPath, childLen, entName, entLen, MaxPath - 1);
+
+        IF segIdx + 1 >= nSegs THEN
+          (* Last segment: this is a match *)
+          IF NOT callback(childPath, ctx) THEN
+            stopped := TRUE
+          END;
+          INC(count)
+        ELSE
+          (* More segments: must be a directory to continue *)
+          isDir := Sys.m2sys_is_dir(ADR(childPath)) = 1;
+          IF isDir THEN
+            WalkRecurse(childPath, childLen, pat, segs, nSegs,
+                        segIdx + 1, callback, ctx, count, stopped,
+                        depth + 1)
+          END
+        END
+      END
+    END
+  END
+END WalkRecurse;
+
+(* ── Public Walk ─────────────────────────────────────── *)
+
+PROCEDURE Walk(pattern: ARRAY OF CHAR;
+               callback: MatchProc;
+               ctx: ADDRESS): CARDINAL;
+VAR
+  segs: ARRAY [0..MaxSegments-1] OF Segment;
+  nSegs, patLen: CARDINAL;
+  count: CARDINAL;
+  stopped: BOOLEAN;
+  basePath: ARRAY [0..MaxPath-1] OF CHAR;
+BEGIN
+  patLen := StrLen(pattern);
+  IF patLen = 0 THEN RETURN 0 END;
+
+  SplitPattern(pattern, patLen, segs, nSegs);
+  IF nSegs = 0 THEN RETURN 0 END;
+
+  count := 0;
+  stopped := FALSE;
+  basePath[0] := 0C;
+
+  WalkRecurse(basePath, 0, pattern, segs, nSegs, 0,
+              callback, ctx, count, stopped, 0);
+
+  RETURN count
+END Walk;
 
 END Glob.

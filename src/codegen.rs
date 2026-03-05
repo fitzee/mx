@@ -28,6 +28,8 @@ pub struct CodeGen {
     var_params: Vec<HashMap<String, bool>>,
     /// Tracks which local names are open array parameters (have _high companion)
     open_array_params: Vec<HashSet<String>>,
+    /// Tracks which local names are named-array value params (array decays to pointer in C)
+    named_array_value_params: Vec<HashSet<String>>,
     /// Tracks parameter info for known procedures (for call-site VAR/open array passing)
     proc_params: HashMap<String, Vec<ParamCodegenInfo>>,
     /// WITH alias stack: (record_designator_c_expr, list_of_field_names)
@@ -52,6 +54,11 @@ pub struct CodeGen {
     char_array_fields: HashSet<(String, String)>,
     /// Type names that are array types (for memcpy assignment)
     array_types: HashSet<String>,
+    /// Maps array type name → HIGH expression string (for named-array value params)
+    array_type_high: HashMap<String, String>,
+    /// Pointer type names whose base is a named array type (e.g., SrcPtr = POINTER TO SrcArray).
+    /// These generate `ArrayType *PtrName` in C, so deref+index needs `(*p)[i]` not `p[i]`.
+    ptr_to_named_array: HashSet<String>,
     /// Variable names that have array types (for memcpy assignment)
     array_vars: HashSet<String>,
     /// Record field names that have array types: (record_type_name, field_name)
@@ -327,6 +334,19 @@ fn compute_captures(proc: &ProcDecl, outer_vars: &HashMap<String, String>) -> Ve
         .filter(|name| outer_vars.contains_key(name.as_str()) && !locals.contains(name.as_str()))
         .cloned()
         .collect();
+
+    // Auto-capture _high companions for open array params.
+    // When a nested proc captures an open array param 's', it also needs 's_high'
+    // for HIGH(s) to work correctly, even though 's_high' isn't an AST-level reference.
+    let mut extra = Vec::new();
+    for cap in &captures {
+        let high_name = format!("{}_high", cap);
+        if outer_vars.contains_key(&high_name) && !captures.contains(&high_name) {
+            extra.push(high_name);
+        }
+    }
+    captures.extend(extra);
+
     captures.sort();
     captures
 }
@@ -342,6 +362,7 @@ impl CodeGen {
             import_alias_map: HashMap::new(),
             var_params: vec![HashMap::new()],
             open_array_params: vec![HashSet::new()],
+            named_array_value_params: vec![HashSet::new()],
             proc_params: HashMap::new(),
             with_aliases: Vec::new(),
             lifted_procs: Vec::new(),
@@ -354,6 +375,8 @@ impl CodeGen {
             char_array_vars: HashSet::new(),
             char_array_fields: HashSet::new(),
             array_types: HashSet::new(),
+            array_type_high: HashMap::new(),
+            ptr_to_named_array: HashSet::new(),
             array_vars: HashSet::new(),
             array_fields: HashSet::new(),
             pointer_fields: HashSet::new(),
@@ -726,17 +749,19 @@ impl CodeGen {
         // Check the known_type_names set (populated from def modules and gen_type_decl)
         if self.known_type_names.contains(name) {
             // It's a type — return the mangled C name
-            // If we're inside an embedded module, check if it's a local type
-            if let Some(ref gen_mod) = self.generating_for_module {
-                let prefixed = format!("{}_{}", gen_mod, name);
-                if self.known_type_names.contains(&prefixed) {
-                    return Some(self.mangle(name));
-                }
+            // Check if this is a module-local type in an embedded module
+            // (works both during type decl phase and procedure body phase)
+            let local_prefixed = format!("{}_{}", self.module_name, self.mangle(name));
+            if self.embedded_enum_types.contains(&local_prefixed) {
+                return Some(local_prefixed);
             }
             // Check if it's an imported type (module-prefixed in C)
             if let Some(source_mod) = self.import_map.get(name) {
                 let orig = self.original_import_name(name);
-                return Some(format!("{}_{}", source_mod, self.mangle(orig)));
+                let import_prefixed = format!("{}_{}", source_mod, self.mangle(orig));
+                if self.embedded_enum_types.contains(&import_prefixed) {
+                    return Some(import_prefixed);
+                }
             }
             return Some(self.mangle(name));
         }
@@ -817,6 +842,7 @@ impl CodeGen {
         let saved_import_alias_map = self.import_alias_map.clone();
         let saved_var_params = self.var_params.clone();
         let saved_open_array_params = self.open_array_params.clone();
+        let saved_named_array_value_params = self.named_array_value_params.clone();
         let saved_proc_params = self.proc_params.clone();
         let saved_array_vars = self.save_array_var_scope();
 
@@ -851,6 +877,28 @@ impl CodeGen {
         self.emitln(&format!("/* Imported Module {} */", imp.name));
         self.newline();
 
+        // Set generating_for_module early so all types get module-prefixed C names,
+        // including forward struct declarations.
+        self.generating_for_module = Some(imp.name.clone());
+
+        // Pre-register ALL type names from this embedded module in embedded_enum_types.
+        // This is needed so that forward references (e.g., POINTER TO Record declared
+        // before the Record type) resolve to the correct prefixed C name.
+        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+            for d in &def_mod.definitions {
+                if let Definition::Type(t) = d {
+                    let prefixed = format!("{}_{}", imp.name, self.mangle(&t.name));
+                    self.embedded_enum_types.insert(prefixed);
+                }
+            }
+        }
+        for decl in &imp.block.decls {
+            if let Declaration::Type(t) = decl {
+                let prefixed = format!("{}_{}", imp.name, self.mangle(&t.name));
+                self.embedded_enum_types.insert(prefixed);
+            }
+        }
+
         // Forward declare all record types as structs (to allow pointer-to-struct typedefs)
         // Must come before any struct definitions so that type references resolve.
 
@@ -863,7 +911,8 @@ impl CodeGen {
                 if let Definition::Type(t) = d {
                     if !impl_type_names.contains(&t.name) {
                         if matches!(&t.typ, Some(TypeNode::Record { .. })) {
-                            self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                            let cn = self.type_decl_c_name(&t.name);
+                            self.emitln(&format!("typedef struct {} {};", cn, cn));
                         }
                     }
                 }
@@ -873,15 +922,14 @@ impl CodeGen {
         for decl in &imp.block.decls {
             if let Declaration::Type(t) = decl {
                 if matches!(&t.typ, Some(TypeNode::Record { .. })) {
-                    self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                    let cn = self.type_decl_c_name(&t.name);
+                    self.emitln(&format!("typedef struct {} {};", cn, cn));
                 }
             }
         }
 
         // Emit type and const declarations from the corresponding definition module,
         // but skip types that are redefined in the implementation module.
-        // Set generating_for_module so enum types and constants get module-prefixed C names.
-        self.generating_for_module = Some(imp.name.clone());
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
             // Register def-module constants and exported VARs as local vars for module-prefixed references
             for d in &def_mod.definitions {
@@ -928,40 +976,6 @@ impl CodeGen {
         // Emit M2+ type descriptors for types declared in this embedded module
         if self.m2plus {
             self.emit_type_descs();
-        }
-
-        // Add module-prefixed type aliases for externally visible types.
-        // Sema resolves imported types to module-qualified names (e.g., EventLoop.Loop),
-        // so the codegen needs Module_TypeName aliases to exist in C.
-        // Skip enum types since their typedefs are already module-prefixed.
-        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            let impl_type_names: HashSet<String> = imp.block.decls.iter()
-                .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-                .collect();
-            for d in &def_mod.definitions {
-                if let Definition::Type(t) = d {
-                    if !impl_type_names.contains(&t.name) {
-                        let is_enum = matches!(&t.typ, Some(TypeNode::Enumeration { .. }));
-                        if !is_enum {
-                            let prefixed = format!("{}_{}", imp.name, t.name);
-                            if prefixed != t.name {
-                                self.emitln(&format!("typedef {} {};", self.mangle(&t.name), prefixed));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        for decl in &imp.block.decls {
-            if let Declaration::Type(t) = decl {
-                let is_enum = matches!(&t.typ, Some(TypeNode::Enumeration { .. }));
-                if !is_enum {
-                    let prefixed = format!("{}_{}", imp.name, t.name);
-                    if prefixed != t.name {
-                        self.emitln(&format!("typedef {} {};", self.mangle(&t.name), prefixed));
-                    }
-                }
-            }
         }
 
         // Forward declarations for procedures (with module prefix)
@@ -1109,6 +1123,29 @@ impl CodeGen {
 
                 self.var_params.push(param_vars);
                 self.open_array_params.push(oa_params);
+                let mut na_params = HashSet::new();
+
+                // Register param type names for designator type tracking (ptr deref+index)
+                for fp in &p.heading.params {
+                    if let TypeNode::Named(qi) = &fp.typ {
+                        if qi.module.is_none() {
+                            for name in &fp.names {
+                                self.var_types.insert(name.clone(), qi.name.clone());
+                            }
+                        }
+                    }
+                    // Track named-array value params (array decays to pointer in C)
+                    if !fp.is_var && !matches!(fp.typ, TypeNode::OpenArray { .. }) {
+                        if let TypeNode::Named(qi) = &fp.typ {
+                            if self.array_types.contains(&qi.name) {
+                                for name in &fp.names {
+                                    na_params.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                self.named_array_value_params.push(na_params);
 
                 // Local declarations
                 for d in &p.block.decls {
@@ -1124,6 +1161,7 @@ impl CodeGen {
 
                 self.var_params.pop();
                 self.open_array_params.pop();
+                self.named_array_value_params.pop();
                 self.indent -= 1;
                 self.emitln("}");
                 self.newline();
@@ -1161,6 +1199,7 @@ impl CodeGen {
         self.import_alias_map = saved_import_alias_map;
         self.var_params = saved_var_params;
         self.open_array_params = saved_open_array_params;
+        self.named_array_value_params = saved_named_array_value_params;
         self.proc_params = saved_proc_params;
         self.restore_array_var_scope(saved_array_vars);
         self.embedded_local_procs.clear();
@@ -1387,6 +1426,15 @@ impl CodeGen {
         self.emitln(&format!("#define {}_H", m.name.to_uppercase()));
         self.newline();
 
+        // Forward struct declarations for record types
+        for def in &m.definitions {
+            if let Definition::Type(t) = def {
+                if let Some(TypeNode::Record { .. }) = &t.typ {
+                    self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                }
+            }
+        }
+
         for def in &m.definitions {
             match def {
                 Definition::Const(c) => self.gen_const_decl(c),
@@ -1449,7 +1497,38 @@ impl CodeGen {
         self.emitln(&format!("/* Implementation Module {} */", m.name));
         self.newline();
 
-        // Forward struct declarations
+        // Emit types and constants from the corresponding definition module.
+        // The implementation module's scope includes all .def exports, but
+        // m2c must emit them explicitly in the generated C.
+        let impl_type_names: std::collections::HashSet<String> = m.block.decls.iter()
+            .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
+            .collect();
+        if let Some(def_mod) = self.def_modules.get(&m.name).cloned() {
+            // Forward struct declarations from the definition module
+            for d in &def_mod.definitions {
+                if let Definition::Type(t) = d {
+                    if !impl_type_names.contains(&t.name) {
+                        if matches!(&t.typ, Some(TypeNode::Record { .. })) {
+                            self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                        }
+                    }
+                }
+            }
+            // Emit type and const declarations from the definition module
+            for d in &def_mod.definitions {
+                match d {
+                    Definition::Type(t) => {
+                        if !impl_type_names.contains(&t.name) {
+                            self.gen_type_decl(t);
+                        }
+                    }
+                    Definition::Const(c) => self.gen_const_decl(c),
+                    _ => {}
+                }
+            }
+        }
+
+        // Forward struct declarations from the implementation block
         for decl in &m.block.decls {
             if let Declaration::Type(t) = decl {
                 if let Some(TypeNode::Record { .. }) = &t.typ {
@@ -1617,13 +1696,29 @@ impl CodeGen {
         self.emit(";\n");
     }
 
+    /// Return the C typedef name for a type declaration.
+    /// Inside an embedded module, returns Module_TypeName to avoid collisions.
+    fn type_decl_c_name(&self, bare_name: &str) -> String {
+        if let Some(ref mod_name) = self.generating_for_module {
+            format!("{}_{}", mod_name, self.mangle(bare_name))
+        } else {
+            self.mangle(bare_name)
+        }
+    }
+
     fn gen_type_decl(&mut self, t: &TypeDecl) {
         // Register this type name for type-cast recognition
         self.known_type_names.insert(t.name.clone());
         if let Some(ref mod_name) = self.generating_for_module {
             self.known_type_names.insert(format!("{}_{}", mod_name, t.name));
         }
+        // Compute the C name: module-prefixed for embedded modules to avoid collisions
+        let c_type_name = self.type_decl_c_name(&t.name);
         if let Some(tn) = &t.typ {
+            // Register ALL embedded module types (not just enums) for name resolution
+            if self.generating_for_module.is_some() {
+                self.embedded_enum_types.insert(c_type_name.clone());
+            }
             match tn {
                 TypeNode::Record { fields, loc: _ } => {
                     // Collect field names and types for WITH resolution
@@ -1654,7 +1749,7 @@ impl CodeGen {
                     self.record_fields.insert(t.name.clone(), field_names);
 
                     // struct definition (typedef is already forward-declared)
-                    self.emitln(&format!("struct {} {{", self.mangle(&t.name)));
+                    self.emitln(&format!("struct {} {{", c_type_name));
                     self.indent += 1;
                     for fl in fields {
                         for f in &fl.fixed {
@@ -1730,25 +1825,62 @@ impl CodeGen {
                     }
                 }
                 TypeNode::Pointer { base, .. } => {
+                    // Track pointer types whose base is a named array type.
+                    // These produce `ArrayType *PtrName` in C (pointer-to-array),
+                    // requiring (*p)[i] for deref+index, not p[i].
+                    if let TypeNode::Named(ref qi) = **base {
+                        if self.array_types.contains(&qi.name) {
+                            self.ptr_to_named_array.insert(t.name.clone());
+                            self.ptr_to_named_array.insert(c_type_name.clone());
+                        }
+                    }
                     self.emit_indent();
                     let base_c = self.type_to_c(base);
+                    // When inside an embedded module, the base type may also be
+                    // module-prefixed — resolve it to the prefixed name if available.
+                    let base_c_resolved = if self.generating_for_module.is_some() {
+                        if let TypeNode::Named(ref qi) = **base {
+                            // Only prefix the base type if it's a module-local type,
+                            // not a builtin (CARDINAL, INTEGER, etc.)
+                            let prefixed = self.type_decl_c_name(&qi.name);
+                            if self.embedded_enum_types.contains(&prefixed) {
+                                prefixed
+                            } else {
+                                base_c
+                            }
+                        } else {
+                            base_c
+                        }
+                    } else {
+                        base_c
+                    };
                     self.emit(&format!(
                         "typedef {} *{};\n",
-                        base_c,
-                        self.mangle(&t.name)
+                        base_c_resolved,
+                        c_type_name
                     ));
                 }
                 TypeNode::Array { .. } => {
                     // Track if this is an ARRAY OF CHAR type (for string ops)
                     if self.is_char_array_type(tn) {
                         self.char_array_types.insert(t.name.clone());
+                        self.char_array_types.insert(c_type_name.clone());
                     }
                     // Track all array types for memcpy assignment
                     self.array_types.insert(t.name.clone());
+                    self.array_types.insert(c_type_name.clone());
+                    // Store HIGH expression for named-array value param fixup
+                    if let TypeNode::Array { index_types, .. } = tn {
+                        if let Some(TypeNode::Subrange { high, .. }) = index_types.first() {
+                            let high_str = self.const_expr_to_string(high);
+                            self.array_type_high.insert(t.name.clone(), high_str.clone());
+                            self.array_type_high.insert(c_type_name.clone(), high_str);
+                        }
+                    }
                     self.emit_indent();
                     let ctype = self.type_to_c(tn);
                     let suffix = self.type_array_suffix(tn);
-                    self.emit(&format!("typedef {} {}{};\n", ctype, self.mangle(&t.name), suffix));
+                    self.emit(&format!("typedef {} {}{};\n", ctype, c_type_name, suffix));
                 }
                 TypeNode::ProcedureType { params, return_type, .. } => {
                     // Register param info for this procedure type name
@@ -1776,7 +1908,7 @@ impl CodeGen {
                     } else {
                         "void".to_string()
                     };
-                    self.emit(&format!("typedef {} (*{})(", ret, self.mangle(&t.name)));
+                    self.emit(&format!("typedef {} (*{})(", ret, c_type_name));
                     if params.is_empty() {
                         self.emit("void");
                     } else {
@@ -1806,30 +1938,33 @@ impl CodeGen {
                 TypeNode::Ref { target, branded, .. } => {
                     self.emit_indent();
                     let target_c = self.type_to_c(target);
-                    let mangled = self.mangle(&t.name);
-                    self.emit(&format!("typedef {} *{};\n", target_c, mangled));
+                    self.emit(&format!("typedef {} *{};\n", target_c, c_type_name));
                     // Register a type descriptor for this REF type (for TYPECASE)
                     if self.m2plus {
-                        let td_sym = self.register_type_desc(&mangled, &t.name, None);
-                        self.ref_type_descs.insert(mangled, td_sym);
+                        let td_sym = self.register_type_desc(&c_type_name, &t.name, None);
+                        self.ref_type_descs.insert(c_type_name.clone(), td_sym);
                     }
                 }
                 TypeNode::RefAny { .. } => {
                     self.emit_indent();
-                    self.emit(&format!("typedef void *{};\n", self.mangle(&t.name)));
+                    self.emit(&format!("typedef void *{};\n", c_type_name));
                 }
                 _ => {
                     self.emit_indent();
                     let ctype = self.type_to_c(tn);
-                    self.emit(&format!("typedef {} {};\n", ctype, self.mangle(&t.name)));
+                    self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
                 }
             }
             self.newline();
         } else {
             // Opaque type - generate as void*
+            let c_type_name = self.type_decl_c_name(&t.name);
+            if self.generating_for_module.is_some() {
+                self.embedded_enum_types.insert(c_type_name.clone());
+            }
             self.emitln(&format!(
                 "typedef void *{};",
-                self.mangle(&t.name)
+                c_type_name
             ));
         }
     }
@@ -2129,6 +2264,26 @@ impl CodeGen {
             } else if fp.is_var {
                 for name in &fp.names {
                     self.register_var_param(name);
+                }
+            }
+            // Track named-array value params (array decays to pointer in C)
+            if !fp.is_var && !matches!(fp.typ, TypeNode::OpenArray { .. }) {
+                if let TypeNode::Named(qi) = &fp.typ {
+                    if self.array_types.contains(&qi.name) {
+                        for name in &fp.names {
+                            if let Some(scope) = self.named_array_value_params.last_mut() {
+                                scope.insert(name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            // Register param type names for designator type tracking
+            if let TypeNode::Named(qi) = &fp.typ {
+                if qi.module.is_none() {
+                    for name in &fp.names {
+                        self.var_types.insert(name.clone(), qi.name.clone());
+                    }
                 }
             }
         }
@@ -2771,11 +2926,13 @@ impl CodeGen {
                     }
                 }
                 if builtins::is_builtin_proc(&actual_name) {
-                    // ADR on open array params: emit (void *)(name) instead of (void *)&(name)
+                    // ADR on open/named-array params: emit (void *)(name) instead of (void *)&(name)
+                    // In C, array params decay to pointers, so &buf gives char** not char*
                     if actual_name == "ADR" && args.len() == 1 {
                         if let ExprKind::Designator(ref d) = args[0].kind {
                             if d.selectors.is_empty() && d.ident.module.is_none()
-                                && self.is_open_array_param(&d.ident.name)
+                                && (self.is_open_array_param(&d.ident.name)
+                                    || self.is_named_array_value_param(&d.ident.name))
                             {
                                 let arg_str = self.expr_to_string(&args[0]);
                                 self.emit(&format!("((void *)({}))", arg_str));
@@ -2784,6 +2941,7 @@ impl CodeGen {
                         }
                     }
                     // HIGH on non-open-array: emit sizeof-based constant
+                    // HIGH on open-array env var: emit (*_env->name_high)
                     if actual_name == "HIGH" && args.len() == 1 {
                         if let ExprKind::Designator(ref d) = args[0].kind {
                             // Simple variable that's not an open array param
@@ -2791,8 +2949,18 @@ impl CodeGen {
                                 && d.ident.module.is_none()
                                 && self.is_open_array_param(&d.ident.name);
                             if !is_open {
-                                let arg_str = self.expr_to_string(&args[0]);
-                                self.emit(&format!("(sizeof({}) / sizeof({}[0])) - 1", arg_str, arg_str));
+                                let dname = &d.ident.name;
+                                if let Some(high) = self.get_named_array_param_high(dname) {
+                                    self.emit(&high);
+                                } else {
+                                    let arg_str = self.expr_to_string(&args[0]);
+                                    self.emit(&format!("(sizeof({}) / sizeof({}[0])) - 1", arg_str, arg_str));
+                                }
+                                return;
+                            }
+                            // Open array accessed through closure env — emit (*_env->name_high)
+                            if is_open && self.is_env_var(&d.ident.name) {
+                                self.emit(&format!("(*_env->{}_high)", d.ident.name));
                                 return;
                             }
                         }
@@ -2826,13 +2994,16 @@ impl CodeGen {
                         let info = self.get_param_info(&prefixed);
                         if info.is_empty() { self.get_param_info(&actual_name) } else { info }
                     } else {
-                        let mut info = self.get_param_info(&actual_name);
+                        let mut info = Vec::new();
+                        // Try import-prefixed first (avoids collision when two modules
+                        // export same-named procs — bare name gets overwritten)
+                        if let Some(module) = self.import_map.get(&actual_name) {
+                            let orig = self.original_import_name(&actual_name).to_string();
+                            let prefixed = format!("{}_{}", module, orig);
+                            info = self.get_param_info(&prefixed);
+                        }
                         if info.is_empty() {
-                            if let Some(module) = self.import_map.get(&actual_name) {
-                                let orig = self.original_import_name(&actual_name).to_string();
-                                let prefixed = format!("{}_{}", module, orig);
-                                info = self.get_param_info(&prefixed);
-                            }
+                            info = self.get_param_info(&actual_name);
                         }
                         info
                     };
@@ -3254,22 +3425,33 @@ impl CodeGen {
                 }
                 // For imported names from embedded (non-stdlib, non-foreign) modules,
                 // use module-prefixed name (constants, variables, etc.)
+                // Do NOT early-return — field selectors (.field) must still be applied.
                 if !stdlib::is_stdlib_module(&module) && !self.foreign_modules.contains(module.as_str()) {
-                    return format!("{}_{}", module, orig);
+                    format!("{}_{}", module, orig)
+                } else {
+                    self.mangle(&desig.ident.name)
                 }
-            }
-            // Fallback: check bare enum_variants (for main module's own enums
-            // where generating_for_module was None, stored with bare name keys)
-            if let Some(c_name) = self.enum_variants.get(&desig.ident.name) {
-                return c_name.clone();
-            }
-            // Inside an embedded implementation, module-level vars/procs need module prefix
-            if self.embedded_local_vars.contains(&desig.ident.name)
-                || self.embedded_local_procs.contains(&desig.ident.name)
-            {
-                format!("{}_{}", self.module_name, desig.ident.name)
             } else {
-                self.mangle(&desig.ident.name)
+                // Fallback: check bare enum_variants (for main module's own enums
+                // where generating_for_module was None, stored with bare name keys)
+                if let Some(c_name) = self.enum_variants.get(&desig.ident.name) {
+                    return c_name.clone();
+                }
+                // Inside an embedded implementation, module-level vars/procs need module prefix
+                if self.embedded_local_vars.contains(&desig.ident.name)
+                    || self.embedded_local_procs.contains(&desig.ident.name)
+                {
+                    format!("{}_{}", self.module_name, desig.ident.name)
+                } else {
+                    // Check if this is a type name from the current embedded module
+                    // (e.g., QueueRec in TSIZE(QueueRec) or type casts)
+                    let local_type_prefixed = format!("{}_{}", self.module_name, self.mangle(&desig.ident.name));
+                    if self.embedded_enum_types.contains(&local_type_prefixed) {
+                        local_type_prefixed
+                    } else {
+                        self.mangle(&desig.ident.name)
+                    }
+                }
             }
         };
 
@@ -3350,6 +3532,18 @@ impl CodeGen {
                             continue;
                         }
                         if let Selector::Index(indices, _) = &sels[i + 1] {
+                            // ptr^[i] — pointer to array, deref then index.
+                            // Two cases based on the C typedef shape:
+                            //   1. Flat pointer (POINTER TO ARRAY [0..N] OF T where
+                            //      the array is anonymous): typedef is T*, use ptr[i]
+                            //   2. Pointer to named array type (POINTER TO NamedArray):
+                            //      typedef is NamedArray*, use (*ptr)[i]
+                            let needs_deref = current_type.as_ref()
+                                .map(|t| self.ptr_to_named_array.contains(t))
+                                .unwrap_or(false);
+                            if needs_deref {
+                                result = format!("(*{})", result);
+                            }
                             for idx in indices {
                                 let idx_str = self.expr_to_string(idx);
                                 result.push('[');
@@ -3824,6 +4018,8 @@ impl CodeGen {
                 // instead of sizeof (which gives pointer size for open array params)
                 if self.is_open_array_param(&arg_str) {
                     self.emit(&format!("{}_high", arg_str));
+                } else if let Some(high) = self.get_named_array_param_high(&arg_str) {
+                    self.emit(&high);
                 } else {
                     self.emit(&format!("(sizeof({}) / sizeof({}[0])) - 1", arg_str, arg_str));
                 }
@@ -3875,11 +4071,13 @@ impl CodeGen {
     fn push_var_scope(&mut self) {
         self.var_params.push(HashMap::new());
         self.open_array_params.push(HashSet::new());
+        self.named_array_value_params.push(HashSet::new());
     }
 
     fn pop_var_scope(&mut self) {
         self.var_params.pop();
         self.open_array_params.pop();
+        self.named_array_value_params.pop();
     }
 
     /// Save array_vars/char_array_vars before entering a procedure scope
@@ -3907,8 +4105,18 @@ impl CodeGen {
         let mut vars = HashMap::new();
         for fp in &p.heading.params {
             let c_type = self.type_to_c(&fp.typ);
+            let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
             for name in &fp.names {
-                vars.insert(name.clone(), c_type.clone());
+                if is_open {
+                    // Open array params are passed as pointers in C (e.g., char *s),
+                    // so the scope var type must be the pointer type, not the element type.
+                    // The env struct format "{} *{}" adds another pointer level for indirection.
+                    vars.insert(name.clone(), format!("{}*", c_type));
+                    // Also track the _high companion
+                    vars.insert(format!("{}_high", name), "uint32_t".to_string());
+                } else {
+                    vars.insert(name.clone(), c_type.clone());
+                }
             }
         }
         for decl in &p.block.decls {
@@ -4006,6 +4214,27 @@ impl CodeGen {
         false
     }
 
+    fn is_named_array_value_param(&self, name: &str) -> bool {
+        for scope in self.named_array_value_params.iter().rev() {
+            if scope.contains(name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn get_named_array_param_high(&self, name: &str) -> Option<String> {
+        if !self.is_named_array_value_param(name) {
+            return None;
+        }
+        if let Some(type_name) = self.var_types.get(name) {
+            if let Some(high) = self.array_type_high.get(type_name) {
+                return Some(high.clone());
+            }
+        }
+        None
+    }
+
     /// Check if an expression is a multi-char string or a char array variable
     fn is_string_expr(&self, expr: &Expr) -> bool {
         match &expr.kind {
@@ -4022,6 +4251,14 @@ impl CodeGen {
         // Check scoped open_array_params (current procedure's params only)
         for scope in self.open_array_params.iter().rev() {
             if scope.contains(name) {
+                return true;
+            }
+        }
+        // Also check env vars: if both 'name' and 'name_high' are captured,
+        // then 'name' is a captured open array parameter from an enclosing scope
+        if let Some(env_vars) = self.env_access_names.last() {
+            let high_name = format!("{}_high", name);
+            if env_vars.contains(&name.to_string()) && env_vars.contains(&high_name) {
                 return true;
             }
         }

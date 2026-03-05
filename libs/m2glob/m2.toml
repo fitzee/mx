@@ -16,3 +16,4 @@ includes=src
 entry=tests/glob_tests.mod
 
 [cc]
+extra-c=../m2sys/m2sys.c

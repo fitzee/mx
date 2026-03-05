@@ -72,6 +72,53 @@ DEFINITION MODULE HTTPClient;
                 VAR authorization: ARRAY OF CHAR;
                 VAR outFuture: Future): Status;
 
+  (* Issue an HTTP POST request with a body.
+     bodyData/bodyLen: raw payload to upload.
+     contentType: e.g. "application/json".
+     authorization: e.g. "Bearer <token>", or empty string.
+     Future resolves with Value.ptr -> heap ResponsePtr. *)
+  PROCEDURE Post(lp: Loop; sched: Scheduler;
+                 VAR uri: URIRec;
+                 bodyData: ADDRESS; bodyLen: INTEGER;
+                 VAR contentType: ARRAY OF CHAR;
+                 VAR authorization: ARRAY OF CHAR;
+                 VAR outFuture: Future): Status;
+
+  (* Issue an HTTP DELETE request.
+     authorization: e.g. "Bearer <token>", or empty string.
+     Future resolves with Value.ptr -> heap ResponsePtr. *)
+  PROCEDURE Delete(lp: Loop; sched: Scheduler;
+                   VAR uri: URIRec;
+                   VAR authorization: ARRAY OF CHAR;
+                   VAR outFuture: Future): Status;
+
+  (* Issue an HTTP PATCH request with a body.
+     bodyData/bodyLen: raw payload.
+     contentType: e.g. "application/json".
+     authorization: e.g. "Bearer <token>", or empty string.
+     Future resolves with Value.ptr -> heap ResponsePtr. *)
+  PROCEDURE Patch(lp: Loop; sched: Scheduler;
+                  VAR uri: URIRec;
+                  bodyData: ADDRESS; bodyLen: INTEGER;
+                  VAR contentType: ARRAY OF CHAR;
+                  VAR authorization: ARRAY OF CHAR;
+                  VAR outFuture: Future): Status;
+
+  (* Issue a chunked POST request.
+     chunker: callback that fills buf with up to maxLen bytes,
+              returns bytes written (0 = EOF).
+     ctx: user context passed to chunker.
+     Sends Transfer-Encoding: chunked header. *)
+  TYPE
+    ChunkProc = PROCEDURE(ADDRESS, ADDRESS, INTEGER): INTEGER;
+
+  PROCEDURE PostChunked(lp: Loop; sched: Scheduler;
+                        VAR uri: URIRec;
+                        chunker: ChunkProc; ctx: ADDRESS;
+                        VAR contentType: ARRAY OF CHAR;
+                        VAR authorization: ARRAY OF CHAR;
+                        VAR outFuture: Future): Status;
+
   (* ── Response helpers ──────────────────────────────────── *)
 
   (* Case-insensitive header lookup.

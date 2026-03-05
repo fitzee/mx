@@ -105,6 +105,7 @@ IMPLEMENTATION MODULE Http2ServerStream;
     slot.phase := PhIdle;
     slot.endRecvd := FALSE;
     slot.endSent := FALSE;
+    FreeRequest(slot.req);
     InitRequest(slot.req);
   END SlotInit;
 

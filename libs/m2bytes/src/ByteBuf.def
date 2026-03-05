@@ -78,6 +78,11 @@ PROCEDURE AsView(VAR b: Buf): BytesView;
 (* Truncate the buffer to newLen.  If newLen >= len, no-op. *)
 PROCEDURE Truncate(VAR b: Buf; newLen: CARDINAL);
 
+(* Return a pointer to the buffer's internal data.
+   Valid only while the buffer is not grown or freed.
+   Useful for zero-copy I/O. *)
+PROCEDURE DataPtr(VAR b: Buf): ADDRESS;
+
 (* ── View helpers ───────────────────────────────────── *)
 
 (* Get byte at index from a view. Returns 0 if out of bounds. *)

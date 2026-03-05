@@ -8,7 +8,8 @@ FROM GfxBridge IMPORT gfx_init, gfx_quit, gfx_ttf_init, gfx_ttf_quit,
      gfx_show_win, gfx_hide_win, gfx_raise_win,
      gfx_minimize_win, gfx_maximize_win, gfx_restore_win,
      gfx_get_win_id, gfx_set_win_min_size, gfx_set_win_max_size,
-     gfx_create_renderer, gfx_destroy_renderer, gfx_present,
+     gfx_create_renderer, gfx_update_logical_size,
+     gfx_destroy_renderer, gfx_present,
      gfx_output_width, gfx_output_height,
      gfx_screen_width, gfx_screen_height, gfx_display_count,
      gfx_set_clipboard, gfx_get_clipboard, gfx_has_clipboard,
@@ -125,6 +126,11 @@ PROCEDURE CreateRenderer(win: Window; flags: INTEGER): Renderer;
 BEGIN
   RETURN gfx_create_renderer(win, flags)
 END CreateRenderer;
+
+PROCEDURE UpdateLogicalSize(ren: Renderer; win: Window);
+BEGIN
+  gfx_update_logical_size(ren, win)
+END UpdateLogicalSize;
 
 PROCEDURE DestroyRenderer(ren: Renderer);
 BEGIN
