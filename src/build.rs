@@ -192,6 +192,13 @@ pub fn build_project(
         source_files.push(lock_path);
     }
 
+    // Stamp the compiler binary itself so rebuilding m2c invalidates caches
+    if let Ok(exe) = std::env::current_exe() {
+        if let Ok(canonical) = exe.canonicalize() {
+            source_files.push(canonical);
+        }
+    }
+
     // Build current stamps
     let mut current_stamps: HashMap<String, FileStamp> = HashMap::new();
     for path in &source_files {

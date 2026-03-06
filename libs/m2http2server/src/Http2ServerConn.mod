@@ -41,7 +41,8 @@ IMPLEMENTATION MODULE Http2ServerConn;
                                  SendResponse, FlushData,
                                  AllocSlot, FindSlot,
                                  PhIdle, PhHeaders, PhData,
-                                 PhDispatched, PhResponding, PhDone;
+                                 PhDispatched, PhResponding, PhDone,
+                                 PhHeld;
   FROM Arena IMPORT Arena,
                      Init AS ArenaInit, Alloc AS ArenaAlloc,
                      Mark AS ArenaMark, ResetTo AS ArenaResetTo,
@@ -367,6 +368,9 @@ IMPLEMENTATION MODULE Http2ServerConn;
         IF ok THEN
           slotIdx := FindSlot(cp^.slots, hdr.streamId);
           IF slotIdx < MaxStreamSlots THEN
+            IF (cp^.slots[slotIdx].phase = PhHeld) AND (HeldClosed # NIL) THEN
+              HeldClosed(cp^.id, hdr.streamId);
+            END;
             SlotFree(cp^.slots[slotIdx]);
             IF cp^.numActive > 0 THEN
               DEC(cp^.numActive);
@@ -519,11 +523,20 @@ IMPLEMENTATION MODULE Http2ServerConn;
   BEGIN
     InitResponse(resp);
 
+    (* Set connPtr before dispatch so handlers can access connection *)
+    cp^.slots[slotIdx].req.connPtr := ADDRESS(cp);
+
     (* The server's router and middleware are accessed through
        the server back-pointer.  We call the dispatch procedure
        that Http2Server exports for this purpose. *)
     ServerDispatch(cp^.server,
                    cp^.slots[slotIdx].req, resp);
+
+    (* If handler put stream into held state (SSE), skip response/cleanup *)
+    IF cp^.slots[slotIdx].phase = PhHeld THEN
+      FreeResponse(resp);
+      RETURN;
+    END;
 
     (* Guard: if handler left status 0, set 500 *)
     IF resp.status = 0 THEN
@@ -750,6 +763,14 @@ IMPLEMENTATION MODULE Http2ServerConn;
       dummy := TLS.SessionDestroy(cp^.tlsSess);
     END;
 
+    (* Notify for any held streams before freeing *)
+    FOR i := 0 TO MaxStreamSlots - 1 DO
+      IF (cp^.slots[i].active) AND (cp^.slots[i].phase = PhHeld)
+         AND (HeldClosed # NIL) THEN
+        HeldClosed(cp^.id, cp^.slots[i].stream.id);
+      END;
+    END;
+
     (* Free stream slots — free ALL slots, not just active ones,
        because idle slots still hold a req.body buffer from SlotInit *)
     FOR i := 0 TO MaxStreamSlots - 1 DO
@@ -831,11 +852,18 @@ IMPLEMENTATION MODULE Http2ServerConn;
     ConnCleanup := p;
   END SetConnCleanup;
 
+  PROCEDURE SetHeldStreamClosed(p: HeldClosedProc);
+  BEGIN
+    HeldClosed := p;
+  END SetHeldStreamClosed;
+
   VAR
     ServerDispatch: DispatchProc;
     ConnCleanup: CleanupProc;
+    HeldClosed: HeldClosedProc;
 
 BEGIN
   ServerDispatch := NIL;
   ConnCleanup := NIL;
+  HeldClosed := NIL;
 END Http2ServerConn.

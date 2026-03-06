@@ -475,6 +475,150 @@ IMPLEMENTATION MODULE Http2ServerStream;
     RETURN totalAppended;
   END FlushData;
 
+  (* ── Held-stream procedures (SSE support) ──────────────── *)
+
+  PROCEDURE SendHeadersOnly(VAR slot: StreamSlot;
+                            VAR resp: Response;
+                            VAR dynEnc: DynTable;
+                            VAR outBuf: Buf;
+                            maxFrameSize: CARDINAL): CARDINAL;
+  VAR
+    hdrEntries: ARRAY [0..MaxRespHeaders] OF HeaderEntry;
+    numEntries: CARDINAL;
+    hdrBuf: Buf;
+    startLen: CARDINAL;
+    statusBuf: ARRAY [0..3] OF CHAR;
+    i, j, copyLen: CARDINAL;
+  BEGIN
+    startLen := outBuf.len;
+
+    StatusToStr(resp.status, statusBuf);
+
+    (* Entry 0: :status pseudo-header *)
+    hdrEntries[0].name[0] := ":";
+    hdrEntries[0].name[1] := "s";
+    hdrEntries[0].name[2] := "t";
+    hdrEntries[0].name[3] := "a";
+    hdrEntries[0].name[4] := "t";
+    hdrEntries[0].name[5] := "u";
+    hdrEntries[0].name[6] := "s";
+    hdrEntries[0].name[7] := 0C;
+    hdrEntries[0].nameLen := 7;
+    hdrEntries[0].value[0] := statusBuf[0];
+    hdrEntries[0].value[1] := statusBuf[1];
+    hdrEntries[0].value[2] := statusBuf[2];
+    hdrEntries[0].value[3] := 0C;
+    hdrEntries[0].valLen := 3;
+    numEntries := 1;
+
+    FOR i := 0 TO resp.numHeaders - 1 DO
+      IF numEntries <= MaxRespHeaders THEN
+        copyLen := resp.headers[i].nameLen;
+        IF copyLen > 127 THEN copyLen := 127 END;
+        FOR j := 0 TO copyLen - 1 DO
+          hdrEntries[numEntries].name[j] := resp.headers[i].name[j];
+        END;
+        IF copyLen <= 127 THEN
+          hdrEntries[numEntries].name[copyLen] := 0C;
+        END;
+        hdrEntries[numEntries].nameLen := copyLen;
+
+        copyLen := resp.headers[i].valLen;
+        IF copyLen > 4095 THEN copyLen := 4095 END;
+        FOR j := 0 TO copyLen - 1 DO
+          hdrEntries[numEntries].value[j] := resp.headers[i].value[j];
+        END;
+        IF copyLen <= 4095 THEN
+          hdrEntries[numEntries].value[copyLen] := 0C;
+        END;
+        hdrEntries[numEntries].valLen := copyLen;
+
+        INC(numEntries);
+      END;
+    END;
+
+    Init(hdrBuf, 1024);
+    EncodeHeaderBlock(hdrBuf, dynEnc, hdrEntries, numEntries);
+
+    (* HEADERS with endStream=FALSE, endHeaders=TRUE *)
+    EncodeHeadersHeader(outBuf, slot.stream.id, hdrBuf.len, FALSE, TRUE);
+    AppendView(outBuf, AsView(hdrBuf));
+    Free(hdrBuf);
+
+    slot.phase := PhHeld;
+    (* Do NOT set slot.endSent *)
+
+    RETURN outBuf.len - startLen;
+  END SendHeadersOnly;
+
+  PROCEDURE SendSseData(VAR slot: StreamSlot;
+                        data: ADDRESS;
+                        dataLen: CARDINAL;
+                        VAR outBuf: Buf;
+                        maxFrameSize: CARDINAL;
+                        VAR connWindow: INTEGER): CARDINAL;
+  VAR
+    startLen, remaining, sendable, offset: CARDINAL;
+    bodyView: BytesView;
+    ok: BOOLEAN;
+  BEGIN
+    startLen := outBuf.len;
+
+    IF slot.phase # PhHeld THEN
+      RETURN 0;
+    END;
+
+    offset := 0;
+    remaining := dataLen;
+
+    WHILE remaining > 0 DO
+      sendable := MinCard(remaining, maxFrameSize);
+      sendable := MinIntCard(connWindow, sendable);
+
+      IF sendable = 0 THEN
+        RETURN outBuf.len - startLen;
+      END;
+
+      ok := ConsumeSendWindow(slot.stream, sendable);
+      IF NOT ok THEN
+        sendable := MinCard(sendable, CARDINAL(slot.stream.sendWindow));
+        IF sendable = 0 THEN
+          RETURN outBuf.len - startLen;
+        END;
+        ok := ConsumeSendWindow(slot.stream, sendable);
+      END;
+      connWindow := connWindow - INTEGER(sendable);
+
+      (* DATA with endStream=FALSE *)
+      EncodeDataHeader(outBuf, slot.stream.id, sendable, FALSE);
+
+      bodyView.base := ADDRESS(LONGCARD(data) + LONGCARD(offset));
+      bodyView.len := sendable;
+      AppendView(outBuf, bodyView);
+
+      offset := offset + sendable;
+      remaining := remaining - sendable;
+    END;
+
+    RETURN outBuf.len - startLen;
+  END SendSseData;
+
+  PROCEDURE CloseHeldStream(VAR slot: StreamSlot;
+                            VAR outBuf: Buf): CARDINAL;
+  VAR
+    startLen: CARDINAL;
+  BEGIN
+    startLen := outBuf.len;
+
+    (* Empty DATA frame with END_STREAM *)
+    EncodeDataHeader(outBuf, slot.stream.id, 0, TRUE);
+
+    slot.endSent := TRUE;
+    slot.phase := PhDone;
+
+    RETURN outBuf.len - startLen;
+  END CloseHeldStream;
+
   (* ── Slot pool management ───────────────────────────────── *)
 
   PROCEDURE AllocSlot(VAR slots: ARRAY OF StreamSlot;

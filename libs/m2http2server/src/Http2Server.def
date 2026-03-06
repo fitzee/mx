@@ -57,4 +57,7 @@ DEFINITION MODULE Http2Server;
   (* Destroy the server and free all resources. *)
   PROCEDURE Destroy(VAR s: Server): Status;
 
+  (* Return the event loop handle for timer setup. *)
+  PROCEDURE GetLoop(s: Server): ADDRESS;
+
 END Http2Server.

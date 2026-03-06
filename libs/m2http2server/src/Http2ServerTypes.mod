@@ -36,6 +36,7 @@ IMPLEMENTATION MODULE Http2ServerTypes;
     req.connId := 0;
     req.startTick := 0;
     req.remoteAddr[0] := 0C;
+    req.connPtr := NIL;
   END InitRequest;
 
   PROCEDURE InitResponse(VAR resp: Response);

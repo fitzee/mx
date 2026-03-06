@@ -72,6 +72,7 @@ DEFINITION MODULE Http2ServerTypes;
       connId:     CARDINAL;
       startTick:  INTEGER;
       remoteAddr: ARRAY [0..MaxRemoteLen] OF CHAR;
+      connPtr:    ADDRESS;   (* back-pointer to ConnRec, set by framework *)
     END;
 
     (* Outgoing response *)

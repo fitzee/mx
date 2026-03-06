@@ -533,6 +533,15 @@ IMPLEMENTATION MODULE Http2Server;
     RETURN OK;
   END Destroy;
 
+  PROCEDURE GetLoop(s: Server): ADDRESS;
+  VAR
+    sp: ServerRecPtr;
+  BEGIN
+    sp := ServerRecPtr(s);
+    IF sp = NIL THEN RETURN NIL END;
+    RETURN sp^.loop;
+  END GetLoop;
+
 BEGIN
   (* ALPN wire format: length-prefixed "h2" *)
   alpnH2[0] := CHR(2);

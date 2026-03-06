@@ -20,6 +20,7 @@ DEFINITION MODULE Http2ServerStream;
     PhDispatched = 3;
     PhResponding = 4;
     PhDone       = 5;
+    PhHeld       = 6;
 
   TYPE
     StreamSlot = RECORD
@@ -80,5 +81,25 @@ DEFINITION MODULE Http2ServerStream;
 
   (* Release a slot after response is complete. *)
   PROCEDURE SlotFree(VAR slot: StreamSlot);
+
+  (* Send HEADERS (200 + resp headers) WITHOUT END_STREAM.
+     Sets slot.phase := PhHeld. Slot stays active. *)
+  PROCEDURE SendHeadersOnly(VAR slot: StreamSlot;
+                            VAR resp: Response;
+                            VAR dynEnc: DynTable;
+                            VAR outBuf: Buf;
+                            maxFrameSize: CARDINAL): CARDINAL;
+
+  (* Send DATA frame on a held stream WITHOUT END_STREAM. *)
+  PROCEDURE SendSseData(VAR slot: StreamSlot;
+                        data: ADDRESS;
+                        dataLen: CARDINAL;
+                        VAR outBuf: Buf;
+                        maxFrameSize: CARDINAL;
+                        VAR connWindow: INTEGER): CARDINAL;
+
+  (* Send empty DATA with END_STREAM. Transitions to PhDone. *)
+  PROCEDURE CloseHeldStream(VAR slot: StreamSlot;
+                            VAR outBuf: Buf): CARDINAL;
 
 END Http2ServerStream.

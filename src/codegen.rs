@@ -3061,12 +3061,14 @@ impl CodeGen {
                     self.emit(") & 1)");
                 } else if matches!(op, BinaryOp::IntDiv) {
                     if self.is_unsigned_expr(left) || self.is_unsigned_expr(right) {
-                        // CARDINAL DIV: plain unsigned C division
-                        self.emit("((uint32_t)(");
+                        // Unsigned DIV (CARDINAL or LONGCARD): plain C division.
+                        // No explicit cast — operands already have the correct
+                        // unsigned type; casting to uint32_t would truncate LONGCARD.
+                        self.emit("(");
                         self.gen_expr(left);
-                        self.emit(") / (uint32_t)(");
+                        self.emit(" / ");
                         self.gen_expr(right);
-                        self.emit("))");
+                        self.emit(")");
                     } else {
                         // PIM4 DIV: truncates toward negative infinity (floored division)
                         self.emit("m2_div(");
@@ -3077,12 +3079,14 @@ impl CodeGen {
                     }
                 } else if matches!(op, BinaryOp::Mod) {
                     if self.is_unsigned_expr(left) || self.is_unsigned_expr(right) {
-                        // CARDINAL MOD: plain unsigned C modulo
-                        self.emit("((uint32_t)(");
+                        // Unsigned MOD (CARDINAL or LONGCARD): plain C modulo.
+                        // No explicit cast — operands already have the correct
+                        // unsigned type; casting to uint32_t would truncate LONGCARD.
+                        self.emit("(");
                         self.gen_expr(left);
-                        self.emit(") % (uint32_t)(");
+                        self.emit(" % ");
                         self.gen_expr(right);
-                        self.emit("))");
+                        self.emit(")");
                     } else {
                         // PIM4 MOD: result is always non-negative
                         self.emit("m2_mod(");
