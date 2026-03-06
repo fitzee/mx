@@ -21,6 +21,7 @@ DEFINITION MODULE Http2ServerTypes;
     MaxReqNameLen   = 63;     (* header name max *)
     MaxReqValueLen  = 255;    (* header value max *)
     ConnBufSize     = 16384;  (* 16 KB read/write buffers *)
+    MaxBodyLen      = 524288;  (* 512 KB max request body *)
 
     (* Server lifecycle FSM states *)
     SrvInit     = 0;

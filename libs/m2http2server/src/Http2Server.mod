@@ -32,7 +32,8 @@ IMPLEMENTATION MODULE Http2Server;
   FROM EventLoop IMPORT Loop, WatchFd, UnwatchFd, Run, Stop,
                          Create AS LoopCreate,
                          Destroy AS LoopDestroy,
-                         GetScheduler;
+                         GetScheduler, SetTimeout, CancelTimer;
+  FROM Timers IMPORT TimerId;
   FROM Poller IMPORT EvRead;
   FROM TLS IMPORT TLSContext, TLSSession,
                    ContextCreateServer, SetServerCert,
@@ -272,6 +273,26 @@ IMPLEMENTATION MODULE Http2Server;
     END;
   END DoCleanup;
 
+  (* ── Handshake timeout ───────────────────────────────── *)
+
+  CONST
+    HsTimeoutMs = 10000;   (* 10 seconds for H2 preface + SETTINGS *)
+
+  (* Timer callback: if the connection is still in CpPreface or CpSettings
+     after HsTimeoutMs, force-close it to reclaim the connection slot. *)
+  PROCEDURE HsTimeoutCb(user: ADDRESS);
+  VAR
+    cp: ConnPtr;
+  BEGIN
+    cp := ConnPtr(user);
+    IF cp = NIL THEN RETURN END;
+    IF (cp^.phase = CpPreface) OR (cp^.phase = CpSettings) THEN
+      cp^.hsTimerId := -1;
+      cp^.phase := CpClosed;
+      DoCleanup(cp^.server, cp);
+    END;
+  END HsTimeoutCb;
+
   (* ── Accept callback ─────────────────────────────────── *)
 
   PROCEDURE OnAccept(fd, events: INTEGER; user: ADDRESS);
@@ -285,95 +306,98 @@ IMPLEMENTATION MODULE Http2Server;
     tlsSess: TLSSession;
     tlsSt: TLS.Status;
     sched: Scheduler.Scheduler;
-    extraFd: Socket;
-    extraPeer: SockAddr;
+    hsTimer: TimerId;
+    tmrSt: EventLoop.Status;
   BEGIN
     sp := ServerRecPtr(user);
     IF sp = NIL THEN RETURN END;
     IF sp^.draining THEN RETURN END;
 
-    sockSt := Accept(Socket(fd), clientFd, peer);
-    IF sockSt # Sockets.OK THEN
-      RETURN;
-    END;
-
-    IncConnsAccepted(sp^.metrics);
-
-    (* Find a free slot within the runtime connLimit *)
-    idx := 0;
-    WHILE (idx < sp^.connLimit) AND (sp^.conns[idx] # NIL) DO
-      INC(idx);
-    END;
-    IF idx >= sp^.connLimit THEN
-      (* At capacity — refuse at TCP level.
-         We cannot send HTTP/2 GOAWAY without completing TLS + H2 setup,
-         so the only practical option is to close immediately. *)
-      CloseSocket(clientFd);
-      IncConnsRejected(sp^.metrics);
-      LogProtocol(sp^.lg, 0, "reject", "conn limit reached");
-
-      (* Drain any remaining pending connections from the backlog
-         to avoid the event loop busy-looping on the still-readable
-         listen socket. *)
-      LOOP
-        sockSt := Accept(Socket(fd), extraFd, extraPeer);
-        IF sockSt # Sockets.OK THEN
-          EXIT;
-        END;
-        CloseSocket(extraFd);
-        IncConnsAccepted(sp^.metrics);
-        IncConnsRejected(sp^.metrics);
+    (* Loop to accept ALL pending connections from the backlog.
+       With EV_CLEAR (edge-triggered) kqueue, this callback fires
+       once per state change.  If multiple connections arrive before
+       we run, we must accept them all now — kevent will NOT fire
+       again for connections already in the backlog. *)
+    LOOP
+      sockSt := Accept(Socket(fd), clientFd, peer);
+      IF sockSt # Sockets.OK THEN
+        EXIT;
       END;
-      RETURN;
-    END;
 
-    (* Ensure accepted socket is blocking for TLS handshake.
-       macOS inherits O_NONBLOCK from the listen socket. *)
-    sockSt := SetNonBlocking(clientFd, FALSE);
+      IncConnsAccepted(sp^.metrics);
 
-    (* TLS handshake — socket must be blocking *)
-    sched := GetScheduler(sp^.loop);
-    tlsSt := SessionCreateServer(sp^.loop, sched,
-                                 sp^.tlsCtx, INTEGER(clientFd),
-                                 tlsSess);
-    IF tlsSt # TLS.OK THEN
-      CloseSocket(clientFd);
-      RETURN;
-    END;
+      (* Find a free slot within the runtime connLimit *)
+      idx := 0;
+      WHILE (idx < sp^.connLimit) AND (sp^.conns[idx] # NIL) DO
+        INC(idx);
+      END;
+      IF idx >= sp^.connLimit THEN
+        (* At capacity — refuse at TCP level *)
+        CloseSocket(clientFd);
+        IncConnsRejected(sp^.metrics);
+        LogProtocol(sp^.lg, 0, "reject", "conn limit reached");
+        (* Continue draining to prevent backlog buildup *)
+        LOOP
+          sockSt := Accept(Socket(fd), clientFd, peer);
+          IF sockSt # Sockets.OK THEN
+            EXIT;
+          END;
+          CloseSocket(clientFd);
+          IncConnsAccepted(sp^.metrics);
+          IncConnsRejected(sp^.metrics);
+        END;
+        RETURN;
+      END;
 
-    tlsSt := Handshake(tlsSess);
-    IF tlsSt # TLS.OK THEN
-      SessionDestroy(tlsSess);
-      CloseSocket(clientFd);
-      RETURN;
-    END;
+      (* Ensure accepted socket is blocking for TLS handshake.
+         macOS inherits O_NONBLOCK from the listen socket. *)
+      sockSt := SetNonBlocking(clientFd, FALSE);
 
-    (* Set non-blocking for event-loop driven I/O *)
-    sockSt := SetNonBlocking(clientFd, TRUE);
+      (* TLS handshake — socket must be blocking *)
+      sched := GetScheduler(sp^.loop);
+      tlsSt := SessionCreateServer(sp^.loop, sched,
+                                   sp^.tlsCtx, INTEGER(clientFd),
+                                   tlsSess);
+      IF tlsSt # TLS.OK THEN
+        CloseSocket(clientFd);
+        (* Continue accepting remaining connections *)
+      ELSE
+        tlsSt := Handshake(tlsSess);
+        IF tlsSt # TLS.OK THEN
+          SessionDestroy(tlsSess);
+          CloseSocket(clientFd);
+          (* Continue accepting remaining connections *)
+        ELSE
+          (* Set non-blocking for event-loop driven I/O *)
+          sockSt := SetNonBlocking(clientFd, TRUE);
 
-    IF ConnCreate(ADDRESS(sp), sp^.nextConnId,
-                  INTEGER(clientFd), peer, cp) THEN
-      cp^.tlsSess := tlsSess;
-      cp^.loop := sp^.loop;
-      (* Apply runtime stream limit *)
-      cp^.localSettings.maxConcurrentStreams := sp^.streamLimit;
-      sp^.conns[idx] := cp;
-      INC(sp^.numConns);
-      INC(sp^.nextConnId);
-      IncConnsActive(sp^.metrics);
-      LogConn(sp^.lg, cp^.id, "accepted");
+          IF ConnCreate(ADDRESS(sp), sp^.nextConnId,
+                        INTEGER(clientFd), peer, cp) THEN
+            cp^.tlsSess := tlsSess;
+            cp^.loop := sp^.loop;
+            cp^.localSettings.maxConcurrentStreams := sp^.streamLimit;
+            sp^.conns[idx] := cp;
+            INC(sp^.numConns);
+            INC(sp^.nextConnId);
+            IncConnsActive(sp^.metrics);
+            LogConn(sp^.lg, cp^.id, "accepted");
 
-      (* Watch for read events on this connection *)
-      WatchFd(sp^.loop, INTEGER(clientFd), EvRead,
-              ConnOnEvent, ADDRESS(cp));
-      cp^.watching := TRUE;
+            WatchFd(sp^.loop, INTEGER(clientFd), EvRead,
+                    ConnOnEvent, ADDRESS(cp));
+            cp^.watching := TRUE;
 
-      (* Note: TLS 1.3 may have buffered data during handshake.
-         The event loop will pick it up on the next iteration. *)
-    ELSE
-      SessionDestroy(tlsSess);
-      CloseSocket(clientFd);
-    END;
+            tmrSt := SetTimeout(sp^.loop, HsTimeoutMs,
+                                 HsTimeoutCb, ADDRESS(cp), hsTimer);
+            IF tmrSt = EventLoop.OK THEN
+              cp^.hsTimerId := hsTimer;
+            END;
+          ELSE
+            SessionDestroy(tlsSess);
+            CloseSocket(clientFd);
+          END;
+        END;
+      END;
+    END; (* LOOP *)
   END OnAccept;
 
   (* ── Start ───────────────────────────────────────────── *)

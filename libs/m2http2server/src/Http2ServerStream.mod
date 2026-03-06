@@ -11,7 +11,7 @@ IMPLEMENTATION MODULE Http2ServerStream;
   FROM Http2ServerTypes IMPORT Request, Response, MaxStreamSlots,
                                MaxReqHeaders, MaxReqNameLen, MaxReqValueLen,
                                MaxMethodLen, MaxPathLen, MaxSchemeLen,
-                               MaxAuthorityLen, MaxRespHeaders,
+                               MaxAuthorityLen, MaxRespHeaders, MaxBodyLen,
                                InitRequest, FreeRequest;
 
   (* ── String helpers ─────────────────────────────────────── *)
@@ -113,8 +113,21 @@ IMPLEMENTATION MODULE Http2ServerStream;
   BEGIN
     slot.active := FALSE;
     slot.phase := PhIdle;
-    FreeRequest(slot.req);
-    SlotInit(slot);
+    (* Reuse the body buffer instead of free+realloc to avoid
+       memory fragmentation under sustained large-payload load.
+       If the buffer grew very large (>512KB), free it to reclaim memory;
+       otherwise just Clear to keep the allocation for the next request. *)
+    IF slot.req.body.cap > MaxBodyLen THEN
+      FreeRequest(slot.req);
+      InitRequest(slot.req);
+    ELSE
+      Clear(slot.req.body);
+      slot.req.bodyLen := 0;
+      slot.req.numHeaders := 0;
+      slot.req.method[0] := 0C;
+      slot.req.path[0] := 0C;
+      slot.req.streamId := 0;
+    END;
   END SlotFree;
 
   (* ── Header assembly ────────────────────────────────────── *)
@@ -187,6 +200,12 @@ IMPLEMENTATION MODULE Http2ServerStream;
                            endStream: BOOLEAN): BOOLEAN;
   BEGIN
     IF slot.phase # PhData THEN
+      RETURN FALSE;
+    END;
+
+    (* Reject bodies that exceed MaxBodyLen — prevents OOM from
+       large malicious payloads across concurrent connections. *)
+    IF (slot.req.body.len + data.len) > MaxBodyLen THEN
       RETURN FALSE;
     END;
 

@@ -49,7 +49,7 @@ IMPLEMENTATION MODULE Http2ServerConn;
   FROM Sockets IMPORT SockAddr;
   IMPORT TLS;
   IMPORT EventLoop;
-  FROM Poller IMPORT EvRead, EvWrite;
+  FROM Poller IMPORT EvRead, EvWrite, EvHup;
 
   (* ── Forward-declared server record access ──────────── *)
 
@@ -177,8 +177,12 @@ IMPLEMENTATION MODULE Http2ServerConn;
     (* Stream FSM table *)
     InitStreamTable(cp^.streamTable);
 
-    (* Stream slots *)
+    (* Stream slots — null body pointers before SlotInit to prevent
+       FreeRequest from freeing garbage in freshly ALLOCATE'd memory *)
     FOR i := 0 TO MaxStreamSlots - 1 DO
+      cp^.slots[i].req.body.data := NIL;
+      cp^.slots[i].req.body.len := 0;
+      cp^.slots[i].req.body.cap := 0;
       SlotInit(cp^.slots[i]);
     END;
 
@@ -307,6 +311,11 @@ IMPLEMENTATION MODULE Http2ServerConn;
             EncodeSettingsAck(cp^.writeBuf);
             IF cp^.phase = CpSettings THEN
               cp^.phase := CpOpen;
+              (* Cancel handshake timeout — connection is now operational *)
+              IF (cp^.hsTimerId >= 0) AND (cp^.loop # NIL) THEN
+                EventLoop.CancelTimer(cp^.loop, cp^.hsTimerId);
+                cp^.hsTimerId := -1;
+              END;
             END;
           ELSE
             SendGoaway(cp, ErrProtocol);
@@ -478,6 +487,10 @@ IMPLEMENTATION MODULE Http2ServerConn;
         ok := AccumulateData(cp^.slots[slotIdx], payload, endStream);
         IF NOT ok THEN
           SendRstStream(cp, hdr.streamId, ErrProtocol);
+          SlotFree(cp^.slots[slotIdx]);
+          IF cp^.numActive > 0 THEN
+            DEC(cp^.numActive);
+          END;
           RETURN;
         END;
 
@@ -694,6 +707,19 @@ IMPLEMENTATION MODULE Http2ServerConn;
       IF ConnCleanup # NIL THEN
         ConnCleanup(cp^.server, cp);
       END;
+      RETURN;
+    END;
+
+    (* EV_CLEAR (edge-triggered) kqueue: the read event fires once for
+       data+EOF combined.  After TLS.Read drains the SSL buffer it
+       returns WantRead, but the peer may already have closed.
+       If the poller reported EvHup (EV_EOF), close the connection now
+       because kevent will NOT fire again for this fd. *)
+    IF (CARDINAL(events) DIV EvHup) MOD 2 = 1 THEN
+      cp^.phase := CpClosed;
+      IF ConnCleanup # NIL THEN
+        ConnCleanup(cp^.server, cp);
+      END;
     END;
   END ConnOnEvent;
 
@@ -712,6 +738,12 @@ IMPLEMENTATION MODULE Http2ServerConn;
     dummy: TLS.Status;
   BEGIN
     IF cp = NIL THEN RETURN END;
+
+    (* Cancel handshake timer if still active *)
+    IF (cp^.hsTimerId >= 0) AND (cp^.loop # NIL) THEN
+      EventLoop.CancelTimer(cp^.loop, cp^.hsTimerId);
+      cp^.hsTimerId := -1;
+    END;
 
     (* Destroy TLS session *)
     IF cp^.tlsSess # NIL THEN
