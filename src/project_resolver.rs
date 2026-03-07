@@ -4,11 +4,12 @@
 //! compiler-driver integration can resolve project context without
 //! depending on the `lsp` module.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 // ── Manifest ────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct CcSection {
     pub cflags: Vec<String>,
     pub ldflags: Vec<String>,
@@ -51,7 +52,46 @@ pub struct Manifest {
     pub includes: Vec<String>,
     pub deps: Vec<DepEntry>,
     pub cc: CcSection,
+    /// Feature-gated [cc] overrides keyed by feature name.
+    /// Parsed from `[cc.feature.NAME]` sections in m2.toml.
+    pub feature_cc: HashMap<String, CcSection>,
     pub test: TestSection,
+}
+
+impl Manifest {
+    /// Return a merged CcSection that includes the base [cc] plus any
+    /// [cc.feature.NAME] sections whose NAME appears in `active_features`.
+    /// Appending fields (extra_c, frameworks) are extended; replacing fields
+    /// (cflags, ldflags, libs) are extended with dedup.
+    pub fn merged_cc(&self, active_features: &[String]) -> CcSection {
+        let mut merged = CcSection {
+            cflags: self.cc.cflags.clone(),
+            ldflags: self.cc.ldflags.clone(),
+            libs: self.cc.libs.clone(),
+            extra_c: self.cc.extra_c.clone(),
+            frameworks: self.cc.frameworks.clone(),
+        };
+        for feat in active_features {
+            if let Some(fcc) = self.feature_cc.get(feat) {
+                for v in &fcc.cflags {
+                    if !merged.cflags.contains(v) { merged.cflags.push(v.clone()); }
+                }
+                for v in &fcc.ldflags {
+                    if !merged.ldflags.contains(v) { merged.ldflags.push(v.clone()); }
+                }
+                for v in &fcc.libs {
+                    if !merged.libs.contains(v) { merged.libs.push(v.clone()); }
+                }
+                for v in &fcc.extra_c {
+                    if !merged.extra_c.contains(v) { merged.extra_c.push(v.clone()); }
+                }
+                for v in &fcc.frameworks {
+                    if !merged.frameworks.contains(v) { merged.frameworks.push(v.clone()); }
+                }
+            }
+        }
+        merged
+    }
 }
 
 pub struct DepEntry {
@@ -94,8 +134,13 @@ impl Manifest {
         let mut includes = Vec::new();
         let mut deps = Vec::new();
         let mut cc = CcSection::default();
+        let mut feature_cc: HashMap<String, CcSection> = HashMap::new();
         let mut test = TestSection::default();
+
+        // section tracks the current section name; cc_feature_name tracks
+        // which feature we are inside when section == "cc_feature".
         let mut section = "package";
+        let mut cc_feature_name = String::new();
 
         for line in content.lines() {
             let trimmed = line.trim();
@@ -106,6 +151,16 @@ impl Manifest {
             // Section headers
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 let sec = &trimmed[1..trimmed.len() - 1];
+                // Check for [cc.feature.NAME]
+                if let Some(feat) = sec.strip_prefix("cc.feature.") {
+                    if !feat.is_empty() {
+                        cc_feature_name = feat.to_string();
+                        section = "cc_feature";
+                        feature_cc.entry(cc_feature_name.clone()).or_insert_with(CcSection::default);
+                        continue;
+                    }
+                }
+                cc_feature_name.clear();
                 section = match sec {
                     "deps" => "deps",
                     "cc" => "cc",
@@ -160,6 +215,18 @@ impl Manifest {
                         "frameworks" => cc.frameworks = val.split_whitespace().map(|s| s.to_string()).collect(),
                         _ => {}
                     },
+                    "cc_feature" => {
+                        if let Some(fcc) = feature_cc.get_mut(&cc_feature_name) {
+                            match key {
+                                "cflags" => fcc.cflags = val.split_whitespace().map(|s| s.to_string()).collect(),
+                                "ldflags" => fcc.ldflags = val.split_whitespace().map(|s| s.to_string()).collect(),
+                                "libs" => fcc.libs = val.split_whitespace().map(|s| s.strip_prefix("-l").unwrap_or(s).to_string()).collect(),
+                                "extra-c" => fcc.extra_c = val.split_whitespace().map(|s| s.to_string()).collect(),
+                                "frameworks" => fcc.frameworks = val.split_whitespace().map(|s| s.to_string()).collect(),
+                                _ => {}
+                            }
+                        }
+                    },
                     "test" => match key {
                         "entry" => test.entry = val.to_string(),
                         "includes" => test.includes = val.split_whitespace().map(|s| s.to_string()).collect(),
@@ -174,7 +241,7 @@ impl Manifest {
             return None;
         }
 
-        Some(Manifest { name, version, entry, m2plus, includes, deps, cc, test })
+        Some(Manifest { name, version, entry, m2plus, includes, deps, cc, feature_cc, test })
     }
 }
 
@@ -405,8 +472,11 @@ fn collect_dep_cc(
                         }
                     }
                     for f in &dep_manifest.cc.extra_c {
-                        // Resolve relative to the dep's root
-                        let abs = dep_root.join(f).to_string_lossy().into_owned();
+                        // Resolve relative to the dep's root, canonicalize to avoid duplicates
+                        let joined = dep_root.join(f);
+                        let abs = joined.canonicalize()
+                            .unwrap_or(joined)
+                            .to_string_lossy().into_owned();
                         if !cc.extra_c.contains(&abs) {
                             cc.extra_c.push(abs);
                         }
@@ -646,6 +716,120 @@ includes=tests tests/fixtures
     fn test_parse_manifest_empty_name() {
         let content = "version=0.1.0\n";
         assert!(Manifest::parse(content).is_none());
+    }
+
+    #[test]
+    fn test_parse_feature_cc_section() {
+        let content = "\
+name=myapp
+version=1.0.0
+entry=src/Main.mod
+
+[cc]
+extra-c=platform/bridge.c
+frameworks=Foundation
+
+[cc.feature.MACOS]
+extra-c=platform/macos/mac_bridge.m
+frameworks=Cocoa AppKit
+
+[cc.feature.LINUX]
+extra-c=platform/linux/x11_bridge.c
+libs=X11
+";
+        let m = Manifest::parse(content).unwrap();
+        // Base [cc]
+        assert_eq!(m.cc.extra_c, vec!["platform/bridge.c"]);
+        assert_eq!(m.cc.frameworks, vec!["Foundation"]);
+
+        // Feature sections parsed
+        assert_eq!(m.feature_cc.len(), 2);
+        let macos = m.feature_cc.get("MACOS").unwrap();
+        assert_eq!(macos.extra_c, vec!["platform/macos/mac_bridge.m"]);
+        assert_eq!(macos.frameworks, vec!["Cocoa", "AppKit"]);
+        let linux = m.feature_cc.get("LINUX").unwrap();
+        assert_eq!(linux.extra_c, vec!["platform/linux/x11_bridge.c"]);
+        assert_eq!(linux.libs, vec!["X11"]);
+    }
+
+    #[test]
+    fn test_merged_cc_no_features() {
+        let content = "\
+name=myapp
+version=1.0.0
+
+[cc]
+extra-c=base.c
+frameworks=Foundation
+
+[cc.feature.MACOS]
+extra-c=mac.m
+frameworks=Cocoa
+";
+        let m = Manifest::parse(content).unwrap();
+        let merged = m.merged_cc(&[]);
+        assert_eq!(merged.extra_c, vec!["base.c"]);
+        assert_eq!(merged.frameworks, vec!["Foundation"]);
+    }
+
+    #[test]
+    fn test_merged_cc_with_feature() {
+        let content = "\
+name=myapp
+version=1.0.0
+
+[cc]
+extra-c=base.c
+frameworks=Foundation
+
+[cc.feature.MACOS]
+extra-c=mac.m
+frameworks=Cocoa
+
+[cc.feature.LINUX]
+extra-c=x11.c
+libs=X11
+";
+        let m = Manifest::parse(content).unwrap();
+
+        // With MACOS feature
+        let merged = m.merged_cc(&["MACOS".to_string()]);
+        assert_eq!(merged.extra_c, vec!["base.c", "mac.m"]);
+        assert_eq!(merged.frameworks, vec!["Foundation", "Cocoa"]);
+        assert!(merged.libs.is_empty());
+
+        // With LINUX feature
+        let merged = m.merged_cc(&["LINUX".to_string()]);
+        assert_eq!(merged.extra_c, vec!["base.c", "x11.c"]);
+        assert_eq!(merged.frameworks, vec!["Foundation"]);
+        assert_eq!(merged.libs, vec!["X11"]);
+
+        // With both features
+        let merged = m.merged_cc(&["MACOS".to_string(), "LINUX".to_string()]);
+        assert_eq!(merged.extra_c, vec!["base.c", "mac.m", "x11.c"]);
+        assert_eq!(merged.frameworks, vec!["Foundation", "Cocoa"]);
+        assert_eq!(merged.libs, vec!["X11"]);
+    }
+
+    #[test]
+    fn test_merged_cc_dedup() {
+        let content = "\
+name=myapp
+version=1.0.0
+
+[cc]
+extra-c=shared.c
+libs=m
+
+[cc.feature.FOO]
+extra-c=shared.c foo.c
+libs=m pthread
+";
+        let m = Manifest::parse(content).unwrap();
+        let merged = m.merged_cc(&["FOO".to_string()]);
+        // shared.c and m should not be duplicated
+        assert_eq!(merged.extra_c, vec!["shared.c", "foo.c"]);
+        assert_eq!(merged.libs, vec!["m", "pthread"]);
     }
 
     #[test]

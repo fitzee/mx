@@ -518,6 +518,7 @@ fn run_subcommand(args: &[String]) {
                 extra_c: ctx.manifest.cc.extra_c.clone(),
                 frameworks: ctx.manifest.cc.frameworks.clone(),
             },
+            feature_cc: ctx.manifest.feature_cc.clone(),
             test: project_resolver::TestSection::default(),
         };
         m
@@ -544,6 +545,7 @@ fn run_subcommand(args: &[String]) {
                 extra_c: ctx.manifest.cc.extra_c.clone(),
                 frameworks: ctx.manifest.cc.frameworks.clone(),
             },
+            feature_cc: ctx.manifest.feature_cc.clone(),
             test: project_resolver::TestSection::default(),
         }
     };

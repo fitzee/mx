@@ -184,6 +184,7 @@ impl LspServer {
                     },
                 }).collect(),
                 cc: workspace::CcSection::default(),
+                feature_cc: std::collections::HashMap::new(),
                 test: workspace::TestSection::default(),
             },
             lockfile: None,

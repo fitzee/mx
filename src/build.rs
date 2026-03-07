@@ -260,16 +260,17 @@ pub fn build_project(
     opts.features = config.features.clone();
     opts.debug = config.debug;
 
-    // Apply manifest [cc] section
-    opts.extra_cflags = manifest.cc.cflags.clone();
-    opts.frameworks = manifest.cc.frameworks.clone();
-    for extra in &manifest.cc.extra_c {
+    // Apply manifest [cc] section, merged with any active feature-gated [cc] sections
+    let effective_cc = manifest.merged_cc(&config.features);
+    opts.extra_cflags = effective_cc.cflags.clone();
+    opts.frameworks = effective_cc.frameworks.clone();
+    for extra in &effective_cc.extra_c {
         opts.extra_c_files.push(root.join(extra));
     }
-    for lib in &manifest.cc.libs {
+    for lib in &effective_cc.libs {
         opts.link_libs.push(lib.clone());
     }
-    for ldflag in &manifest.cc.ldflags {
+    for ldflag in &effective_cc.ldflags {
         // Extract -L paths or pass through
         if let Some(path) = ldflag.strip_prefix("-L") {
             opts.link_paths.push(path.to_string());
