@@ -660,7 +660,7 @@ BEGIN
     (* ** : try matching remaining segments from here (skip **),
        and also recurse into every subdirectory *)
 
-    (* First: try without descending (** matches zero directories) *)
+    (* First: try without descending... matches zero directories *)
     WalkRecurse(basePath, baseLen, pat, segs, nSegs, segIdx + 1,
                 callback, ctx, count, stopped, depth);
     IF stopped THEN RETURN END;
@@ -702,7 +702,7 @@ BEGIN
       isDir := Sys.m2sys_is_dir(ADR(childPath)) = 1;
 
       IF isDir THEN
-        (* Recurse with same segIdx (** can match more levels) *)
+        (* Recurse with same segIdx -- ** can match more levels *)
         WalkRecurse(childPath, childLen, pat, segs, nSegs, segIdx,
                     callback, ctx, count, stopped, depth + 1)
       ELSE

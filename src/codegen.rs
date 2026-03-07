@@ -847,6 +847,11 @@ impl CodeGen {
         let saved_array_vars = self.save_array_var_scope();
 
         self.module_name = imp.name.clone();
+        // Build import map from the def module's imports first (e.g., FROM Gfx IMPORT Renderer),
+        // then overlay with the implementation module's imports.
+        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+            self.build_import_map(&def_mod.imports);
+        }
         self.build_import_map(&imp.imports);
 
         // Track local procedure and variable names so intra-module refs get module-prefixed
@@ -3737,10 +3742,11 @@ impl CodeGen {
                     return local_prefixed;
                 }
                 // Check if imported from another embedded module
-                // (e.g., "Status" from Stream → "Stream_Status")
+                // (e.g., "Status" from Stream → "Stream_Status",
+                //  "Renderer" from Gfx → "Gfx_Renderer")
                 if let Some(module) = self.import_map.get(other) {
                     let prefixed = format!("{}_{}", module, self.mangle(other));
-                    if self.embedded_enum_types.contains(&prefixed) {
+                    if self.embedded_enum_types.contains(&prefixed) || self.known_type_names.contains(&prefixed) {
                         return prefixed;
                     }
                 }
