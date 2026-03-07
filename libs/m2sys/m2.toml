@@ -1,0 +1,7 @@
+name=m2sys
+version=0.1.0
+edition=pim4
+includes=.
+
+[cc]
+extra-c=m2sys.c
