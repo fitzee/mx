@@ -16,7 +16,7 @@ BEGIN
   RETURN i
 END StrLen;
 
-(* ── Backtrack stack for iterative ** matching ───────── *)
+(* ── Backtrack stack for iterative double-star matching ─ *)
 
 CONST
   MaxStack = 32;
@@ -112,19 +112,19 @@ BEGIN
     IF (pi < plen) AND (pi + 1 < plen) AND
        (pattern[pi] = '*') AND (pattern[pi+1] = '*') THEN
 
-      (* ── Handle ** ──────────────────────────────── *)
+      (* ── Handle double-star ─────────────────────── *)
 
       (* Skip all consecutive *'s *)
       WHILE (pi < plen) AND (pattern[pi] = '*') DO
         INC(pi)
       END;
 
-      (* Trailing **: matches everything remaining *)
+      (* Trailing double-star: matches everything remaining *)
       IF pi >= plen THEN
         RETURN TRUE
       END;
 
-      (* **/ prefix: skip the slash *)
+      (* double-star/ prefix: skip the slash *)
       IF (pi < plen) AND (pattern[pi] = '/') THEN
         INC(pi)
       END;
@@ -369,7 +369,7 @@ BEGIN
       END
 
     ELSIF (ti >= tlen) AND (pi < plen) THEN
-      (* Text exhausted but pattern remains: only ok if rest is * or ** *)
+      (* Text exhausted but pattern remains: only ok if rest is wildcard *)
       IF pattern[pi] = '*' THEN
         INC(pi)
       ELSE
@@ -522,7 +522,7 @@ BEGIN
   END
 END CopyStr;
 
-(* ── Check if segment is ** ──────────────────────────── *)
+(* ── Check if segment is double-star ──────────────────── *)
 
 PROCEDURE IsDoubleStar(VAR seg: ARRAY OF CHAR; segLen: CARDINAL): BOOLEAN;
 BEGIN
@@ -657,7 +657,7 @@ BEGIN
   ExtractSeg(pat, segs[segIdx], segStr, segLen);
 
   IF IsDoubleStar(segStr, segLen) THEN
-    (* ** : try matching remaining segments from here (skip **),
+    (* double-star: try matching remaining segments from here,
        and also recurse into every subdirectory *)
 
     (* First: try without descending... matches zero directories *)
@@ -708,13 +708,13 @@ BEGIN
       ELSE
         (* Try matching remaining segments against this file *)
         IF segIdx + 1 >= nSegs THEN
-          (* ** at end matches everything *)
+          (* double-star at end matches everything *)
           IF NOT callback(childPath, ctx) THEN
             stopped := TRUE
           END;
           INC(count)
         ELSIF segIdx + 1 = nSegs - 1 THEN
-          (* One more segment after **: match filename *)
+          (* One more segment after double-star: match filename *)
           ExtractSeg(pat, segs[segIdx + 1], segStr, segLen);
           IF Match(segStr, entName) THEN
             IF NOT callback(childPath, ctx) THEN
