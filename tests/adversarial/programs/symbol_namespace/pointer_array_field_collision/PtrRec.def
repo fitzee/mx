@@ -1,0 +1,12 @@
+DEFINITION MODULE PtrRec;
+  FROM SYSTEM IMPORT ADDRESS;
+
+  TYPE
+    PtrBuf = RECORD
+      data: ADDRESS;
+      size: INTEGER;
+    END;
+
+  PROCEDURE InitPtr(VAR r: PtrBuf; p: ADDRESS; sz: INTEGER);
+  PROCEDURE ReadByte(VAR r: PtrBuf; idx: INTEGER): INTEGER;
+END PtrRec.

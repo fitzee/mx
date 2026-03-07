@@ -508,6 +508,7 @@ fn run_subcommand(args: &[String]) {
                 source: match &d.source {
                     project_resolver::DepSource::Local(p) => project_resolver::DepSource::Local(p.clone()),
                     project_resolver::DepSource::Registry(v) => project_resolver::DepSource::Registry(v.clone()),
+                    project_resolver::DepSource::Installed => project_resolver::DepSource::Installed,
                 },
             }).collect(),
             cc: project_resolver::CcSection {
@@ -533,6 +534,7 @@ fn run_subcommand(args: &[String]) {
                 source: match &d.source {
                     project_resolver::DepSource::Local(p) => project_resolver::DepSource::Local(p.clone()),
                     project_resolver::DepSource::Registry(v) => project_resolver::DepSource::Registry(v.clone()),
+                    project_resolver::DepSource::Installed => project_resolver::DepSource::Installed,
                 },
             }).collect(),
             cc: project_resolver::CcSection {

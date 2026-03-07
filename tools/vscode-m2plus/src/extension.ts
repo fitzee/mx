@@ -48,6 +48,7 @@ class DocTreeItem extends vscode.TreeItem {
         case "LibHTTP":
         case "LibServices":
         case "LibAsync":
+        case "LibDatabase":
         case "LibHelpers":
           this.iconPath = new vscode.ThemeIcon("symbol-module");
           break;
@@ -77,6 +78,9 @@ class DocTreeItem extends vscode.TreeItem {
           break;
         case "LibHelpers":
           this.iconPath = new vscode.ThemeIcon("tools");
+          break;
+        case "LibDatabase":
+          this.iconPath = new vscode.ThemeIcon("database");
           break;
         default:
           this.iconPath = new vscode.ThemeIcon("folder");
@@ -149,6 +153,7 @@ class DocTreeProvider implements vscode.TreeDataProvider<DocTreeItem> {
       )].sort();
       const subLabels: Record<string, string> = {
         LibAsync: "Async",
+        LibDatabase: "Database",
         LibGraphics: "Graphics",
         LibHTTP: "HTTP",
         LibHelpers: "Helpers",

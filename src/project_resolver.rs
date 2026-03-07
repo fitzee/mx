@@ -62,6 +62,27 @@ pub struct DepEntry {
 pub enum DepSource {
     Local(String),
     Registry(String),
+    /// Bare dep name, resolved from the m2c install prefix (~/.m2c/lib/<name>/)
+    Installed,
+}
+
+/// Return the m2c install prefix lib directory.
+/// Uses M2C_HOME env var if set, otherwise defaults to ~/.m2c/lib.
+fn m2c_lib_dir() -> Option<PathBuf> {
+    std::env::var_os("M2C_HOME")
+        .map(|h| PathBuf::from(h).join("lib"))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".m2c").join("lib")))
+}
+
+/// Resolve an installed dep name to its path under the install prefix.
+fn resolve_installed_dep(name: &str) -> Option<PathBuf> {
+    let lib_dir = m2c_lib_dir()?;
+    let dep_root = lib_dir.join(name);
+    if dep_root.is_dir() {
+        Some(dep_root)
+    } else {
+        None
+    }
 }
 
 impl Manifest {
@@ -93,6 +114,12 @@ impl Manifest {
                     "registry" => "registry",
                     _ => "other",
                 };
+                continue;
+            }
+
+            // Bare dep name (no '=') in [deps] section
+            if section == "deps" && trimmed.find('=').is_none() {
+                deps.push(DepEntry { name: trimmed.to_string(), source: DepSource::Installed });
                 continue;
             }
 
@@ -301,22 +328,30 @@ fn resolve_deps_from_manifest(
     visited: &mut HashSet<PathBuf>,
 ) {
     for dep in &manifest.deps {
-        if let DepSource::Local(ref rel_path) = dep.source {
-            let dep_root = root.join(rel_path);
-            let dep_root = match dep_root.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            if !visited.insert(dep_root.clone()) {
-                continue; // already visited, prevent cycles
-            }
-            add_dep_includes(&dep_root, paths);
-            // Recurse into the dep's own deps
-            let dep_manifest_path = dep_root.join("m2.toml");
-            if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
-                if let Some(dep_manifest) = Manifest::parse(&dep_content) {
-                    resolve_deps_from_manifest(&dep_root, &dep_manifest, paths, visited);
+        let dep_root = match &dep.source {
+            DepSource::Local(rel_path) => {
+                match root.join(rel_path).canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => continue,
                 }
+            }
+            DepSource::Installed => {
+                match resolve_installed_dep(&dep.name) {
+                    Some(p) => p,
+                    None => continue,
+                }
+            }
+            DepSource::Registry(_) => continue,
+        };
+        if !visited.insert(dep_root.clone()) {
+            continue; // already visited, prevent cycles
+        }
+        add_dep_includes(&dep_root, paths);
+        // Recurse into the dep's own deps
+        let dep_manifest_path = dep_root.join("m2.toml");
+        if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
+            if let Some(dep_manifest) = Manifest::parse(&dep_content) {
+                resolve_deps_from_manifest(&dep_root, &dep_manifest, paths, visited);
             }
         }
     }
@@ -331,12 +366,22 @@ fn collect_dep_cc(
     visited: &mut HashSet<PathBuf>,
 ) {
     for dep in &manifest.deps {
-        if let DepSource::Local(ref rel_path) = dep.source {
-            let dep_root = root.join(rel_path);
-            let dep_root = match dep_root.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
+        let dep_root = match &dep.source {
+            DepSource::Local(rel_path) => {
+                match root.join(rel_path).canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                }
+            }
+            DepSource::Installed => {
+                match resolve_installed_dep(&dep.name) {
+                    Some(p) => p,
+                    None => continue,
+                }
+            }
+            DepSource::Registry(_) => continue,
+        };
+        {
             if !visited.insert(dep_root.clone()) {
                 continue;
             }

@@ -180,6 +180,7 @@ impl LspServer {
                     source: match &d.source {
                         workspace::DepSource::Local(p) => workspace::DepSource::Local(p.clone()),
                         workspace::DepSource::Registry(v) => workspace::DepSource::Registry(v.clone()),
+                        workspace::DepSource::Installed => workspace::DepSource::Installed,
                     },
                 }).collect(),
                 cc: workspace::CcSection::default(),

@@ -1,0 +1,6 @@
+DEFINITION MODULE ImportAsMulti;
+
+PROCEDURE Greet(msg: ARRAY OF CHAR);
+PROCEDURE Add(a, b: INTEGER): INTEGER;
+
+END ImportAsMulti.

@@ -1,0 +1,8 @@
+MODULE AmbigProc;
+FROM SP_A IMPORT Init;
+FROM SP_B IMPORT Init;
+TYPE F = PROCEDURE(): INTEGER;
+VAR f: F;
+BEGIN
+  f := Init
+END AmbigProc.

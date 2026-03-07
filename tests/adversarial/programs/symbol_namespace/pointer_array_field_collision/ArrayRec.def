@@ -1,0 +1,10 @@
+DEFINITION MODULE ArrayRec;
+  TYPE
+    ArrBuf = RECORD
+      data: ARRAY [0..7] OF INTEGER;
+      len:  INTEGER;
+    END;
+
+  PROCEDURE InitArr(VAR r: ArrBuf);
+  PROCEDURE SumArr(VAR r: ArrBuf): INTEGER;
+END ArrayRec.

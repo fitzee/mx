@@ -1,0 +1,4 @@
+DEFINITION MODULE SA_A;
+TYPE Status = INTEGER;
+PROCEDURE GetStatus(): Status;
+END SA_A.

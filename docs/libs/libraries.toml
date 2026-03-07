@@ -78,3 +78,21 @@ category = "Helpers"
 
 [m2tok]
 category = "Helpers"
+
+[m2json]
+category = "Helpers"
+
+[m2pthreads]
+category = "Async"
+
+[m2regex]
+category = "Helpers"
+
+[m2sqlite]
+category = "Database"
+
+[m2ws]
+category = "Transport"
+
+[m2zlib]
+category = "Helpers"

@@ -383,6 +383,17 @@ pub fn resolve_docs_root() -> Option<PathBuf> {
         }
     }
 
+    // 3. Check install prefix (M2C_HOME or ~/.m2c)
+    let prefix = std::env::var_os("M2C_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".m2c")));
+    if let Some(p) = prefix {
+        let candidate = p.join("docs");
+        if candidate.join("libs").join("libraries.toml").exists() {
+            return Some(candidate);
+        }
+    }
+
     None
 }
 

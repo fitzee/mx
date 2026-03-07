@@ -35,7 +35,7 @@ install: build
 	@echo "Installing m2c toolchain to $(PREFIX) ..."
 	@mkdir -p "$(PREFIX)/bin"
 	@mkdir -p "$(PREFIX)/lib"
-	@mkdir -p "$(PREFIX)/doc"
+	@mkdir -p "$(PREFIX)/docs"
 	@# ── Binaries ──
 	@cp target/release/m2c "$(PREFIX)/bin/m2c"
 	@if [ -f target/release/m2pkg0 ]; then \
@@ -66,9 +66,9 @@ install: build
 		mkdir -p "$(PREFIX)/sdk/macos"; \
 		cp -R sdk/macos/v1 "$(PREFIX)/sdk/macos/v1"; \
 	fi
-	@# ── Documentation ──
+	@# ── Documentation (preserves libs/ structure for LSP discovery) ──
 	@if [ -d docs ]; then \
-		cp -R docs/* "$(PREFIX)/doc/" 2>/dev/null || true; \
+		cp -R docs/* "$(PREFIX)/docs/" 2>/dev/null || true; \
 	fi
 	@echo ""
 	@echo "m2c toolchain installed to $(PREFIX)"
