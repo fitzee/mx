@@ -17,8 +17,8 @@ IMPLEMENTATION MODULE Http2Server;
   FROM Http2ServerConn IMPORT ConnPtr, ConnRec, ConnCreate, ConnClose,
                                ConnDrain, ConnFlush, ConnOnEvent,
                                ConnCreateTest, ConnFeedBytes,
-                               CpPreface, CpSettings, CpOpen,
-                               CpGoaway, CpClosed,
+                               CpHandshaking, CpPreface, CpSettings,
+                               CpOpen, CpGoaway, CpClosed,
                                SetServerDispatch, SetConnCleanup;
   FROM Http2ServerMetrics IMPORT Metrics, MetricsInit,
                                   IncConnsAccepted, IncConnsActive,
@@ -34,7 +34,7 @@ IMPLEMENTATION MODULE Http2Server;
                          Destroy AS LoopDestroy,
                          GetScheduler, SetTimeout, CancelTimer;
   FROM Timers IMPORT TimerId;
-  FROM Poller IMPORT EvRead;
+  FROM Poller IMPORT EvRead, EvWrite;
   FROM TLS IMPORT TLSContext, TLSSession,
                    ContextCreateServer, SetServerCert,
                    SetALPNServer, ContextDestroy,
@@ -194,7 +194,7 @@ IMPLEMENTATION MODULE Http2Server;
       RETURN SysError;
     END;
 
-    sockSt := Listen(sp^.listenSock, 128);
+    sockSt := Listen(sp^.listenSock, 1024);
     IF sockSt # Sockets.OK THEN
       CloseSocket(sp^.listenSock);
       ContextDestroy(sp^.tlsCtx);
@@ -286,7 +286,8 @@ IMPLEMENTATION MODULE Http2Server;
   BEGIN
     cp := ConnPtr(user);
     IF cp = NIL THEN RETURN END;
-    IF (cp^.phase = CpPreface) OR (cp^.phase = CpSettings) THEN
+    IF (cp^.phase = CpHandshaking) OR (cp^.phase = CpPreface)
+       OR (cp^.phase = CpSettings) THEN
       cp^.hsTimerId := -1;
       cp^.phase := CpClosed;
       DoCleanup(cp^.server, cp);
@@ -349,11 +350,8 @@ IMPLEMENTATION MODULE Http2Server;
         RETURN;
       END;
 
-      (* Ensure accepted socket is blocking for TLS handshake.
+      (* Non-blocking TLS handshake — socket stays non-blocking.
          macOS inherits O_NONBLOCK from the listen socket. *)
-      sockSt := SetNonBlocking(clientFd, FALSE);
-
-      (* TLS handshake — socket must be blocking *)
       sched := GetScheduler(sp^.loop);
       tlsSt := SessionCreateServer(sp^.loop, sched,
                                    sp^.tlsCtx, INTEGER(clientFd),
@@ -362,15 +360,16 @@ IMPLEMENTATION MODULE Http2Server;
         CloseSocket(clientFd);
         (* Continue accepting remaining connections *)
       ELSE
+        (* Attempt handshake — may complete or return WantRead/WantWrite *)
         tlsSt := Handshake(tlsSess);
-        IF tlsSt # TLS.OK THEN
+        IF (tlsSt # TLS.OK) AND (tlsSt # TLS.WantRead)
+           AND (tlsSt # TLS.WantWrite) THEN
+          (* TLS handshake failed *)
           SessionDestroy(tlsSess);
           CloseSocket(clientFd);
           (* Continue accepting remaining connections *)
         ELSE
-          (* Set non-blocking for event-loop driven I/O *)
-          sockSt := SetNonBlocking(clientFd, TRUE);
-
+          (* Handshake completed or in progress — create connection *)
           IF ConnCreate(ADDRESS(sp), sp^.nextConnId,
                         INTEGER(clientFd), peer, cp) THEN
             cp^.tlsSess := tlsSess;
@@ -382,8 +381,16 @@ IMPLEMENTATION MODULE Http2Server;
             IncConnsActive(sp^.metrics);
             LogConn(sp^.lg, cp^.id, "accepted");
 
-            WatchFd(sp^.loop, INTEGER(clientFd), EvRead,
-                    ConnOnEvent, ADDRESS(cp));
+            IF tlsSt = TLS.OK THEN
+              (* Handshake completed synchronously *)
+              WatchFd(sp^.loop, INTEGER(clientFd), EvRead,
+                      ConnOnEvent, ADDRESS(cp));
+            ELSE
+              (* Handshake needs more I/O — watch for read+write *)
+              cp^.phase := CpHandshaking;
+              WatchFd(sp^.loop, INTEGER(clientFd), EvRead + EvWrite,
+                      ConnOnEvent, ADDRESS(cp));
+            END;
             cp^.watching := TRUE;
 
             tmrSt := SetTimeout(sp^.loop, HsTimeoutMs,

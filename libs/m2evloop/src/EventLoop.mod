@@ -14,7 +14,7 @@ IMPORT Scheduler;
 (* ── Internal types ────────────────────────────────────────────── *)
 
 CONST
-  MaxWatchers = 64;
+  MaxWatchers = 512;
   SchedCapacity = 1024;
 
 TYPE

@@ -21,6 +21,7 @@ DEFINITION MODULE Http2ServerStream;
     PhResponding = 4;
     PhDone       = 5;
     PhHeld       = 6;
+    PhDeferred   = 7;   (* handler deferred to worker thread *)
 
   TYPE
     StreamSlot = RECORD

@@ -474,3 +474,12 @@ int32_t m2sys_is_symlink(void *path) {
     if (lstat((const char *)path, &st) != 0) return 0;
     return S_ISLNK(st.st_mode) ? 1 : 0;
 }
+
+/* ── Pipe (for event loop wakeup) ──────────────────────────────── */
+
+int32_t m2sys_pipe(int *fds) { return pipe(fds); }
+int32_t m2sys_write_byte(int fd) { char b = 1; return (int32_t)write(fd, &b, 1); }
+int32_t m2sys_read_byte(int fd) { char b; return (int32_t)read(fd, &b, 1); }
+int32_t m2sys_set_nonblock(int fd) {
+    return fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+}

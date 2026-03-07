@@ -7,7 +7,7 @@ DEFINITION MODULE Http2ServerTypes;
   FROM ByteBuf IMPORT Buf;
 
   CONST
-    MaxConns        = 16;     (* max concurrent connections *)
+    MaxConns        = 256;    (* max concurrent connections *)
     MaxStreamSlots  = 32;     (* max concurrent streams per connection *)
     MaxRoutes       = 64;     (* max registered routes *)
     MaxMiddleware   = 8;      (* max middleware in chain *)

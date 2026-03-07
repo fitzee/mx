@@ -18,12 +18,15 @@ DEFINITION MODULE Http2ServerConn;
   FROM Sockets IMPORT SockAddr;
 
   CONST
-    (* Connection phases *)
-    CpPreface   = 0;    (* waiting for client preface *)
-    CpSettings  = 1;    (* waiting for client SETTINGS *)
-    CpOpen      = 2;    (* operational *)
-    CpGoaway    = 3;    (* GOAWAY sent, draining *)
-    CpClosed    = 4;    (* done *)
+    (* Connection phases — ordered by lifecycle.
+       CpClosed must remain the highest value so that
+       "phase >= CpClosed" guards work correctly. *)
+    CpHandshaking = 0;  (* TLS handshake in progress *)
+    CpPreface     = 1;  (* waiting for client preface *)
+    CpSettings    = 2;  (* waiting for client SETTINGS *)
+    CpOpen        = 3;  (* operational *)
+    CpGoaway      = 4;  (* GOAWAY sent, draining *)
+    CpClosed      = 5;  (* done *)
 
     ArenaSize = 32768;  (* 32 KB per-connection arena *)
 
@@ -90,6 +93,9 @@ DEFINITION MODULE Http2ServerConn;
 
       (* Watching state *)
       watching:        BOOLEAN;
+
+      (* Outstanding PhDeferred work items *)
+      deferredCount:   CARDINAL;
     END;
 
     ConnPtr = POINTER TO ConnRec;

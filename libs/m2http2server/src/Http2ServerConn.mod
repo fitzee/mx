@@ -42,7 +42,7 @@ IMPLEMENTATION MODULE Http2ServerConn;
                                  AllocSlot, FindSlot,
                                  PhIdle, PhHeaders, PhData,
                                  PhDispatched, PhResponding, PhDone,
-                                 PhHeld;
+                                 PhHeld, PhDeferred;
   FROM Arena IMPORT Arena,
                      Init AS ArenaInit, Alloc AS ArenaAlloc,
                      Mark AS ArenaMark, ResetTo AS ArenaResetTo,
@@ -217,6 +217,7 @@ IMPLEMENTATION MODULE Http2ServerConn;
 
     cp^.watching := FALSE;
     cp^.loop := NIL;
+    cp^.deferredCount := 0;
 
     RETURN TRUE;
   END ConnCreate;
@@ -371,7 +372,13 @@ IMPLEMENTATION MODULE Http2ServerConn;
             IF (cp^.slots[slotIdx].phase = PhHeld) AND (HeldClosed # NIL) THEN
               HeldClosed(cp^.id, hdr.streamId);
             END;
-            SlotFree(cp^.slots[slotIdx]);
+            IF cp^.slots[slotIdx].phase = PhDeferred THEN
+              (* Worker thread is still processing — just mark done.
+                 CompletionQueue callback will discard the stale response. *)
+              cp^.slots[slotIdx].phase := PhDone;
+            ELSE
+              SlotFree(cp^.slots[slotIdx]);
+            END;
             IF cp^.numActive > 0 THEN
               DEC(cp^.numActive);
             END;
@@ -538,6 +545,12 @@ IMPLEMENTATION MODULE Http2ServerConn;
       RETURN;
     END;
 
+    (* If handler deferred to worker thread, skip response/cleanup *)
+    IF cp^.slots[slotIdx].phase = PhDeferred THEN
+      FreeResponse(resp);
+      RETURN;
+    END;
+
     (* Guard: if handler left status 0, set 500 *)
     IF resp.status = 0 THEN
       resp.status := 500;
@@ -662,6 +675,7 @@ IMPLEMENTATION MODULE Http2ServerConn;
     got: INTEGER;
     st: TLS.Status;
     v: BytesView;
+    evSt: EventLoop.Status;
   BEGIN
     cp := ConnPtr(user);
     IF cp = NIL THEN RETURN END;
@@ -677,6 +691,37 @@ IMPLEMENTATION MODULE Http2ServerConn;
     IF cp^.tlsSess = NIL THEN
       ProcessReadBuf(cp);
       RETURN;
+    END;
+
+    (* Non-blocking TLS handshake retry *)
+    IF cp^.phase = CpHandshaking THEN
+      st := TLS.Handshake(cp^.tlsSess);
+      IF st = TLS.OK THEN
+        (* Handshake complete — transition to preface wait *)
+        cp^.phase := CpPreface;
+        IF cp^.loop # NIL THEN
+          evSt := EventLoop.ModifyFd(cp^.loop, cp^.fd, EvRead);
+        END;
+        (* Fall through to read any data buffered during handshake.
+           Edge-triggered kqueue won't re-fire for data already received. *)
+      ELSIF st = TLS.WantRead THEN
+        IF cp^.loop # NIL THEN
+          evSt := EventLoop.ModifyFd(cp^.loop, cp^.fd, EvRead);
+        END;
+        RETURN;
+      ELSIF st = TLS.WantWrite THEN
+        IF cp^.loop # NIL THEN
+          evSt := EventLoop.ModifyFd(cp^.loop, cp^.fd, EvRead + EvWrite);
+        END;
+        RETURN;
+      ELSE
+        (* Handshake failed — close *)
+        cp^.phase := CpClosed;
+        IF ConnCleanup # NIL THEN
+          ConnCleanup(cp^.server, cp);
+        END;
+        RETURN;
+      END;
     END;
 
     (* Flush any pending write data first *)
@@ -771,6 +816,16 @@ IMPLEMENTATION MODULE Http2ServerConn;
       END;
     END;
 
+    (* Count deferred slots — mark them PhDone so completion callback
+       knows the connection is dead, but do NOT free the ConnRec yet *)
+    cp^.deferredCount := 0;
+    FOR i := 0 TO MaxStreamSlots - 1 DO
+      IF (cp^.slots[i].active) AND (cp^.slots[i].phase = PhDeferred) THEN
+        cp^.slots[i].phase := PhDone;
+        INC(cp^.deferredCount);
+      END;
+    END;
+
     (* Free stream slots — free ALL slots, not just active ones,
        because idle slots still hold a req.body buffer from SlotInit *)
     FOR i := 0 TO MaxStreamSlots - 1 DO
@@ -789,7 +844,11 @@ IMPLEMENTATION MODULE Http2ServerConn;
 
     cp^.phase := CpClosed;
 
-    DEALLOCATE(cp, TSIZE(ConnRec));
+    (* If deferred work items are outstanding, delay DEALLOCATE.
+       The CompletionQueue callback will DEALLOCATE after draining. *)
+    IF cp^.deferredCount = 0 THEN
+      DEALLOCATE(cp, TSIZE(ConnRec));
+    END;
   END ConnClose;
 
   (* ── Flush ──────────────────────────────────────────── *)

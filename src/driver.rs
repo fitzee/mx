@@ -8,6 +8,14 @@ use crate::errors::{CompileError, CompileResult};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
+/// Return the m2c install prefix directory.
+/// Uses M2C_HOME env var if set, otherwise defaults to ~/.m2c.
+fn m2c_home() -> Option<PathBuf> {
+    std::env::var_os("M2C_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".m2c")))
+}
+
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
     pub input: PathBuf,
@@ -98,6 +106,28 @@ pub(crate) fn find_def_file(module_name: &str, input_path: &Path, include_paths:
             }
         }
     }
+    // Fallback: scan installed libraries at ~/.m2c/lib/*/src/
+    if let Some(home) = m2c_home() {
+        let lib_dir = home.join("lib");
+        if let Ok(entries) = fs::read_dir(&lib_dir) {
+            for entry in entries.flatten() {
+                let src_dir = entry.path().join("src");
+                if !src_dir.is_dir() {
+                    continue;
+                }
+                let candidates = vec![
+                    src_dir.join(format!("{}.def", module_name)),
+                    src_dir.join(format!("{}.DEF", module_name)),
+                    src_dir.join(format!("{}.def", module_name.to_lowercase())),
+                ];
+                for c in &candidates {
+                    if c.exists() {
+                        return Some(c.clone());
+                    }
+                }
+            }
+        }
+    }
     None
 }
 
@@ -131,6 +161,28 @@ pub(crate) fn find_mod_file_candidates(module_name: &str, input_path: &Path, inc
         for c in &candidates {
             if c.exists() && !results.contains(c) {
                 results.push(c.clone());
+            }
+        }
+    }
+    // Fallback: scan installed libraries at ~/.m2c/lib/*/src/
+    if let Some(home) = m2c_home() {
+        let lib_dir = home.join("lib");
+        if let Ok(entries) = fs::read_dir(&lib_dir) {
+            for entry in entries.flatten() {
+                let src_dir = entry.path().join("src");
+                if !src_dir.is_dir() {
+                    continue;
+                }
+                let candidates = vec![
+                    src_dir.join(format!("{}.mod", module_name)),
+                    src_dir.join(format!("{}.MOD", module_name)),
+                    src_dir.join(format!("{}.mod", module_name.to_lowercase())),
+                ];
+                for c in &candidates {
+                    if c.exists() && !results.contains(c) {
+                        results.push(c.clone());
+                    }
+                }
             }
         }
     }
@@ -435,6 +487,16 @@ fn map_cc_message(msg: &str) -> String {
 
     // Unmapped: prefix with (C backend)
     format!("(C backend) {}", msg)
+}
+
+/// Add -I flags for the m2c install prefix (m2sys headers, etc.)
+fn add_m2c_home_includes(cmd: &mut Command) {
+    if let Some(home) = m2c_home() {
+        let m2sys_dir = home.join("lib").join("m2sys");
+        if m2sys_dir.is_dir() {
+            cmd.arg(format!("-I{}", m2sys_dir.display()));
+        }
+    }
 }
 
 /// Returns true if the file extension indicates a Modula-2 source file.
@@ -836,6 +898,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             .arg(&obj_file)
             .arg(&c_file);
 
+        add_m2c_home_includes(&mut cmd);
+
         for flag in &opts.extra_cflags {
             cmd.arg(flag);
         }
@@ -892,6 +956,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .args(["-g", "-O0", "-fno-omit-frame-pointer", "-fno-inline", "-gno-column-info"])
                 .args(["-ffunction-sections", "-fdata-sections"])
                 .arg("-w");
+            add_m2c_home_includes(&mut compile_cmd);
             for flag in &opts.extra_cflags {
                 compile_cmd.arg(flag);
             }
@@ -977,6 +1042,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .arg(&exe_file)
                 .arg(&c_file)
                 .arg("-lm");
+
+            add_m2c_home_includes(&mut cmd);
 
             for extra in &opts.extra_c_files {
                 cmd.arg(extra);
