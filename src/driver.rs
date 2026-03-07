@@ -588,13 +588,16 @@ fn handle_cc_failure(stderr: &[u8], is_link_phase: bool, diagnostics_json: bool)
 }
 
 /// Parse a source file and return the compilation unit
-fn parse_file(path: &Path, case_sensitive: bool) -> CompileResult<CompilationUnit> {
+fn parse_file(path: &Path, case_sensitive: bool, features: &[String]) -> CompileResult<CompilationUnit> {
     let source = fs::read_to_string(path).map_err(|e| {
         CompileError::driver(format!("cannot read '{}': {}", path.display(), e))
     })?;
     let filename = path.to_string_lossy().to_string();
     let mut lexer = Lexer::new(&source, &filename);
     lexer.set_case_sensitive(case_sensitive);
+    if !features.is_empty() {
+        lexer.set_features(features);
+    }
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
     parser.parse_compilation_unit()
@@ -669,7 +672,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("m2c: found definition module: {}", def_path.display());
             }
-            let def_unit = parse_file(&def_path, opts.case_sensitive)?;
+            let def_unit = parse_file(&def_path, opts.case_sensitive, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
                 Some(def_mod)
             } else {
@@ -730,7 +733,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("m2c: found definition module for {}: {}", mod_name, def_path.display());
             }
-            let def_unit = parse_file(&def_path, opts.case_sensitive)?;
+            let def_unit = parse_file(&def_path, opts.case_sensitive, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
                 // Transitively discover imports of this def module's corresponding impl
                 for imp in &def_mod.imports {
@@ -774,7 +777,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("m2c: trying implementation module for {}: {}", mod_name, mod_path.display());
             }
-            let mod_unit = parse_file(mod_path, opts.case_sensitive)?;
+            let mod_unit = parse_file(mod_path, opts.case_sensitive, &opts.features)?;
             if let CompilationUnit::ImplementationModule(imp) = mod_unit {
                 found_impl = Some(imp);
                 if opts.verbose {
@@ -794,7 +797,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                                 if opts.verbose {
                                     eprintln!("m2c: found definition module for {}: {}", from_mod, dep_def_path.display());
                                 }
-                                let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive)?;
+                                let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, &opts.features)?;
                                 if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
                                     codegen.register_def_module(&dep_def);
                                     registered_defs.insert(from_mod.clone());
@@ -814,7 +817,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                                     if opts.verbose {
                                         eprintln!("m2c: found definition module for {}: {}", n, dep_def_path.display());
                                     }
-                                    if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive) {
+                                    if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, &opts.features) {
                                         if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
                                             codegen.register_def_module(&dep_def);
                                             registered_defs.insert(n.clone());
