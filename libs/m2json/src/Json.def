@@ -1,0 +1,95 @@
+DEFINITION MODULE Json;
+(* SAX-style JSON tokenizer with zero heap allocation.
+
+   The parser operates on a caller-provided source buffer (ADDRESS + len).
+   Call Init once, then Next repeatedly to pull tokens.  Use GetString,
+   GetInteger, or GetReal to extract typed values from JString/JNumber
+   tokens.  Skip advances past a complete value including nested
+   structures.
+
+   Example:
+     VAR buf: ARRAY [0..1023] OF CHAR;
+         p: Parser; t: Token; s: ARRAY [0..127] OF CHAR;
+     buf := '{"name":"m2json","version":1}';
+     Init(p, ADR(buf), 28);
+     WHILE Next(p, t) DO
+       IF t.kind = JString THEN GetString(p, t, s) END
+     END;
+
+   No allocation beyond the Parser record itself. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  TokenKind = (JNull, JTrue, JFalse, JNumber, JString,
+               JArrayStart, JArrayEnd,
+               JObjectStart, JObjectEnd,
+               JColon, JComma, JError, JEnd);
+
+  Token = RECORD
+    kind:  TokenKind;
+    start: CARDINAL;   (* byte offset into source *)
+    len:   CARDINAL;   (* byte length of raw token text *)
+  END;
+
+  (* Internal view of the source buffer. *)
+  SrcArray = ARRAY [0..1048575] OF CHAR;
+  SrcPtr   = POINTER TO SrcArray;
+
+  Parser = RECORD
+    src:      SrcPtr;
+    srcLen:   CARDINAL;
+    pos:      CARDINAL;
+    err:      ARRAY [0..127] OF CHAR;
+    hasError: BOOLEAN;
+  END;
+
+(* ── Lifecycle ───────────────────────────────────────── *)
+
+(* Initialise a parser over the source buffer [src..src+srcLen).
+   Resets position to 0 and clears any error state. *)
+PROCEDURE Init(VAR p: Parser; src: ADDRESS; srcLen: CARDINAL);
+
+(* ── Tokenisation ────────────────────────────────────── *)
+
+(* Pull the next token.  Returns TRUE while tokens remain.
+   When the input is exhausted, sets tok.kind=JEnd and returns FALSE.
+   On malformed input, sets tok.kind=JError and returns FALSE. *)
+PROCEDURE Next(VAR p: Parser; VAR tok: Token): BOOLEAN;
+
+(* ── Value extraction ────────────────────────────────── *)
+
+(* Copy a JString token's value into buf, processing escape
+   sequences (\n, \t, \\, \", \/, \b, \f, \r, \uXXXX).
+   Returns TRUE on success.  buf is NUL-terminated. *)
+PROCEDURE GetString(VAR p: Parser; VAR tok: Token;
+                    VAR buf: ARRAY OF CHAR): BOOLEAN;
+
+(* Parse a JNumber token as INTEGER.  Returns FALSE if the
+   token contains a decimal point or exponent. *)
+PROCEDURE GetInteger(VAR p: Parser; VAR tok: Token;
+                     VAR val: INTEGER): BOOLEAN;
+
+(* Parse a JNumber token as LONGINT (64-bit).  Returns FALSE if the
+   token contains a decimal point or exponent. *)
+PROCEDURE GetLong(VAR p: Parser; VAR tok: Token;
+                  VAR val: LONGINT): BOOLEAN;
+
+(* Parse a JNumber token as REAL (including decimals and exponents). *)
+PROCEDURE GetReal(VAR p: Parser; VAR tok: Token;
+                  VAR val: REAL): BOOLEAN;
+
+(* ── Navigation ──────────────────────────────────────── *)
+
+(* Skip over a complete JSON value.  If the current position is
+   at the start of an object or array, skips the entire nested
+   structure.  Otherwise skips a single token. *)
+PROCEDURE Skip(VAR p: Parser);
+
+(* ── Error reporting ─────────────────────────────────── *)
+
+(* Copy the current error message into buf (NUL-terminated).
+   If no error, buf receives an empty string. *)
+PROCEDURE GetError(VAR p: Parser; VAR buf: ARRAY OF CHAR);
+
+END Json.

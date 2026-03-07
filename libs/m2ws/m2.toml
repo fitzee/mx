@@ -1,0 +1,24 @@
+# m2.toml - m2ws: WebSocket client (RFC 6455)
+#
+# WebSocket protocol over m2stream with async Future-based API.
+# Supports text, binary, ping/pong, and close frames.
+# Runs on the m2evloop event loop.
+manifest_version=1
+name=m2ws
+version=0.1.0
+edition=pim4
+entry=src/WebSocket.mod
+includes=src
+
+[deps]
+m2stream=path:../m2stream
+m2http=path:../m2http
+m2bytes=path:../m2bytes
+m2evloop=path:../m2evloop
+m2futures=path:../m2futures
+
+[test]
+entry=tests/ws_tests.mod
+
+[cc]
+extra-c=src/ws_bridge.c

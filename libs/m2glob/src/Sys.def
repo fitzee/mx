@@ -1,0 +1,17 @@
+DEFINITION MODULE FOR "C" Sys;
+(* Minimal m2sys FFI subset for directory walking.
+   Links against libs/m2sys/m2sys.c *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* List directory entries into buf (newline-separated).
+   Returns byte count written, or -1 on error. *)
+PROCEDURE m2sys_list_dir(dir: ADDRESS; buf: ADDRESS; bufSize: INTEGER): INTEGER;
+
+(* Returns 1 if path is a directory, 0 otherwise. *)
+PROCEDURE m2sys_is_dir(path: ADDRESS): INTEGER;
+
+(* Join two path components into outBuf. *)
+PROCEDURE m2sys_join_path(a: ADDRESS; b: ADDRESS; outBuf: ADDRESS; outSize: INTEGER);
+
+END Sys.

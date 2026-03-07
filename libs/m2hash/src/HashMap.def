@@ -1,0 +1,60 @@
+DEFINITION MODULE HashMap;
+(* Static hash table with FNV-1a hashing and linear probing.
+
+   Open-addressing table operating on a caller-provided flat array
+   of Bucket records.  No heap allocation.
+
+   Usage:
+     VAR m: Map;
+         buckets: ARRAY [0..127] OF Bucket;
+         v: INTEGER;
+     Init(m, ADR(buckets), 128);
+     Put(m, "hello", 42);
+     IF Get(m, "hello", v) THEN ... END; *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+CONST
+  MaxKeyLen = 63;
+
+TYPE
+  Bucket = RECORD
+    key: ARRAY [0..MaxKeyLen] OF CHAR;
+    val: INTEGER;
+    occupied: BOOLEAN;
+    deleted: BOOLEAN;
+  END;
+
+  Map = RECORD
+    base: ADDRESS;
+    cap: CARDINAL;
+    count: CARDINAL;
+  END;
+
+(* Initialise a map over a caller-provided array of cap Bucket records.
+   Clears all buckets. *)
+PROCEDURE Init(VAR m: Map; buckets: ADDRESS; cap: CARDINAL);
+
+(* Remove all entries; reset count to 0. *)
+PROCEDURE Clear(VAR m: Map);
+
+(* Insert or update key with val.
+   Returns TRUE on success, FALSE if table is full. *)
+PROCEDURE Put(VAR m: Map; key: ARRAY OF CHAR; val: INTEGER): BOOLEAN;
+
+(* Look up key.  Sets val and returns TRUE if found. *)
+PROCEDURE Get(VAR m: Map; key: ARRAY OF CHAR; VAR val: INTEGER): BOOLEAN;
+
+(* Returns TRUE if key is present. *)
+PROCEDURE Contains(VAR m: Map; key: ARRAY OF CHAR): BOOLEAN;
+
+(* Remove key.  Returns TRUE if found and removed. *)
+PROCEDURE Remove(VAR m: Map; key: ARRAY OF CHAR): BOOLEAN;
+
+(* Number of live entries. *)
+PROCEDURE Count(VAR m: Map): CARDINAL;
+
+(* FNV-1a hash of a NUL-terminated or open-array string. *)
+PROCEDURE Hash(key: ARRAY OF CHAR): CARDINAL;
+
+END HashMap.

@@ -1,0 +1,12 @@
+manifest_version=1
+name=m2pthreads
+version=0.1.0
+edition=m2plus
+entry=src/Threads.mod
+includes=src
+
+[deps]
+
+[cc]
+extra-c=src/threads_shim.c
+libs=-lpthread

@@ -1,0 +1,21 @@
+# m2.toml - m2zlib: Compression/decompression via zlib
+#
+# Wraps zlib deflate/inflate via a C bridge.
+# Supports Raw, Zlib, and Gzip formats.
+# Caller provides all buffers — no hidden heap allocation.
+manifest_version=1
+name=m2zlib
+version=0.1.0
+edition=pim4
+entry=src/Zlib.mod
+includes=src
+
+[deps]
+m2sys=path:../m2sys
+
+[test]
+entry=tests/zlib_tests.mod
+
+[cc]
+extra-c=src/zlib_bridge.c
+libs=-lz

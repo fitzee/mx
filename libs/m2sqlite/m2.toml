@@ -1,0 +1,19 @@
+# m2.toml - m2sqlite: SQLite3 database interface
+#
+# Prepared statements, caller-provided buffers for text columns.
+# No hidden heap allocation — all memory is managed by the caller.
+manifest_version=1
+name=m2sqlite
+version=0.1.0
+edition=pim4
+entry=src/SQLite.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/sqlite_tests.mod
+
+[cc]
+extra-c=src/sqlite_bridge.c
+libs=-lsqlite3

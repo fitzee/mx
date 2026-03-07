@@ -1,0 +1,53 @@
+DEFINITION MODULE SQLite;
+(* SQLite3 database interface.
+   Provides prepared statements to prevent SQL injection.
+   Caller-provided buffers for text columns — no hidden heap. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  DB = ADDRESS;      (* opaque database connection *)
+  Stmt = ADDRESS;    (* opaque prepared statement *)
+  Status = (Ok, Error, Row, Done, Busy, Locked);
+  ColType = (IntCol, FloatCol, TextCol, BlobCol, NullCol);
+
+(* ── Connection ────────────────────────────────────── *)
+
+PROCEDURE Open(path: ARRAY OF CHAR; VAR db: DB): Status;
+PROCEDURE Close(db: DB): Status;
+PROCEDURE Exec(db: DB; sql: ARRAY OF CHAR): Status;
+
+(* ── Prepared statements ───────────────────────────── *)
+
+PROCEDURE Prepare(db: DB; sql: ARRAY OF CHAR; VAR stmt: Stmt): Status;
+PROCEDURE Finalize(stmt: Stmt): Status;
+PROCEDURE Step(stmt: Stmt): Status;
+PROCEDURE Reset(stmt: Stmt): Status;
+PROCEDURE ClearBindings(stmt: Stmt): Status;
+
+(* ── Changes: returns the number of rows modified by the most recent
+   INSERT, UPDATE, or DELETE statement on this connection. *)
+PROCEDURE Changes(db: DB): INTEGER;
+
+(* ── Binding ───────────────────────────────────────── *)
+
+PROCEDURE BindInt(stmt: Stmt; idx: INTEGER; val: INTEGER): Status;
+PROCEDURE BindLong(stmt: Stmt; idx: INTEGER; val: LONGINT): Status;
+PROCEDURE BindReal(stmt: Stmt; idx: INTEGER; val: REAL): Status;
+PROCEDURE BindText(stmt: Stmt; idx: INTEGER; text: ARRAY OF CHAR): Status;
+PROCEDURE BindNull(stmt: Stmt; idx: INTEGER): Status;
+
+(* ── Column access ─────────────────────────────────── *)
+
+PROCEDURE ColumnCount(stmt: Stmt): INTEGER;
+PROCEDURE ColumnType(stmt: Stmt; idx: INTEGER): ColType;
+PROCEDURE ColumnInt(stmt: Stmt; idx: INTEGER): INTEGER;
+PROCEDURE ColumnLong(stmt: Stmt; idx: INTEGER): LONGINT;
+PROCEDURE ColumnReal(stmt: Stmt; idx: INTEGER): REAL;
+PROCEDURE ColumnText(stmt: Stmt; idx: INTEGER; VAR buf: ARRAY OF CHAR);
+
+(* ── Error reporting ───────────────────────────────── *)
+
+PROCEDURE GetError(db: DB; VAR buf: ARRAY OF CHAR);
+
+END SQLite.

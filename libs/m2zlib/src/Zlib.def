@@ -1,0 +1,37 @@
+DEFINITION MODULE Zlib;
+(* Compression/decompression via zlib.
+   Supports deflate/inflate in Raw, Zlib, and Gzip formats.
+   Caller provides all buffers — no hidden heap allocation. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  Status = (Ok, StreamEnd, NeedMore, Error);
+  Level = (NoCompression, BestSpeed, Default, BestCompression);
+  Format = (Raw, ZlibFmt, Gzip);
+  Stream = ADDRESS;  (* opaque zlib stream *)
+
+(* ── Streaming API ─────────────────────────────────── *)
+
+PROCEDURE DeflateInit(VAR s: Stream; level: Level; fmt: Format): Status;
+PROCEDURE Deflate(VAR s: Stream; src: ADDRESS; srcLen: CARDINAL;
+                  dst: ADDRESS; dstMax: CARDINAL;
+                  VAR produced: CARDINAL; flush: BOOLEAN): Status;
+PROCEDURE DeflateEnd(VAR s: Stream): Status;
+
+PROCEDURE InflateInit(VAR s: Stream; fmt: Format): Status;
+PROCEDURE Inflate(VAR s: Stream; src: ADDRESS; srcLen: CARDINAL;
+                  dst: ADDRESS; dstMax: CARDINAL;
+                  VAR produced: CARDINAL): Status;
+PROCEDURE InflateEnd(VAR s: Stream): Status;
+
+(* ── One-shot convenience ──────────────────────────── *)
+
+PROCEDURE Compress(src: ADDRESS; srcLen: CARDINAL;
+                   dst: ADDRESS; dstMax: CARDINAL;
+                   VAR dstLen: CARDINAL; fmt: Format): Status;
+PROCEDURE Decompress(src: ADDRESS; srcLen: CARDINAL;
+                     dst: ADDRESS; dstMax: CARDINAL;
+                     VAR dstLen: CARDINAL; fmt: Format): Status;
+
+END Zlib.

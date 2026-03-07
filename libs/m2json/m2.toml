@@ -1,0 +1,17 @@
+# m2.toml - m2json: SAX-style JSON tokenizer
+#
+# Zero-allocation streaming JSON parser operating on a caller-provided
+# source buffer.  No heap, no OS syscalls, no C bridge.
+manifest_version=1
+name=m2json
+version=0.1.0
+edition=pim4
+entry=src/Json.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/json_tests.mod
+
+[cc]

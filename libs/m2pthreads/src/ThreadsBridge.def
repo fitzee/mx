@@ -1,0 +1,17 @@
+DEFINITION MODULE FOR "C" ThreadsBridge;
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE m2_threads_mutex_init(VAR m: ADDRESS);
+PROCEDURE m2_threads_mutex_destroy(VAR m: ADDRESS);
+PROCEDURE m2_threads_mutex_lock(m: ADDRESS);
+PROCEDURE m2_threads_mutex_unlock(m: ADDRESS);
+
+PROCEDURE m2_threads_cond_init(VAR c: ADDRESS);
+PROCEDURE m2_threads_cond_destroy(VAR c: ADDRESS);
+PROCEDURE m2_threads_cond_wait(c: ADDRESS; m: ADDRESS);
+PROCEDURE m2_threads_cond_signal(c: ADDRESS);
+PROCEDURE m2_threads_cond_broadcast(c: ADDRESS);
+
+PROCEDURE m2_threads_spawn(proc: ADDRESS; arg: ADDRESS);
+
+END ThreadsBridge.

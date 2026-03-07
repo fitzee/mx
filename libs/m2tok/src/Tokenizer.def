@@ -1,0 +1,48 @@
+DEFINITION MODULE Tokenizer;
+(* Language-agnostic source code tokenizer for classification.
+
+   Strips string literals, line comments (// and #), and block
+   comments.  Yields identifiers (letter/digit/underscore runs),
+   individual punctuation as Operator tokens, and shebang lines.
+
+   Operates on an ADDRESS+len byte buffer.  No heap allocation.
+
+   Usage:
+     VAR s: State;
+         t: Token;
+         word: ARRAY [0..63] OF CHAR;
+     Init(s, ADR(buf), len);
+     WHILE Next(s, t) DO
+       CopyToken(s, t, word);
+       (* use word *)
+     END; *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  TokenKind = (Ident, Operator, Shebang, EndOfInput);
+
+  Token = RECORD
+    start: CARDINAL;
+    len:   CARDINAL;
+    kind:  TokenKind;
+  END;
+
+  State = RECORD
+    buf:  ADDRESS;
+    blen: CARDINAL;
+    pos:  CARDINAL;
+  END;
+
+(* Initialise tokenizer state over a byte buffer. *)
+PROCEDURE Init(VAR s: State; buf: ADDRESS; len: CARDINAL);
+
+(* Advance to the next token.
+   Returns TRUE and fills t, or FALSE at end-of-input. *)
+PROCEDURE Next(VAR s: State; VAR t: Token): BOOLEAN;
+
+(* Copy the text of token t into out, NUL-terminated.
+   Truncates if out is too small. *)
+PROCEDURE CopyToken(VAR s: State; VAR t: Token; VAR out: ARRAY OF CHAR);
+
+END Tokenizer.

@@ -1,0 +1,17 @@
+# m2.toml - m2hash: Static hash table library
+#
+# Open-addressing hash table with FNV-1a hashing and linear probing.
+# No heap allocation — caller provides backing array of Buckets.
+manifest_version=1
+name=m2hash
+version=0.1.0
+edition=pim4
+entry=src/HashMap.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/hash_tests.mod
+
+[cc]

@@ -1,0 +1,13 @@
+DEFINITION MODULE FOR "C" ZlibBridge;
+FROM SYSTEM IMPORT ADDRESS;
+PROCEDURE m2_deflate_init(level: INTEGER; windowBits: INTEGER): ADDRESS;
+PROCEDURE m2_deflate(s: ADDRESS; src: ADDRESS; srcLen: INTEGER;
+                      dst: ADDRESS; dstMax: INTEGER;
+                      VAR produced: INTEGER; flush: INTEGER): INTEGER;
+PROCEDURE m2_deflate_end(s: ADDRESS): INTEGER;
+PROCEDURE m2_inflate_init(windowBits: INTEGER): ADDRESS;
+PROCEDURE m2_inflate(s: ADDRESS; src: ADDRESS; srcLen: INTEGER;
+                      dst: ADDRESS; dstMax: INTEGER;
+                      VAR produced: INTEGER): INTEGER;
+PROCEDURE m2_inflate_end(s: ADDRESS): INTEGER;
+END ZlibBridge.

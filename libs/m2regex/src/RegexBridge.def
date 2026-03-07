@@ -1,0 +1,15 @@
+DEFINITION MODULE FOR "C" RegexBridge;
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE m2_regex_compile(pattern: ADDRESS): ADDRESS;
+PROCEDURE m2_regex_free(re: ADDRESS);
+PROCEDURE m2_regex_test(re: ADDRESS; text: ADDRESS): INTEGER;
+PROCEDURE m2_regex_find(re: ADDRESS; text: ADDRESS;
+                         VAR start: INTEGER; VAR len: INTEGER): INTEGER;
+PROCEDURE m2_regex_find_all(re: ADDRESS; text: ADDRESS;
+                             starts: ADDRESS; lens: ADDRESS;
+                             maxMatches: INTEGER;
+                             VAR count: INTEGER): INTEGER;
+PROCEDURE m2_regex_error(buf: ADDRESS; bufLen: INTEGER);
+
+END RegexBridge.

@@ -1,0 +1,48 @@
+DEFINITION MODULE Regex;
+(* Regular expression matching via POSIX regex.
+   Uses extended regex syntax (REG_EXTENDED) by default.
+   No extra libraries needed — uses system regex.h. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+CONST
+  MaxMatches = 32;
+  MaxErrorLen = 256;
+
+TYPE
+  Regex = ADDRESS;   (* opaque compiled pattern *)
+  Match = RECORD
+    start: CARDINAL;
+    len:   CARDINAL;
+  END;
+  Status = (Ok, NoMatch, BadPattern, Error);
+
+(* ── Lifecycle ─────────────────────────────────────── *)
+
+(* Compile a regex pattern. Returns Ok on success.
+   On BadPattern, call GetError for details. *)
+PROCEDURE Compile(pattern: ARRAY OF CHAR; VAR re: Regex): Status;
+
+(* Free a compiled regex. *)
+PROCEDURE Free(VAR re: Regex);
+
+(* ── Matching ──────────────────────────────────────── *)
+
+(* Test if text matches the pattern. *)
+PROCEDURE Test(re: Regex; text: ARRAY OF CHAR): BOOLEAN;
+
+(* Find first match in text. *)
+PROCEDURE Find(re: Regex; text: ARRAY OF CHAR; VAR m: Match): Status;
+
+(* Find all non-overlapping matches.
+   Returns matches in the array, count set to actual found. *)
+PROCEDURE FindAll(re: Regex; text: ARRAY OF CHAR;
+                  VAR matches: ARRAY OF Match; maxMatches: CARDINAL;
+                  VAR count: CARDINAL): Status;
+
+(* ── Error reporting ───────────────────────────────── *)
+
+(* Get error message from last failed Compile. *)
+PROCEDURE GetError(VAR buf: ARRAY OF CHAR);
+
+END Regex.

@@ -1,0 +1,34 @@
+DEFINITION MODULE FOR "C" WsBridge;
+(* C bridge for WebSocket helpers:
+   - SHA-1 hash (for Sec-WebSocket-Accept)
+   - Base64 encoding
+   - XOR masking (for frame payload masking) *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* Compute SHA-1 hash.
+   data: input bytes, len: input length.
+   out20: output buffer, must be at least 20 bytes. *)
+PROCEDURE m2_ws_sha1(data: ADDRESS; len: INTEGER;
+                     out20: ADDRESS);
+
+(* Base64 encode.
+   in: input bytes, inLen: input length.
+   out: output buffer, maxOut: output capacity.
+   outLen: receives actual output length. *)
+PROCEDURE m2_ws_base64_encode(inp: ADDRESS; inLen: INTEGER;
+                              out: ADDRESS; maxOut: INTEGER;
+                              VAR outLen: INTEGER);
+
+(* Apply XOR mask in-place.
+   data: buffer to mask/unmask.
+   len: number of bytes.
+   mask: 4-byte mask key.
+   offset: starting mask index (for continuation frames). *)
+PROCEDURE m2_ws_apply_mask(data: ADDRESS; len: INTEGER;
+                           mask: ADDRESS; offset: INTEGER);
+
+(* Generate 4 pseudo-random bytes for mask key. *)
+PROCEDURE m2_ws_random_mask(out: ADDRESS);
+
+END WsBridge.

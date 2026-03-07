@@ -1,0 +1,91 @@
+DEFINITION MODULE WebSocket;
+(* WebSocket client (RFC 6455) over m2stream.
+   Supports text, binary, ping/pong, and close frames.
+   Runs on the m2evloop event loop with futures.
+
+   Usage:
+     1. Connect(lp, sched, url, ws) -> Future
+     2. OnMessage(ws, handler, ctx) to register receive callback
+     3. SendText / Send to transmit
+     4. Close(ws, code, reason) -> Future for graceful shutdown
+     5. Destroy(ws) to release resources
+
+   Connection lifecycle: Connecting -> Open -> Closing -> Closed
+
+   URL schemes: ws:// (TCP) and wss:// (TLS).
+   Client frames are always masked per RFC 6455 section 5.3.
+
+   No threads.  No hidden globals.  Single-threaded event-loop model. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+FROM EventLoop IMPORT Loop;
+FROM Scheduler IMPORT Scheduler;
+FROM Promise IMPORT Future;
+FROM WsFrame IMPORT Opcode;
+
+TYPE
+  WebSocket = ADDRESS;  (* opaque *)
+
+  State = (Connecting, Open, Closing, Closed);
+
+  (* Message callback.
+     ws:     the WebSocket handle
+     opcode: frame type (OpText, OpBinary, OpClose, OpPing, OpPong)
+     data:   pointer to payload bytes (valid only during callback)
+     len:    payload length in bytes
+     ctx:    user context pointer passed to OnMessage *)
+  MessageProc = PROCEDURE(ADDRESS, Opcode, ADDRESS, CARDINAL, ADDRESS);
+
+  Status = (Ok, Invalid, ConnectFailed, ProtocolError, Closed);
+
+(* ── Lifecycle ─────────────────────────────────────── *)
+
+(* Connect to a WebSocket server.
+   url: "ws://host[:port][/path]" or "wss://host[:port][/path]"
+   Performs HTTP upgrade handshake with Sec-WebSocket-Key.
+   Future resolves on successful 101 Switching Protocols.
+   Future rejects on DNS failure, connection error, or bad handshake. *)
+PROCEDURE Connect(lp: Loop; sched: Scheduler;
+                  url: ARRAY OF CHAR; VAR ws: WebSocket): Future;
+
+(* Initiate graceful close handshake.
+   code: status code (1000=normal, 1001=going away, etc.)
+   reason: human-readable close reason (may be empty).
+   Future resolves when close handshake completes.
+   After close, the WebSocket transitions to Closed. *)
+PROCEDURE Close(ws: WebSocket; code: CARDINAL;
+                reason: ARRAY OF CHAR): Future;
+
+(* Release all resources associated with the WebSocket.
+   Closes the underlying stream if still open.
+   Sets ws to NIL. *)
+PROCEDURE Destroy(ws: WebSocket);
+
+(* ── Sending ───────────────────────────────────────── *)
+
+(* Send a frame with the given opcode and payload.
+   Client frames are automatically masked.
+   Future resolves when the frame has been written. *)
+PROCEDURE Send(ws: WebSocket; opcode: Opcode;
+               data: ADDRESS; len: CARDINAL): Future;
+
+(* Send a text message (convenience wrapper).
+   Sends a single text frame with FIN=1. *)
+PROCEDURE SendText(ws: WebSocket; text: ARRAY OF CHAR): Future;
+
+(* ── Receiving ─────────────────────────────────────── *)
+
+(* Register a message callback.
+   handler is called for each received message (text, binary)
+   and control frame (ping, pong, close).
+   Only one handler may be registered at a time;
+   calling again replaces the previous handler.
+   ctx is passed as the last argument to handler. *)
+PROCEDURE OnMessage(ws: WebSocket; handler: MessageProc; ctx: ADDRESS);
+
+(* ── State ─────────────────────────────────────────── *)
+
+(* Return the current connection state. *)
+PROCEDURE GetState(ws: WebSocket): State;
+
+END WebSocket.

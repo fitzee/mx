@@ -1,0 +1,26 @@
+DEFINITION MODULE FOR "C" SQLiteBridge;
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE m2_sqlite_open(path: ADDRESS; VAR db: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_close(db: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_exec(db: ADDRESS; sql: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_prepare(db: ADDRESS; sql: ADDRESS; VAR stmt: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_finalize(stmt: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_step(stmt: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_reset(stmt: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_bind_int(stmt: ADDRESS; idx: INTEGER; val: INTEGER): INTEGER;
+PROCEDURE m2_sqlite_bind_int64(stmt: ADDRESS; idx: INTEGER; val: LONGINT): INTEGER;
+PROCEDURE m2_sqlite_bind_real(stmt: ADDRESS; idx: INTEGER; val: REAL): INTEGER;
+PROCEDURE m2_sqlite_bind_text(stmt: ADDRESS; idx: INTEGER; text: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_bind_null(stmt: ADDRESS; idx: INTEGER): INTEGER;
+PROCEDURE m2_sqlite_column_count(stmt: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_column_type(stmt: ADDRESS; idx: INTEGER): INTEGER;
+PROCEDURE m2_sqlite_column_int(stmt: ADDRESS; idx: INTEGER): INTEGER;
+PROCEDURE m2_sqlite_column_int64(stmt: ADDRESS; idx: INTEGER): LONGINT;
+PROCEDURE m2_sqlite_column_real(stmt: ADDRESS; idx: INTEGER): REAL;
+PROCEDURE m2_sqlite_column_text(stmt: ADDRESS; idx: INTEGER; buf: ADDRESS; bufLen: INTEGER);
+PROCEDURE m2_sqlite_changes(db: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_clear_bindings(stmt: ADDRESS): INTEGER;
+PROCEDURE m2_sqlite_errmsg(db: ADDRESS; buf: ADDRESS; bufLen: INTEGER);
+
+END SQLiteBridge.

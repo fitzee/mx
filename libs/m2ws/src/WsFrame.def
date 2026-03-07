@@ -1,0 +1,57 @@
+DEFINITION MODULE WsFrame;
+(* WebSocket frame encoding and decoding per RFC 6455.
+   Handles frame headers, masking, and payload extraction.
+   No heap allocation -- operates on caller-provided buffers. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+CONST
+  MaxFrameHeader = 14;  (* max frame header size *)
+
+TYPE
+  Opcode = (OpContinuation, OpText, OpBinary,
+            OpReserved3, OpReserved4, OpReserved5,
+            OpReserved6, OpReserved7,
+            OpClose, OpPing, OpPong);
+
+  FrameHeader = RECORD
+    fin:        BOOLEAN;
+    opcode:     Opcode;
+    masked:     BOOLEAN;
+    payloadLen: CARDINAL;
+    maskKey:    ARRAY [0..3] OF CHAR;
+    headerLen:  CARDINAL;  (* bytes consumed for the header *)
+  END;
+
+  Status = (Ok, Incomplete, Invalid);
+
+(* Parse a frame header from buf[0..bufLen-1].
+   Returns Ok if complete, Incomplete if more data needed,
+   Invalid if the frame violates RFC 6455 constraints. *)
+PROCEDURE DecodeHeader(buf: ADDRESS; bufLen: CARDINAL;
+                       VAR hdr: FrameHeader): Status;
+
+(* Apply/remove XOR mask in-place on payload data.
+   offset is the byte offset within the message for continuation
+   frames (mask index = (offset + i) MOD 4). *)
+PROCEDURE ApplyMask(data: ADDRESS; len: CARDINAL;
+                    VAR mask: ARRAY OF CHAR; offset: CARDINAL);
+
+(* Encode a frame header into buf.  Returns bytes written.
+   Client frames MUST be masked (masked=TRUE).
+   Returns 0 if maxLen is too small. *)
+PROCEDURE EncodeHeader(VAR hdr: FrameHeader;
+                       buf: ADDRESS; maxLen: CARDINAL): CARDINAL;
+
+(* Generate a random 4-byte mask key.
+   Uses a simple PRNG -- not cryptographic quality. *)
+PROCEDURE GenerateMask(VAR mask: ARRAY OF CHAR);
+
+(* Convert an integer opcode (0..10) to Opcode enum.
+   Returns OpContinuation for out-of-range values. *)
+PROCEDURE IntToOpcode(n: CARDINAL): Opcode;
+
+(* Convert an Opcode enum back to integer (0..10). *)
+PROCEDURE OpcodeToInt(op: Opcode): CARDINAL;
+
+END WsFrame.

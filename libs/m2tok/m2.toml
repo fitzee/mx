@@ -1,0 +1,18 @@
+# m2.toml - m2tok: Source code tokenizer library
+#
+# Language-agnostic tokenizer for source file classification.
+# Strips strings, comments; yields identifiers and operators.
+# Operates on ADDRESS+len buffers. No heap allocation.
+manifest_version=1
+name=m2tok
+version=0.1.0
+edition=pim4
+entry=src/Tokenizer.mod
+includes=src
+
+[deps]
+
+[test]
+entry=tests/tok_tests.mod
+
+[cc]

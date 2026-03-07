@@ -1,0 +1,38 @@
+DEFINITION MODULE Threads;
+(* Minimal pthreads interface for the m2c toolchain.
+   Provides mutex, condition variable, and thread spawning.
+   All operations delegate to a thin C shim (threads_shim.c). *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  (* Opaque handle types — each wraps a heap-allocated pthread primitive *)
+  Mutex = ADDRESS;
+  Cond  = ADDRESS;
+
+  (* Thread entry point: takes a single ADDRESS argument *)
+  ThreadProc = PROCEDURE(ADDRESS);
+
+(* ── Mutex ─────────────────────────────────────────── *)
+
+PROCEDURE MutexInit(VAR m: Mutex);
+PROCEDURE MutexDestroy(VAR m: Mutex);
+PROCEDURE MutexLock(m: Mutex);
+PROCEDURE MutexUnlock(m: Mutex);
+
+(* ── Condition Variable ────────────────────────────── *)
+
+PROCEDURE CondInit(VAR c: Cond);
+PROCEDURE CondDestroy(VAR c: Cond);
+PROCEDURE CondWait(c: Cond; m: Mutex);
+PROCEDURE CondSignal(c: Cond);
+PROCEDURE CondBroadcast(c: Cond);
+
+(* ── Thread ────────────────────────────────────────── *)
+
+(* Spawn a new detached thread.  proc is the entry point;
+   arg is passed to proc.  The thread is detached immediately
+   (no join is needed or possible). *)
+PROCEDURE SpawnThread(proc: ThreadProc; arg: ADDRESS);
+
+END Threads.
