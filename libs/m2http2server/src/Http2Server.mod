@@ -29,6 +29,7 @@ IMPLEMENTATION MODULE Http2Server;
   FROM Sockets IMPORT Socket, SockAddr, SocketCreate, Bind, Listen,
                        Accept, CloseSocket, SetNonBlocking,
                        AF_INET, SOCK_STREAM, InvalidSocket;
+  FROM SocketsBridge IMPORT m2_set_reuseport;
   FROM EventLoop IMPORT Loop, WatchFd, UnwatchFd, Run, Stop,
                          Create AS LoopCreate,
                          Destroy AS LoopDestroy,
@@ -112,6 +113,7 @@ IMPLEMENTATION MODULE Http2Server;
     sockSt: Sockets.Status;
     loopSt: EventLoop.Status;
     i: CARDINAL;
+    rc: INTEGER;
   BEGIN
     ALLOCATE(sp, TSIZE(ServerRec));
     IF sp = NIL THEN
@@ -184,6 +186,9 @@ IMPLEMENTATION MODULE Http2Server;
       DEALLOCATE(sp, TSIZE(ServerRec));
       RETURN SysError;
     END;
+
+    (* Enable SO_REUSEPORT for multi-listener support *)
+    rc := m2_set_reuseport(INTEGER(sp^.listenSock), 1);
 
     sockSt := Bind(sp^.listenSock, opts.port);
     IF sockSt # Sockets.OK THEN
@@ -548,6 +553,13 @@ IMPLEMENTATION MODULE Http2Server;
     IF sp = NIL THEN RETURN NIL END;
     RETURN sp^.loop;
   END GetLoop;
+
+  PROCEDURE SetNextConnId(s: Server; startId: CARDINAL);
+  VAR sp: ServerRecPtr;
+  BEGIN
+    sp := ServerRecPtr(s);
+    IF sp # NIL THEN sp^.nextConnId := startId END
+  END SetNextConnId;
 
 BEGIN
   (* ALPN wire format: length-prefixed "h2" *)

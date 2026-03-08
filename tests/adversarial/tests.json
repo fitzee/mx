@@ -518,5 +518,18 @@
     "expected_stdout": "v0=10\nv3=40\nv7=80\nm4=999\ngt50=999\ngt50=60\ngt50=70\ngt50=80\n",
     "tags": ["ci"],
     "_comment": "Regression: bp^[i] for POINTER TO ARRAY must generate bp[i], not (*bp)[i]."
+  },
+  {
+    "name": "scalar_array_field_collision",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/scalar_array_field_collision",
+    "main": "ScalarArrayMain.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "msg=OK\ncode=200\nstatus=404\nstatus2=200\nstatus3=301\nbatch0=500\nbatch1=401\nbatch2=102\nbatch3=103\nok\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "Regression: scalar field and array field with same name in different imported records must not collide (memcpy of scalar = SIGSEGV). Covers simple var.field, array[idx].field, and loop assignment."
   }
 ]

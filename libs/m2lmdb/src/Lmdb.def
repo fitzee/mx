@@ -1,0 +1,123 @@
+DEFINITION MODULE Lmdb;
+(* LMDB (Lightning Memory-Mapped Database) interface.
+   Key/value store with MVCC concurrency: readers never block writers.
+   Zero-copy reads via memory-mapped B+ trees.
+
+   All opaque handles (Env, Txn, Cursor) are ADDRESS-typed pointers
+   to internal LMDB structures.  Dbi is a CARDINAL handle.
+
+   Status codes map LMDB return values to a Modula-2 enum.
+   Use ErrMsg to get a human-readable description of any status. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  Env    = ADDRESS;   (* opaque MDB_env* *)
+  Txn    = ADDRESS;   (* opaque MDB_txn* *)
+  Dbi    = CARDINAL;  (* MDB_dbi handle *)
+  Cursor = ADDRESS;   (* opaque MDB_cursor* *)
+  Status = (LmOk, LmKeyExist, LmNotFound, LmMapFull,
+            LmTxnFull, LmError);
+
+CONST
+  (* Open flags — correspond to MDB_* constants *)
+  FlagCreate      = 040000H;    (* MDB_CREATE: create DB if not exists *)
+  FlagRdOnly      = 020000H;    (* MDB_RDONLY: read-only transaction *)
+  FlagNoTls       = 0200000H;   (* MDB_NOTLS: don't use thread-local storage *)
+  FlagNoOverwrite = 010H;       (* MDB_NOOVERWRITE: don't overwrite existing key *)
+  FlagNoSubDir    = 04000H;     (* MDB_NOSUBDIR: path is file, not directory *)
+  FlagNoMetaSync  = 040000H;    (* MDB_NOMETASYNC: skip meta-page fsync on commit *)
+  FlagNoSync      = 010000H;    (* MDB_NOSYNC: no fsync at all — use env_sync manually *)
+  FlagWriteMap    = 080000H;    (* MDB_WRITEMAP: writable mmap instead of write() *)
+  FlagMapAsync    = 0100000H;   (* MDB_MAPASYNC: async msync with WRITEMAP *)
+
+  (* Cursor operations — MDB_cursor_op enum values *)
+  CurFirst       = 0;
+  CurGetCurrent  = 4;
+  CurLast        = 6;
+  CurNext        = 8;
+  CurNextDup     = 9;
+  CurNextNoDup   = 11;
+  CurPrev        = 12;
+  CurPrevNoDup   = 14;
+  CurSet         = 15;
+  CurSetRange    = 17;
+
+(* ── Environment ────────────────────────────────── *)
+
+PROCEDURE EnvCreate(VAR env: Env): Status;
+PROCEDURE EnvOpen(env: Env; path: ARRAY OF CHAR;
+                  flags: CARDINAL; mode: CARDINAL): Status;
+PROCEDURE EnvClose(env: Env);
+PROCEDURE EnvSetMapSize(env: Env; sizeBytes: LONGCARD): Status;
+PROCEDURE EnvSetMaxDbs(env: Env; count: CARDINAL): Status;
+PROCEDURE EnvSetMaxReaders(env: Env; count: CARDINAL): Status;
+PROCEDURE EnvSync(env: Env; force: BOOLEAN): Status;
+
+(* ── Transactions ───────────────────────────────── *)
+
+PROCEDURE TxnBegin(env: Env; parent: Txn; flags: CARDINAL;
+                   VAR txn: Txn): Status;
+PROCEDURE TxnCommit(txn: Txn): Status;
+PROCEDURE TxnAbort(txn: Txn);
+PROCEDURE TxnReset(txn: Txn);
+PROCEDURE TxnRenew(txn: Txn): Status;
+
+(* ── Database handles ───────────────────────────── *)
+
+PROCEDURE DbiOpen(txn: Txn; name: ARRAY OF CHAR;
+                  flags: CARDINAL; VAR dbi: Dbi): Status;
+
+(* ── Key/Value operations ───────────────────────── *)
+
+(* Get retrieves a value by key.  On success, valPtr points into
+   the memory map — valid until the transaction ends.  Do NOT
+   free valPtr.  Do NOT write to valPtr in a read-only transaction. *)
+PROCEDURE Get(txn: Txn; dbi: Dbi;
+              key: ADDRESS; keyLen: LONGCARD;
+              VAR valPtr: ADDRESS; VAR valLen: LONGCARD): Status;
+
+(* Put stores a key/value pair.  With FlagNoOverwrite, returns
+   LmKeyExist if the key already exists (useful for INSERT OR IGNORE). *)
+PROCEDURE Put(txn: Txn; dbi: Dbi;
+              key: ADDRESS; keyLen: LONGCARD;
+              val: ADDRESS; valLen: LONGCARD;
+              flags: CARDINAL): Status;
+
+(* Del removes a key.  Returns LmNotFound if key doesn't exist. *)
+PROCEDURE Del(txn: Txn; dbi: Dbi;
+              key: ADDRESS; keyLen: LONGCARD): Status;
+
+(* ── Cursors ────────────────────────────────────── *)
+
+PROCEDURE CursorOpen(txn: Txn; dbi: Dbi;
+                     VAR cur: Cursor): Status;
+PROCEDURE CursorClose(cur: Cursor);
+
+(* CursorGet positions the cursor using op and returns key+value.
+   Returns LmNotFound when no more entries. *)
+PROCEDURE CursorGet(cur: Cursor; op: CARDINAL;
+                    VAR keyPtr: ADDRESS; VAR keyLen: LONGCARD;
+                    VAR valPtr: ADDRESS; VAR valLen: LONGCARD): Status;
+
+(* CursorSeek positions the cursor at or after the given key using op.
+   Useful for SET_RANGE prefix scanning.  Returns value at position.
+   The key parameter is input only — the actual positioned key can be
+   retrieved with a subsequent CursorGet(CurGetCurrent). *)
+PROCEDURE CursorSeek(cur: Cursor; op: CARDINAL;
+                     key: ADDRESS; keyLen: LONGCARD;
+                     VAR valPtr: ADDRESS; VAR valLen: LONGCARD): Status;
+
+(* CursorPut writes via cursor.  Flags same as Put. *)
+PROCEDURE CursorPut(cur: Cursor;
+                    key: ADDRESS; keyLen: LONGCARD;
+                    val: ADDRESS; valLen: LONGCARD;
+                    flags: CARDINAL): Status;
+
+(* ── Error reporting ────────────────────────────── *)
+
+(* ErrMsg writes a human-readable error string for the given LMDB
+   status code into buf. *)
+PROCEDURE ErrMsg(code: INTEGER; VAR buf: ARRAY OF CHAR);
+
+END Lmdb.

@@ -1,0 +1,55 @@
+DEFINITION MODULE FOR "C" LmdbBridge;
+FROM SYSTEM IMPORT ADDRESS;
+
+(* Environment *)
+PROCEDURE m2_lmdb_env_create(VAR env: ADDRESS): INTEGER;
+PROCEDURE m2_lmdb_env_open(env: ADDRESS; path: ADDRESS;
+                            flags: CARDINAL; mode: CARDINAL): INTEGER;
+PROCEDURE m2_lmdb_env_close(env: ADDRESS);
+PROCEDURE m2_lmdb_env_set_mapsize(env: ADDRESS; size: LONGCARD): INTEGER;
+PROCEDURE m2_lmdb_env_set_maxdbs(env: ADDRESS; count: CARDINAL): INTEGER;
+PROCEDURE m2_lmdb_env_set_maxreaders(env: ADDRESS; count: CARDINAL): INTEGER;
+PROCEDURE m2_lmdb_env_sync(env: ADDRESS; force: INTEGER): INTEGER;
+
+(* Transactions *)
+PROCEDURE m2_lmdb_txn_begin(env: ADDRESS; parent: ADDRESS;
+                             flags: CARDINAL; VAR txn: ADDRESS): INTEGER;
+PROCEDURE m2_lmdb_txn_commit(txn: ADDRESS): INTEGER;
+PROCEDURE m2_lmdb_txn_abort(txn: ADDRESS);
+PROCEDURE m2_lmdb_txn_reset(txn: ADDRESS);
+PROCEDURE m2_lmdb_txn_renew(txn: ADDRESS): INTEGER;
+
+(* Database handles *)
+PROCEDURE m2_lmdb_dbi_open(txn: ADDRESS; name: ADDRESS;
+                            flags: CARDINAL; VAR dbi: CARDINAL): INTEGER;
+
+(* Key/Value operations *)
+PROCEDURE m2_lmdb_get(txn: ADDRESS; dbi: CARDINAL;
+                       key: ADDRESS; klen: LONGCARD;
+                       VAR valOut: ADDRESS; VAR vlenOut: LONGCARD): INTEGER;
+PROCEDURE m2_lmdb_put(txn: ADDRESS; dbi: CARDINAL;
+                       key: ADDRESS; klen: LONGCARD;
+                       val: ADDRESS; vlen: LONGCARD;
+                       flags: CARDINAL): INTEGER;
+PROCEDURE m2_lmdb_del(txn: ADDRESS; dbi: CARDINAL;
+                       key: ADDRESS; klen: LONGCARD): INTEGER;
+
+(* Cursors *)
+PROCEDURE m2_lmdb_cursor_open(txn: ADDRESS; dbi: CARDINAL;
+                               VAR cur: ADDRESS): INTEGER;
+PROCEDURE m2_lmdb_cursor_close(cur: ADDRESS);
+PROCEDURE m2_lmdb_cursor_get(cur: ADDRESS; op: CARDINAL;
+                              VAR keyOut: ADDRESS; VAR klenOut: LONGCARD;
+                              VAR valOut: ADDRESS; VAR vlenOut: LONGCARD): INTEGER;
+PROCEDURE m2_lmdb_cursor_seek(cur: ADDRESS; op: CARDINAL;
+                               key: ADDRESS; klen: LONGCARD;
+                               VAR valOut: ADDRESS; VAR vlenOut: LONGCARD): INTEGER;
+PROCEDURE m2_lmdb_cursor_put(cur: ADDRESS;
+                              key: ADDRESS; klen: LONGCARD;
+                              val: ADDRESS; vlen: LONGCARD;
+                              flags: CARDINAL): INTEGER;
+
+(* Error reporting *)
+PROCEDURE m2_lmdb_errmsg(code: INTEGER; buf: ADDRESS; bufLen: INTEGER);
+
+END LmdbBridge.

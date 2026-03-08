@@ -8,7 +8,7 @@ DEFINITION MODULE Http2ServerTypes;
 
   CONST
     MaxConns        = 256;    (* max concurrent connections *)
-    MaxStreamSlots  = 32;     (* max concurrent streams per connection *)
+    MaxStreamSlots  = 64;     (* max concurrent streams per connection *)
     MaxRoutes       = 64;     (* max registered routes *)
     MaxMiddleware   = 8;      (* max middleware in chain *)
     MaxReqHeaders   = 32;     (* max headers per request *)

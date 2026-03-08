@@ -144,6 +144,13 @@ int32_t m2_set_reuseaddr(int32_t fd, int32_t enable)
                       &val, sizeof(val)) == 0 ? 0 : -1;
 }
 
+int32_t m2_set_reuseport(int32_t fd, int32_t enable)
+{
+    int val = enable ? 1 : 0;
+    return setsockopt(fd, SOL_SOCKET, SO_REUSEPORT,
+                      &val, sizeof(val)) == 0 ? 0 : -1;
+}
+
 /* ── UDP I/O ───────────────────────────────────────────── */
 
 int32_t m2_sendto(int32_t fd, void *buf, int32_t len,

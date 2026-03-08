@@ -60,4 +60,8 @@ DEFINITION MODULE Http2Server;
   (* Return the event loop handle for timer setup. *)
   PROCEDURE GetLoop(s: Server): ADDRESS;
 
+  (* Set the starting connection ID for a server instance.
+     Use to avoid connId collisions across multiple server instances. *)
+  PROCEDURE SetNextConnId(s: Server; startId: CARDINAL);
+
 END Http2Server.

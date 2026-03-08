@@ -25,6 +25,7 @@ DEFINITION MODULE FOR "C" SocketsBridge;
   (* Options *)
   PROCEDURE m2_set_nonblocking(fd, enable: INTEGER): INTEGER;
   PROCEDURE m2_set_reuseaddr(fd, enable: INTEGER): INTEGER;
+  PROCEDURE m2_set_reuseport(fd, enable: INTEGER): INTEGER;
 
   (* UDP I/O *)
   PROCEDURE m2_sendto(fd: INTEGER; buf: ADDRESS; len: INTEGER;

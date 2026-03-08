@@ -27,6 +27,7 @@ int32_t m2_recv(int32_t fd, void *buf, int32_t max);
 /* Options */
 int32_t m2_set_nonblocking(int32_t fd, int32_t enable);
 int32_t m2_set_reuseaddr(int32_t fd, int32_t enable);
+int32_t m2_set_reuseport(int32_t fd, int32_t enable);
 
 /* UDP I/O */
 int32_t m2_sendto(int32_t fd, void *buf, int32_t len,

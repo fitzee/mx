@@ -2426,10 +2426,18 @@ impl CodeGen {
                     // Simple variable: check array_vars
                     self.array_vars.contains(&desig.ident.name)
                 } else if let Some(Selector::Field(fname, _)) = desig.selectors.last() {
-                    // Record field: check array_fields, but exclude pointer-typed fields
-                    // to avoid false positives when different records have same-named fields
-                    // (e.g., Buffers.BufRec.data is an array, ByteBuf.Buf.data is a pointer)
-                    self.is_array_field(fname) && !self.pointer_fields.contains(fname)
+                    // Record field: resolve the owning record type and check (type, field).
+                    // Falls back to name-only check when type cannot be resolved.
+                    if let Some(rec_type) = self.resolve_field_record_type(desig) {
+                        self.is_array_field_of(&rec_type, fname)
+                    } else {
+                        // Type unresolved (e.g., array[idx].field). Use name-only check
+                        // but guard against false positives: if the RHS is obviously a
+                        // scalar value (literal, enum, arithmetic), never emit memcpy.
+                        self.is_array_field(fname)
+                            && !self.pointer_fields.contains(fname)
+                            && !self.is_scalar_expr(expr)
+                    }
                 } else {
                     false
                 };
@@ -4215,6 +4223,36 @@ impl CodeGen {
     }
 
     /// Check if a field name belongs to an array-typed record field
+    /// Resolve the record type name that owns the last field selector in a designator.
+    /// For `var.field` returns var_types[var]; for `var^.field` same; for
+    /// `var.f1.f2` chains through record_field_types.
+    fn resolve_field_record_type(&self, desig: &Designator) -> Option<String> {
+        let mut current = self.var_types.get(&desig.ident.name).cloned();
+        // Walk all selectors except the last (which is the field we want the parent type of)
+        let sels = &desig.selectors;
+        if sels.is_empty() {
+            return None;
+        }
+        let stop = sels.len() - 1;
+        for i in 0..stop {
+            match &sels[i] {
+                Selector::Field(name, _) => {
+                    if let Some(ref tn) = current {
+                        current = self.record_field_types.get(&(tn.clone(), name.clone())).cloned();
+                    }
+                }
+                Selector::Deref(_) => {
+                    // pointer deref — current type stays (var_types stores the
+                    // pointed-to record type for POINTER TO Record variables)
+                }
+                Selector::Index(_, _) => {
+                    current = None;
+                }
+            }
+        }
+        current
+    }
+
     fn is_array_field(&self, field_name: &str) -> bool {
         for ((_rec_name, fname)) in &self.array_fields {
             if fname == field_name {
@@ -4222,6 +4260,44 @@ impl CodeGen {
             }
         }
         false
+    }
+
+    /// Check if a specific (record_type, field_name) pair is an array field.
+    fn is_array_field_of(&self, record_type: &str, field_name: &str) -> bool {
+        self.array_fields.contains(&(record_type.to_string(), field_name.to_string()))
+    }
+
+    /// Check if an expression is definitely a scalar value (not an array/record).
+    /// Used as a safety guard: memcpy of a scalar source is always wrong.
+    fn is_scalar_expr(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::IntLit(_)
+            | ExprKind::RealLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::NilLit => true,
+            // Arithmetic, comparison, boolean ops always produce scalars
+            ExprKind::BinaryOp { .. } => true,
+            ExprKind::UnaryOp { .. } => true,
+            ExprKind::Not(_) => true,
+            // Set constructors are scalar-ish (BITSET fits in a word)
+            ExprKind::SetConstructor { .. } => true,
+            // A designator that refers to a known non-array variable
+            ExprKind::Designator(d) => {
+                if d.selectors.is_empty() {
+                    // Simple variable: scalar if not in array_vars and not in array_types
+                    let name = &d.ident.name;
+                    !self.array_vars.contains(name)
+                        && !self.var_types.get(name).map_or(false, |t| self.array_types.contains(t))
+                } else {
+                    false // complex designator — can't tell cheaply
+                }
+            }
+            // Function calls — can't tell without return type tracking
+            ExprKind::FuncCall { .. } => false,
+            // String literals are arrays
+            ExprKind::StringLit(_) => false,
+        }
     }
 
     fn is_named_array_value_param(&self, name: &str) -> bool {

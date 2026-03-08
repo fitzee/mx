@@ -1,0 +1,22 @@
+# m2.toml - m2lmdb: LMDB (Lightning Memory-Mapped Database) interface
+#
+# Key/value store with MVCC concurrency: readers never block writers.
+# Zero-copy reads via memory-mapped B+ trees.
+#
+# Requires liblmdb development headers and libraries.
+#   macOS:  brew install lmdb
+#   Linux:  apt install liblmdb-dev  (or equivalent)
+manifest_version=1
+name=m2lmdb
+version=0.1.0
+edition=pim4
+entry=src/Lmdb.mod
+includes=src
+
+[deps]
+
+[cc]
+extra-c=src/lmdb_bridge.c
+cflags=-I/opt/homebrew/include -I/usr/local/include
+ldflags=-L/opt/homebrew/lib -L/usr/local/lib
+libs=-llmdb
