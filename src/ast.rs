@@ -273,6 +273,7 @@ pub struct VariantPart {
     pub tag_name: Option<Ident>,
     pub tag_type: QualIdent,
     pub variants: Vec<Variant>,
+    pub else_fields: Option<Vec<FieldList>>,
     pub loc: SourceLoc,
 }
 

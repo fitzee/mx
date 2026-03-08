@@ -768,6 +768,19 @@ impl Parser {
                 } else if self.at(&TokenKind::Object) {
                     // Parent OBJECT ... END (M2+ inheritance)
                     self.parse_object_type(Some(qi))
+                } else if self.at(&TokenKind::LBrack) {
+                    // BaseType [lo .. hi] subrange with base type
+                    let loc = qi.loc.clone();
+                    self.expect(&TokenKind::LBrack)?;
+                    let low = self.parse_expression()?;
+                    self.expect(&TokenKind::DotDot)?;
+                    let high = self.parse_expression()?;
+                    self.expect(&TokenKind::RBrack)?;
+                    Ok(TypeNode::Subrange {
+                        low: Box::new(low),
+                        high: Box::new(high),
+                        loc,
+                    })
                 } else {
                     Ok(TypeNode::Named(qi))
                 }
@@ -894,6 +907,7 @@ impl Parser {
         };
 
         self.expect(&TokenKind::Of)?;
+        self.eat(&TokenKind::Pipe); // optional leading pipe
         let mut variants = Vec::new();
         loop {
             if self.at(&TokenKind::End) || self.at(&TokenKind::Else) {
@@ -904,8 +918,13 @@ impl Parser {
                 break;
             }
         }
+        let else_fields = if self.eat(&TokenKind::Else) {
+            Some(self.parse_field_lists()?)
+        } else {
+            None
+        };
         self.expect(&TokenKind::End)?;
-        Ok(VariantPart { tag_name, tag_type, variants, loc })
+        Ok(VariantPart { tag_name, tag_type, variants, else_fields, loc })
     }
 
     fn parse_variant(&mut self) -> CompileResult<Variant> {
@@ -1246,6 +1265,7 @@ impl Parser {
         self.expect(&TokenKind::Case)?;
         let expr = self.parse_expression()?;
         self.expect(&TokenKind::Of)?;
+        self.eat(&TokenKind::Pipe); // optional leading pipe
         let mut branches = Vec::new();
         if !self.at(&TokenKind::End) && !self.at(&TokenKind::Else) {
             branches.push(self.parse_case_branch()?);

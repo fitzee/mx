@@ -678,6 +678,29 @@ impl SemanticAnalyzer {
                             });
                         }
 
+                        // Register else_fields (default variant) the same as variant fields
+                        if let Some(else_fls) = &vp.else_fields {
+                            let mut vfields = Vec::new();
+                            for efl in else_fls {
+                                for f in &efl.fixed {
+                                    let typ = self.resolve_type_node(&f.typ);
+                                    for name in &f.names {
+                                        vfields.push(RecordField {
+                                            name: name.clone(),
+                                            typ,
+                                            offset: 0,
+                                        });
+                                    }
+                                }
+                            }
+                            if !vfields.is_empty() {
+                                vcases.push(VariantCase {
+                                    labels: Vec::new(),
+                                    fields: vfields,
+                                });
+                            }
+                        }
+
                         // Add a pseudo-field "variant" that covers the union
                         // This allows s.variant.v0.field syntax to work through sema
                         // We register it as a record type with the variant sub-structs

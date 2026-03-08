@@ -2104,6 +2104,35 @@ impl CodeGen {
             self.indent -= 1;
             self.emitln(&format!("}} v{};", i));
         }
+        // Emit ELSE fields as an additional union variant
+        if let Some(else_fls) = &vp.else_fields {
+            let idx = vp.variants.len();
+            self.emitln("struct {");
+            self.indent += 1;
+            for fl in else_fls {
+                for f in &fl.fixed {
+                    self.emit_indent();
+                    let ctype = self.type_to_c(&f.typ);
+                    self.emit(&format!("{} ", ctype));
+                    for (j, name) in f.names.iter().enumerate() {
+                        if j > 0 {
+                            self.emit(", ");
+                        }
+                        self.emit(name);
+                        self.variant_field_map.insert(
+                            (record_name.to_string(), name.clone()),
+                            idx,
+                        );
+                        if let Some(fields) = self.record_fields.get_mut(record_name) {
+                            fields.push(name.clone());
+                        }
+                    }
+                    self.emit(";\n");
+                }
+            }
+            self.indent -= 1;
+            self.emitln(&format!("}} v{};", idx));
+        }
         self.indent -= 1;
         self.emitln("} variant;");
     }

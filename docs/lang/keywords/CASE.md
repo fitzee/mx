@@ -13,6 +13,15 @@ ELSE
 END;
 ```
 
+A leading `|` before the first branch is also accepted:
+
+```modula2
+CASE expr OF
+| val1: statements
+| val2: statements
+END;
+```
+
 ## Example
 
 ```modula2

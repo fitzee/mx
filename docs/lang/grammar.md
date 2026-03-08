@@ -61,12 +61,13 @@ Type              = SimpleType | ArrayType | RecordType | SetType | PointerType
 
 SimpleType        = QualIdent | SubrangeType | EnumType .
 EnumType          = "(" IdentList ")" .
-SubrangeType      = "[" ConstExpr ".." ConstExpr "]" .
+SubrangeType      = "[" ConstExpr ".." ConstExpr "]"
+                  | QualIdent "[" ConstExpr ".." ConstExpr "]" .
 
 ArrayType         = "ARRAY" SimpleType { "," SimpleType } "OF" Type .
 RecordType        = "RECORD" FieldList "END" .
 FieldList         = { IdentList ":" Type ";"
-                    | "CASE" [ ident ":" ] QualIdent "OF"
+                    | "CASE" [ ident ":" ] QualIdent "OF" [ "|" ]
                       Variant { "|" Variant } [ "ELSE" FieldList ] "END" ";" } .
 Variant           = CaseLabelList ":" FieldList .
 
@@ -94,7 +95,7 @@ IfStatement       = "IF" Expr "THEN" StatementSequence
                     { "ELSIF" Expr "THEN" StatementSequence }
                     [ "ELSE" StatementSequence ] "END" .
 
-CaseStatement     = "CASE" Expr "OF" Case { "|" Case }
+CaseStatement     = "CASE" Expr "OF" [ "|" ] Case { "|" Case }
                     [ "ELSE" StatementSequence ] "END" .
 Case              = CaseLabelList ":" StatementSequence .
 CaseLabelList     = CaseLabel { "," CaseLabel } .

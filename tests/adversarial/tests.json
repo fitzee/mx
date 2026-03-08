@@ -596,5 +596,57 @@
     "c_scan": true,
     "tags": ["ci"],
     "_comment": "Regression: local ARRAY variable named 'key' in one embedded procedure must not leak into array_vars and cause a VAR ADDRESS parameter named 'key' in another procedure to emit memcpy instead of pointer assignment."
+  },
+  {
+    "name": "variant_else",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/variant_else",
+    "main": "VariantElse.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "x=10\ny=20\nr=42\ncode=7\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "PIM4 variant record ELSE clause for default variant fields."
+  },
+  {
+    "name": "case_leading_pipe",
+    "category": "semantics",
+    "dir": "programs/semantics/case_leading_pipe",
+    "main": "CaseLeadingPipe.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "10\n20\n30\n99\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "PIM4 CASE statement with optional leading pipe before first branch."
+  },
+  {
+    "name": "variant_leading_pipe",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/variant_leading_pipe",
+    "main": "VariantLeadingPipe.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "a=55\nb=77\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "PIM4 variant record with optional leading pipe before first variant."
+  },
+  {
+    "name": "subrange_base_type",
+    "category": "semantics",
+    "dir": "programs/semantics/subrange_base_type",
+    "main": "SubrangeBaseType.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "s=-5\ns=10\ni=42\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "PIM4 subrange type with base type qualifier: INTEGER [-10..10], CARDINAL [0..99]."
   }
 ]
