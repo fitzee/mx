@@ -19,7 +19,7 @@ DEFINITION MODULE Http2ServerTypes;
     MaxAuthorityLen = 127;
     MaxRemoteLen    = 63;
     MaxReqNameLen   = 63;     (* header name max *)
-    MaxReqValueLen  = 255;    (* header value max *)
+    MaxReqValueLen  = 1023;   (* header value max — must fit RS256 JWTs *)
     ConnBufSize     = 16384;  (* 16 KB read/write buffers *)
     MaxBodyLen      = 524288;  (* 512 KB max request body *)
 

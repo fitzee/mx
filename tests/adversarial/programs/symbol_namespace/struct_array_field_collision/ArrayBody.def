@@ -1,0 +1,14 @@
+DEFINITION MODULE ArrayBody;
+
+(* Record where 'body' is an ARRAY OF CHAR — deliberately collides
+   with StructBody.Msg.body which is a RECORD type. *)
+
+TYPE
+  Packet = RECORD
+    body: ARRAY [0..63] OF CHAR;
+    len: CARDINAL;
+  END;
+
+PROCEDURE InitPacket(VAR p: Packet; data: ARRAY OF CHAR; n: CARDINAL);
+
+END ArrayBody.

@@ -1,0 +1,64 @@
+DEFINITION MODULE Jwks;
+
+  (* JWKS (JSON Web Key Set) management for RS256 verification.
+
+     Parses a JWKS JSON document, extracts RSA public keys by kid,
+     and provides RS256 signature verification against stored keys.
+
+     Thread-safe: all operations acquire an internal mutex.
+     Key memory is managed by OpenSSL via OidcBridge. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  CONST
+    MaxKeys  = 16;
+    MaxKidLen = 63;
+
+  TYPE
+    Status = (JkOk, JkInvalid, JkNoSuchKid, JkFull,
+              JkParseFailed, JkOutOfMemory);
+
+    (* Opaque handle to a key set (mutex-protected). *)
+    KeySet = ADDRESS;
+
+  (* ── Lifecycle ──────────────────────────────────────── *)
+
+  (* Create a new empty key set.  Caller must Destroy when done. *)
+  PROCEDURE Create(VAR ks: KeySet): Status;
+
+  (* Destroy a key set and free all RSA key handles. *)
+  PROCEDURE Destroy(VAR ks: KeySet): Status;
+
+  (* ── Key management ─────────────────────────────────── *)
+
+  (* Parse a JWKS JSON document and replace all keys in the set.
+     json: pointer to JSON bytes.  jsonLen: byte count.
+     Extracts kty=RSA, alg=RS256 keys; decodes n and e (base64url);
+     constructs RSA public key handles via OidcBridge.
+     Clears existing keys before adding new ones (under lock). *)
+  PROCEDURE ParseJson(ks: KeySet;
+                      json: ADDRESS; jsonLen: CARDINAL): Status;
+
+  (* Check whether an RSA key for the given kid exists in the set.
+     Returns JkOk if found, JkNoSuchKid if not.
+     Note: VerifyRS256 does its own kid lookup, so callers typically
+     use FindKey only as an existence check before verification. *)
+  PROCEDURE FindKey(ks: KeySet;
+                    VAR kid: ARRAY OF CHAR): Status;
+
+  (* Return the number of keys currently in the set. *)
+  PROCEDURE Count(ks: KeySet): CARDINAL;
+
+  (* ── Verification ───────────────────────────────────── *)
+
+  (* Verify an RS256 signature using the key identified by kid.
+     msg/msgLen: the signing input (raw base64url "header.payload").
+     sig/sigLen: the raw decoded signature bytes.
+     Returns JkOk if valid, JkNoSuchKid if kid not found,
+     JkInvalid if signature check fails. *)
+  PROCEDURE VerifyRS256(ks: KeySet;
+                        VAR kid: ARRAY OF CHAR;
+                        msg: ADDRESS; msgLen: CARDINAL;
+                        sig: ADDRESS; sigLen: CARDINAL): Status;
+
+END Jwks.

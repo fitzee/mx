@@ -1,0 +1,10 @@
+DEFINITION MODULE ArrayKeyLib;
+
+(* Module that declares a local ARRAY variable named "key" inside a
+   procedure.  When embedded, this name must NOT leak into the
+   array_vars tracking set and cause a later VAR ADDRESS parameter
+   named "key" (in another module) to emit memcpy. *)
+
+PROCEDURE LookupName(VAR name: ARRAY OF CHAR; VAR found: BOOLEAN);
+
+END ArrayKeyLib.

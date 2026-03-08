@@ -544,5 +544,57 @@
     "c_scan": true,
     "tags": ["ci"],
     "_comment": "Regression: assigning CARDINAL field via VAR open array element must emit direct assignment, not memcpy. Covers open_array[idx].field := local.field, literal, variable, and nested record field paths."
+  },
+  {
+    "name": "struct_array_field_collision",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/struct_array_field_collision",
+    "main": "StructArrayMain.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "pkt=hello\nt1=10\ns1=200\nq1=1\nt2=10\ns2=200\nq2=2\nt3=99\ns3=512\nok\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "Regression: RECORD-typed field with same name as ARRAY OF CHAR field in another record must emit struct assignment, not memcpy. Covers struct-to-struct copy and local record variable assignment."
+  },
+  {
+    "name": "enum_array_field_collision",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/enum_array_field_collision",
+    "main": "EnumArrayMain.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "log=OK\ncode=200\ns1=0\nd1=100\ns2=0\ns3=2\ns4=1\ndur=999\ns5=3\nok\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "Regression: enumeration-typed field with same name as ARRAY OF CHAR field in another record must emit direct assignment, not memcpy. Covers enum literal, enum variable, field-to-field, and array-indexed patterns."
+  },
+  {
+    "name": "c_stdlib_name_clash",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/c_stdlib_name_clash",
+    "main": "CStdlibClash.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "log=10\ntime=20\nstat=30\nerrno=40\nread=50\nwrite=60\nsignal=14\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "Variables and procedures named after C stdlib functions (log, time, stat, errno, read, write, signal) must be mangled to avoid C identifier clashes."
+  },
+  {
+    "name": "var_addr_array_leak",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/var_addr_array_leak",
+    "main": "VarAddrLeakMain.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "found=yes\nhandle=ok\nmiss=no\ndone\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "Regression: local ARRAY variable named 'key' in one embedded procedure must not leak into array_vars and cause a VAR ADDRESS parameter named 'key' in another procedure to emit memcpy instead of pointer assignment."
   }
 ]

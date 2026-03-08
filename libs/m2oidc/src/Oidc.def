@@ -1,0 +1,94 @@
+DEFINITION MODULE Oidc;
+
+  (* OIDC (OpenID Connect) provider and JWT RS256 verification.
+
+     Provides OIDC discovery document parsing, RS256 JWT verification
+     with claim extraction (standard + Keycloak-specific), and
+     algorithm peeking for routing between HS256/RS256 paths.
+
+     Thread-safe: Provider operations delegate to Jwks which is
+     mutex-protected.  Provider fields are read-only after creation. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  CONST
+    MaxSubLen      = 127;
+    MaxIssLen      = 255;
+    MaxAudLen      = 127;
+    MaxUsernameLen = 127;
+    MaxEmailLen    = 255;
+    MaxAzpLen      = 127;
+    MaxRoles       = 16;
+    MaxRoleLen     = 63;
+    MaxGroups      = 16;
+    MaxGroupLen    = 127;
+    MaxAlgLen      = 15;
+
+  TYPE
+    Status = (OcOk, OcInvalid, OcBadSignature, OcExpired, OcNotYetValid,
+              OcBadIssuer, OcBadAudience, OcNoKid, OcKeyNotFound,
+              OcParseFailed, OcUnsupportedAlg, OcOutOfMemory);
+
+    (* Opaque provider handle. *)
+    Provider = ADDRESS;
+
+    (* Claims extracted from a verified RS256 JWT. *)
+    OidcClaims = RECORD
+      subject:   ARRAY [0..MaxSubLen] OF CHAR;
+      issuer:    ARRAY [0..MaxIssLen] OF CHAR;
+      audience:  ARRAY [0..MaxAudLen] OF CHAR;
+      username:  ARRAY [0..MaxUsernameLen] OF CHAR;
+      email:     ARRAY [0..MaxEmailLen] OF CHAR;
+      azp:       ARRAY [0..MaxAzpLen] OF CHAR;
+      expUnix:   LONGINT;
+      nbfUnix:   LONGINT;
+      iatUnix:   LONGINT;
+      roles:     ARRAY [0..MaxRoles-1] OF ARRAY [0..MaxRoleLen] OF CHAR;
+      roleCount: CARDINAL;
+      groups:    ARRAY [0..MaxGroups-1] OF ARRAY [0..MaxGroupLen] OF CHAR;
+      groupCount: CARDINAL;
+    END;
+
+  (* ── Provider lifecycle ─────────────────────────────── *)
+
+  (* Create a provider bound to a specific issuer and client ID.
+     clockSkewSecs: tolerance for exp/nbf validation.
+     keySet: a Jwks.KeySet containing the IdP's public keys. *)
+  PROCEDURE CreateProvider(VAR prov: Provider;
+                           VAR issuer, clientId: ARRAY OF CHAR;
+                           clockSkewSecs: CARDINAL;
+                           keySet: ADDRESS): Status;
+
+  (* Destroy a provider. Does NOT destroy the keySet. *)
+  PROCEDURE DestroyProvider(VAR prov: Provider): Status;
+
+  (* ── Discovery ──────────────────────────────────────── *)
+
+  (* Parse an OIDC discovery JSON document.
+     Extracts "issuer" and "jwks_uri" fields.
+     Does NOT require a Provider — can be called standalone. *)
+  PROCEDURE ParseDiscovery(json: ADDRESS; jsonLen: CARDINAL;
+                           VAR issuerOut: ARRAY OF CHAR;
+                           VAR jwksUriOut: ARRAY OF CHAR): Status;
+
+  (* ── Token verification ─────────────────────────────── *)
+
+  (* Verify an RS256 JWT and extract claims.
+     Splits token at dots, decodes header for alg+kid, verifies
+     signature via Jwks, decodes payload, validates iss/aud/exp/nbf.
+     Extracts Keycloak-specific claims (realm_access.roles, groups). *)
+  PROCEDURE VerifyToken(prov: Provider;
+                        VAR token: ARRAY OF CHAR;
+                        VAR claims: OidcClaims): Status;
+
+  (* ── Utility ────────────────────────────────────────── *)
+
+  (* Peek at the "alg" field in a JWT header without full verification.
+     Useful for routing between HS256 and RS256 paths. *)
+  PROCEDURE PeekAlg(VAR token: ARRAY OF CHAR;
+                    VAR algOut: ARRAY OF CHAR): Status;
+
+  (* Return the KeySet (Jwks.KeySet) associated with a provider. *)
+  PROCEDURE GetKeySet(prov: Provider): ADDRESS;
+
+END Oidc.

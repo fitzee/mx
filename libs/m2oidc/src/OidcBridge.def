@@ -1,0 +1,28 @@
+DEFINITION MODULE FOR "C" OidcBridge;
+
+  (* Thin FFI binding to oidc_bridge.c (OpenSSL RSA backend).
+     Provides RSA public key construction from raw n/e bytes,
+     RS256 signature verification, and key cleanup.
+     All pointer types are ADDRESS. *)
+
+  FROM SYSTEM IMPORT ADDRESS;
+
+  (* Construct an RSA public key from raw big-endian modulus (n)
+     and exponent (e) byte arrays.
+     Returns opaque key handle, or NIL on failure. *)
+  PROCEDURE m2_oidc_rsa_from_ne(n: ADDRESS; nLen: INTEGER;
+                                 e: ADDRESS; eLen: INTEGER): ADDRESS;
+
+  (* Verify RS256 (RSASSA-PKCS1-v1_5 + SHA-256) signature.
+     key: handle from m2_oidc_rsa_from_ne.
+     msg/msgLen: the signing input ("header.payload" base64url text).
+     sig/sigLen: raw decoded signature bytes.
+     Returns 0 if valid, -1 if invalid. *)
+  PROCEDURE m2_oidc_rsa_verify(key: ADDRESS;
+                                msg: ADDRESS; msgLen: INTEGER;
+                                sig: ADDRESS; sigLen: INTEGER): INTEGER;
+
+  (* Free an RSA key handle. *)
+  PROCEDURE m2_oidc_rsa_free(key: ADDRESS);
+
+END OidcBridge.

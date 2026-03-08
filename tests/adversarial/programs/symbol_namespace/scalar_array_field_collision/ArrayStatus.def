@@ -1,0 +1,11 @@
+DEFINITION MODULE ArrayStatus;
+
+TYPE
+  Msg = RECORD
+    status: ARRAY [0..31] OF CHAR;
+    code: INTEGER;
+  END;
+
+PROCEDURE InitMsg(VAR m: Msg; s: ARRAY OF CHAR; c: INTEGER);
+
+END ArrayStatus.

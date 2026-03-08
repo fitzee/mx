@@ -37,16 +37,18 @@ VAR
 (* ── Allocate a slot ──────────────────────────────────── *)
 
 PROCEDURE AllocSlot(VAR id: INTEGER): BOOLEAN;
-VAR i, idx: INTEGER;
+VAR i: INTEGER; idx: INTEGER;
 BEGIN
-  FOR i := 0 TO MaxPending - 1 DO
+  i := 0;
+  WHILE i < MaxPending DO
     idx := (nextSlot + i) MOD MaxPending;
     IF NOT slots[idx].inUse THEN
       id := idx;
       slots[idx].inUse := TRUE;
       nextSlot := (idx + 1) MOD MaxPending;
       RETURN TRUE
-    END
+    END;
+    INC(i)
   END;
   RETURN FALSE
 END AllocSlot;
@@ -196,11 +198,13 @@ END ResolveAsync;
 
 (* ── Module initialisation ───────────────────────────── *)
 
-VAR i: INTEGER;
+VAR ii: INTEGER;
 BEGIN
   nextSlot := 0;
-  FOR i := 0 TO MaxPending - 1 DO
-    slots[i].inUse := FALSE;
-    slots[i].addr := NIL
+  ii := 0;
+  WHILE ii < MaxPending DO
+    slots[ii].inUse := FALSE;
+    slots[ii].addr := NIL;
+    INC(ii)
   END
 END DNS.

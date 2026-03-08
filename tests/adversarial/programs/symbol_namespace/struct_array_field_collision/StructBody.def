@@ -1,0 +1,18 @@
+DEFINITION MODULE StructBody;
+
+(* Record where 'body' is itself a RECORD (struct) type — deliberately
+   collides with ArrayBody.Packet.body which is ARRAY OF CHAR. *)
+
+TYPE
+  Payload = RECORD
+    tag: CARDINAL;
+    size: CARDINAL;
+  END;
+  Msg = RECORD
+    body: Payload;
+    seq: CARDINAL;
+  END;
+
+PROCEDURE InitMsg(VAR m: Msg; t: CARDINAL; s: CARDINAL; sq: CARDINAL);
+
+END StructBody.

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use crate::ast::*;
 use crate::builtins;
@@ -13,6 +14,35 @@ struct ParamCodegenInfo {
     is_var: bool,
     is_open_array: bool,
     is_char: bool,
+}
+
+/// Per-procedure variable tracking sets that must be saved/restored when
+/// entering/leaving a procedure scope. Without this, a local `key: ARRAY`
+/// in procedure A leaks into `array_vars`, causing procedure B's
+/// `VAR key: ADDRESS` assignment to emit memcpy instead of `*key = val`.
+#[derive(Clone)]
+struct VarTrackingScope {
+    array_vars: HashSet<String>,
+    char_array_vars: HashSet<String>,
+    set_vars: HashSet<String>,
+    cardinal_vars: HashSet<String>,
+    complex_vars: HashSet<String>,
+    longcomplex_vars: HashSet<String>,
+    var_types: HashMap<String, String>,
+}
+
+/// Snapshot of CodeGen state that must be saved/restored around embedded
+/// implementation module generation. Keeps the save/restore in one place
+/// instead of manually cloning 8+ fields at each call site.
+struct EmbeddedModuleContext {
+    module_name: String,
+    import_map: HashMap<String, String>,
+    import_alias_map: HashMap<String, String>,
+    var_params: Vec<HashMap<String, bool>>,
+    open_array_params: Vec<HashSet<String>>,
+    named_array_value_params: Vec<HashSet<String>>,
+    proc_params: HashMap<String, Vec<ParamCodegenInfo>>,
+    var_tracking: VarTrackingScope,
 }
 
 pub struct CodeGen {
@@ -351,6 +381,51 @@ fn compute_captures(proc: &ProcDecl, outer_vars: &HashMap<String, String>) -> Ve
     captures
 }
 
+static C_RESERVED: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    let names: &[&str] = &[
+        // C keywords (C89/C99/C11)
+        "auto", "break", "case", "char", "const", "continue", "default", "do",
+        "double", "else", "enum", "extern", "float", "for", "goto", "if",
+        "int", "long", "register", "return", "short", "signed", "sizeof",
+        "static", "struct", "switch", "typedef", "union", "unsigned", "void",
+        "volatile", "while", "inline", "restrict",
+        // <math.h>
+        "log", "log2", "log10", "exp", "exp2", "pow", "sqrt", "cbrt",
+        "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+        "sinh", "cosh", "tanh", "ceil", "floor", "round", "trunc",
+        "fabs", "fmod", "hypot", "nan", "j0", "j1", "y0", "y1",
+        // <stdio.h>
+        "printf", "fprintf", "sprintf", "snprintf", "scanf", "sscanf",
+        "fopen", "fclose", "fread", "fwrite", "fgets", "fputs", "puts",
+        "getchar", "putchar", "feof", "ferror", "fflush", "fseek", "ftell",
+        "rewind", "remove", "rename", "tmpfile", "tmpnam",
+        "stdin", "stdout", "stderr",
+        // <stdlib.h>
+        "malloc", "calloc", "realloc", "free", "abort", "exit", "atexit",
+        "atoi", "atol", "atof", "strtol", "strtoul", "strtod",
+        "rand", "srand", "qsort", "bsearch", "abs", "labs", "div", "ldiv",
+        "getenv", "system",
+        // <string.h>
+        "memcpy", "memmove", "memset", "memcmp", "strlen", "strcpy", "strncpy",
+        "strcat", "strncat", "strcmp", "strncmp", "strchr", "strrchr", "strstr",
+        "strtok", "strerror",
+        // <ctype.h>
+        "isalpha", "isdigit", "isalnum", "isspace", "isupper", "islower",
+        "toupper", "tolower",
+        // <setjmp.h>
+        "setjmp", "longjmp",
+        // POSIX common
+        "signal", "read", "write", "open", "close", "stat", "pipe", "fork",
+        "exec", "wait", "kill", "alarm", "sleep", "time", "clock",
+        "errno", "perror",
+        // C preprocessor / common macros
+        "NULL", "EOF", "FILE", "BUFSIZ",
+        // main
+        "main",
+    ];
+    names.iter().copied().collect()
+});
+
 impl CodeGen {
     pub fn new() -> Self {
         Self {
@@ -683,7 +758,7 @@ impl CodeGen {
     /// Like generate(), but returns sema errors as a Vec for structured diagnostics
     pub fn generate_or_errors(&mut self, unit: &CompilationUnit) -> Result<String, Vec<CompileError>> {
         self.sema.analyze(unit)?;
-        self.post_sema_generate(unit);
+        self.post_sema_generate(unit).map_err(|e| vec![e])?;
         Ok(self.output.clone())
     }
 
@@ -704,11 +779,11 @@ impl CodeGen {
             )
         })?;
 
-        self.post_sema_generate(unit);
+        self.post_sema_generate(unit)?;
         Ok(self.output.clone())
     }
 
-    fn post_sema_generate(&mut self, unit: &CompilationUnit) {
+    fn post_sema_generate(&mut self, unit: &CompilationUnit) -> CompileResult<()> {
         // Scan compilation unit to determine which M2+ features are needed
         if self.m2plus {
             self.scan_m2plus_features(unit);
@@ -730,9 +805,75 @@ impl CodeGen {
         }
 
         match unit {
-            CompilationUnit::ProgramModule(m) => self.gen_program_module(m),
+            CompilationUnit::ProgramModule(m) => self.gen_program_module(m)?,
             CompilationUnit::DefinitionModule(m) => self.gen_definition_module(m),
-            CompilationUnit::ImplementationModule(m) => self.gen_implementation_module(m),
+            CompilationUnit::ImplementationModule(m) => self.gen_implementation_module(m)?,
+        }
+        Ok(())
+    }
+
+    // ── Shared emission helpers ───────────────────────────────────────
+
+    /// Register proc_params from module_exports, emit foreign extern decls,
+    /// and generate embedded implementations for pending imported modules.
+    /// Shared by gen_program_module and gen_implementation_module.
+    fn emit_preamble_for_imports(&mut self) -> CompileResult<()> {
+        for (mod_name, exports) in &self.module_exports.clone() {
+            for (proc_name, param_info) in exports {
+                let prefixed = format!("{}_{}", mod_name, proc_name);
+                self.proc_params.insert(prefixed, param_info.clone());
+                if self.foreign_modules.contains(mod_name.as_str()) {
+                    self.proc_params.insert(proc_name.clone(), param_info.clone());
+                }
+            }
+        }
+
+        self.gen_foreign_extern_decls();
+
+        if let Some(pending) = self.pending_modules.take() {
+            let sorted = Self::topo_sort_modules(pending, &self.def_modules)?;
+            for imp_mod in &sorted {
+                self.gen_embedded_implementation(imp_mod);
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit forward struct declarations for all record types in a declaration list.
+    /// Uses type_decl_c_name, which automatically handles module prefixing for
+    /// embedded modules (via generating_for_module).
+    fn emit_record_forward_decls(&mut self, decls: &[Declaration]) {
+        for decl in decls {
+            if let Declaration::Type(t) = decl {
+                if let Some(TypeNode::Record { .. }) = &t.typ {
+                    let cn = self.type_decl_c_name(&t.name);
+                    self.emitln(&format!("typedef struct {} {};", cn, cn));
+                }
+            }
+        }
+    }
+
+    /// Emit type and const declarations from a declaration list.
+    fn emit_type_and_const_decls(&mut self, decls: &[Declaration]) {
+        for decl in decls {
+            match decl {
+                Declaration::Const(c) => self.gen_const_decl(c),
+                Declaration::Type(t) => self.gen_type_decl(t),
+                _ => {}
+            }
+        }
+    }
+
+    /// Emit type, const, and exception declarations from a declaration list.
+    /// Used by embedded implementation gen which also handles exceptions inline.
+    fn emit_type_const_exception_decls(&mut self, decls: &[Declaration]) {
+        for decl in decls {
+            match decl {
+                Declaration::Const(c) => self.gen_const_decl(c),
+                Declaration::Type(t) => self.gen_type_decl(t),
+                Declaration::Exception(e) => self.gen_exception_decl(e),
+                _ => {}
+            }
         }
     }
 
@@ -834,17 +975,49 @@ impl CodeGen {
         }
     }
 
+    /// Snapshot the mutable state that gen_embedded_implementation needs to save/restore.
+    fn save_embedded_context(&self) -> EmbeddedModuleContext {
+        EmbeddedModuleContext {
+            module_name: self.module_name.clone(),
+            import_map: self.import_map.clone(),
+            import_alias_map: self.import_alias_map.clone(),
+            var_params: self.var_params.clone(),
+            open_array_params: self.open_array_params.clone(),
+            named_array_value_params: self.named_array_value_params.clone(),
+            proc_params: self.proc_params.clone(),
+            var_tracking: self.save_var_tracking(),
+        }
+    }
+
+    /// Restore state after embedded implementation generation.
+    /// Preserves module-prefixed proc_params that were registered during generation.
+    fn restore_embedded_context(&mut self, ctx: EmbeddedModuleContext, embedded_module_name: &str) {
+        // Extract module-prefixed proc params before restoring (these must survive)
+        let prefix = format!("{}_", embedded_module_name);
+        let module_proc_params: HashMap<String, Vec<ParamCodegenInfo>> = self.proc_params.iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        self.module_name = ctx.module_name;
+        self.import_map = ctx.import_map;
+        self.import_alias_map = ctx.import_alias_map;
+        self.var_params = ctx.var_params;
+        self.open_array_params = ctx.open_array_params;
+        self.named_array_value_params = ctx.named_array_value_params;
+        self.proc_params = ctx.proc_params;
+        self.restore_var_tracking(ctx.var_tracking);
+        self.embedded_local_procs.clear();
+        self.embedded_local_vars.clear();
+
+        // Merge back the module-prefixed proc param info
+        self.proc_params.extend(module_proc_params);
+    }
+
     /// Generate C code for an imported implementation module, embedded in the main program.
     /// All top-level procedure names are prefixed with `ModuleName_`.
     fn gen_embedded_implementation(&mut self, imp: &ImplementationModule) {
-        let saved_module_name = self.module_name.clone();
-        let saved_import_map = self.import_map.clone();
-        let saved_import_alias_map = self.import_alias_map.clone();
-        let saved_var_params = self.var_params.clone();
-        let saved_open_array_params = self.open_array_params.clone();
-        let saved_named_array_value_params = self.named_array_value_params.clone();
-        let saved_proc_params = self.proc_params.clone();
-        let saved_array_vars = self.save_array_var_scope();
+        let ctx = self.save_embedded_context();
 
         self.module_name = imp.name.clone();
         // Build import map from the def module's imports first (e.g., FROM Gfx IMPORT Renderer),
@@ -924,14 +1097,7 @@ impl CodeGen {
             }
         }
         // From the implementation block:
-        for decl in &imp.block.decls {
-            if let Declaration::Type(t) = decl {
-                if matches!(&t.typ, Some(TypeNode::Record { .. })) {
-                    let cn = self.type_decl_c_name(&t.name);
-                    self.emitln(&format!("typedef struct {} {};", cn, cn));
-                }
-            }
-        }
+        self.emit_record_forward_decls(&imp.block.decls);
 
         // Emit type and const declarations from the corresponding definition module,
         // but skip types that are redefined in the implementation module.
@@ -968,14 +1134,7 @@ impl CodeGen {
         }
 
         // Type, const, and exception declarations
-        for decl in &imp.block.decls {
-            match decl {
-                Declaration::Const(c) => self.gen_const_decl(c),
-                Declaration::Type(t) => self.gen_type_decl(t),
-                Declaration::Exception(e) => self.gen_exception_decl(e),
-                _ => {}
-            }
-        }
+        self.emit_type_const_exception_decls(&imp.block.decls);
         self.generating_for_module = None;
 
         // Emit M2+ type descriptors for types declared in this embedded module
@@ -1128,6 +1287,7 @@ impl CodeGen {
 
                 self.var_params.push(param_vars);
                 self.open_array_params.push(oa_params);
+                let saved_var_tracking = self.save_var_tracking();
                 let mut na_params = HashSet::new();
 
                 // Register param type names for designator type tracking (ptr deref+index)
@@ -1164,6 +1324,7 @@ impl CodeGen {
                     }
                 }
 
+                self.restore_var_tracking(saved_var_tracking);
                 self.var_params.pop();
                 self.open_array_params.pop();
                 self.named_array_value_params.pop();
@@ -1194,29 +1355,14 @@ impl CodeGen {
             self.emit(&format!("/* M2C_MODULE_END {} */\n", imp.name));
         }
 
-        // Restore state, but preserve module-prefixed proc params
-        let module_proc_params: HashMap<String, Vec<ParamCodegenInfo>> = self.proc_params.iter()
-            .filter(|(k, _)| k.starts_with(&format!("{}_", imp.name)))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        self.module_name = saved_module_name;
-        self.import_map = saved_import_map;
-        self.import_alias_map = saved_import_alias_map;
-        self.var_params = saved_var_params;
-        self.open_array_params = saved_open_array_params;
-        self.named_array_value_params = saved_named_array_value_params;
-        self.proc_params = saved_proc_params;
-        self.restore_array_var_scope(saved_array_vars);
-        self.embedded_local_procs.clear();
-        self.embedded_local_vars.clear();
-        // Merge back the module-prefixed proc param info
-        self.proc_params.extend(module_proc_params);
+        self.restore_embedded_context(ctx, &imp.name);
     }
 
     /// Topologically sort implementation modules so dependencies come before dependents.
     /// Also considers imports from corresponding .def files so that type dependencies
     /// (e.g. `FROM Gfx IMPORT Renderer;` in Font.def) are properly ordered.
-    fn topo_sort_modules(modules: Vec<ImplementationModule>, def_modules: &HashMap<String, crate::ast::DefinitionModule>) -> Vec<ImplementationModule> {
+    /// Returns an error if a dependency cycle is detected.
+    fn topo_sort_modules(modules: Vec<ImplementationModule>, def_modules: &HashMap<String, crate::ast::DefinitionModule>) -> CompileResult<Vec<ImplementationModule>> {
         let names: HashSet<String> = modules.iter().map(|m| m.name.clone()).collect();
         let mut deps: HashMap<String, Vec<String>> = HashMap::new();
         for m in &modules {
@@ -1261,57 +1407,52 @@ impl CodeGen {
             visited: &mut HashSet<String>,
             visiting: &mut HashSet<String>,
             order: &mut Vec<String>,
-        ) {
-            if visited.contains(name) || visiting.contains(name) {
-                return;
+        ) -> Result<(), String> {
+            if visited.contains(name) {
+                return Ok(());
+            }
+            if visiting.contains(name) {
+                return Err(name.to_string());
             }
             visiting.insert(name.to_string());
             if let Some(d) = deps.get(name) {
                 for dep in d {
-                    visit(dep, deps, visited, visiting, order);
+                    visit(dep, deps, visited, visiting, order).map_err(|cycle_node| {
+                        if cycle_node == name {
+                            // We've come full circle; build the cycle description
+                            format!("{} -> {}", name, dep)
+                        } else {
+                            format!("{} -> {}", name, cycle_node)
+                        }
+                    })?;
                 }
             }
             visiting.remove(name);
             visited.insert(name.to_string());
             order.push(name.to_string());
+            Ok(())
         }
         let mut order = Vec::new();
         for m in &modules {
-            visit(&m.name, &deps, &mut visited, &mut visiting, &mut order);
+            visit(&m.name, &deps, &mut visited, &mut visiting, &mut order)
+                .map_err(|cycle_desc| {
+                    CompileError::codegen(
+                        crate::errors::SourceLoc::new("<codegen>", 0, 0),
+                        format!("module dependency cycle detected: {}", cycle_desc),
+                    )
+                })?;
         }
         let pos: HashMap<String, usize> = order.iter().enumerate().map(|(i, n)| (n.clone(), i)).collect();
         let mut result = modules;
         result.sort_by_key(|m| pos.get(&m.name).copied().unwrap_or(usize::MAX));
-        result
+        Ok(result)
     }
 
-    fn gen_program_module(&mut self, m: &ProgramModule) {
+    fn gen_program_module(&mut self, m: &ProgramModule) -> CompileResult<()> {
         self.module_name = m.name.clone();
         self.build_import_map(&m.imports);
 
-        // Register param info for imported module procedures BEFORE embedded implementations
-        // so that calls to foreign functions from embedded modules have correct VAR param info.
-        for (mod_name, exports) in &self.module_exports.clone() {
-            for (proc_name, param_info) in exports {
-                let prefixed = format!("{}_{}", mod_name, proc_name);
-                self.proc_params.insert(prefixed, param_info.clone());
-                // For foreign modules, also register under bare name
-                if self.foreign_modules.contains(mod_name.as_str()) {
-                    self.proc_params.insert(proc_name.clone(), param_info.clone());
-                }
-            }
-        }
-
-        // Emit extern declarations for foreign C modules BEFORE embedded implementations
-        self.gen_foreign_extern_decls();
-
-        // Generate code for imported modules first (topologically sorted by dependencies)
-        if let Some(pending) = self.pending_modules.take() {
-            let sorted = Self::topo_sort_modules(pending, &self.def_modules);
-            for imp_mod in &sorted {
-                self.gen_embedded_implementation(imp_mod);
-            }
-        }
+        self.emit_preamble_for_imports()?;
 
         if self.multi_tu {
             self.emit(&format!("/* M2C_MAIN_BEGIN {} */\n", m.name));
@@ -1319,23 +1460,8 @@ impl CodeGen {
         self.emitln(&format!("/* Module {} */", m.name));
         self.newline();
 
-        // Forward struct declarations for records (enables mutual/forward references)
-        for decl in &m.block.decls {
-            if let Declaration::Type(t) = decl {
-                if let Some(TypeNode::Record { .. }) = &t.typ {
-                    self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
-                }
-            }
-        }
-
-        // Type and const declarations
-        for decl in &m.block.decls {
-            match decl {
-                Declaration::Const(c) => self.gen_const_decl(c),
-                Declaration::Type(t) => self.gen_type_decl(t),
-                _ => {}
-            }
-        }
+        self.emit_record_forward_decls(&m.block.decls);
+        self.emit_type_and_const_decls(&m.block.decls);
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
@@ -1422,6 +1548,7 @@ impl CodeGen {
         if self.multi_tu {
             self.emit("/* M2C_MAIN_END */\n");
         }
+        Ok(())
     }
 
     fn gen_definition_module(&mut self, m: &DefinitionModule) {
@@ -1472,32 +1599,11 @@ impl CodeGen {
         self.emitln("#endif");
     }
 
-    fn gen_implementation_module(&mut self, m: &ImplementationModule) {
+    fn gen_implementation_module(&mut self, m: &ImplementationModule) -> CompileResult<()> {
         self.module_name = m.name.clone();
         self.build_import_map(&m.imports);
 
-        // Register param info for imported module procedures
-        for (mod_name, exports) in &self.module_exports {
-            for (proc_name, param_info) in exports {
-                let prefixed = format!("{}_{}", mod_name, proc_name);
-                self.proc_params.insert(prefixed, param_info.clone());
-                // For foreign modules, also register under bare name
-                if self.foreign_modules.contains(mod_name.as_str()) {
-                    self.proc_params.insert(proc_name.clone(), param_info.clone());
-                }
-            }
-        }
-
-        // Emit extern declarations for foreign C modules BEFORE embedded implementations
-        self.gen_foreign_extern_decls();
-
-        // Generate code for imported modules (topologically sorted by dependencies)
-        if let Some(pending) = self.pending_modules.take() {
-            let sorted = Self::topo_sort_modules(pending, &self.def_modules);
-            for imp_mod in &sorted {
-                self.gen_embedded_implementation(imp_mod);
-            }
-        }
+        self.emit_preamble_for_imports()?;
 
         self.emitln(&format!("/* Implementation Module {} */", m.name));
         self.newline();
@@ -1533,22 +1639,8 @@ impl CodeGen {
             }
         }
 
-        // Forward struct declarations from the implementation block
-        for decl in &m.block.decls {
-            if let Declaration::Type(t) = decl {
-                if let Some(TypeNode::Record { .. }) = &t.typ {
-                    self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
-                }
-            }
-        }
-
-        for decl in &m.block.decls {
-            match decl {
-                Declaration::Const(c) => self.gen_const_decl(c),
-                Declaration::Type(t) => self.gen_type_decl(t),
-                _ => {}
-            }
-        }
+        self.emit_record_forward_decls(&m.block.decls);
+        self.emit_type_and_const_decls(&m.block.decls);
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
@@ -1576,6 +1668,7 @@ impl CodeGen {
             self.indent -= 1;
             self.emitln("}");
         }
+        Ok(())
     }
 
     // ── Forward declarations ────────────────────────────────────────
@@ -2258,7 +2351,7 @@ impl CodeGen {
         // as VAR (which would cause double dereferencing with (*a)[i])
         self.push_var_scope();
         // Save array var tracking so procedure-local names don't collide with outer scope
-        let saved_array_scope = self.save_array_var_scope();
+        let saved_var_tracking = self.save_var_tracking();
         for fp in &p.heading.params {
             if matches!(fp.typ, TypeNode::OpenArray { .. }) {
                 for name in &fp.names {
@@ -2351,7 +2444,7 @@ impl CodeGen {
 
         self.child_env_type_stack.pop();
         self.child_captures_stack.pop();
-        self.restore_array_var_scope(saved_array_scope);
+        self.restore_var_tracking(saved_var_tracking);
         self.pop_var_scope();
         self.indent -= 1;
         self.emitln("}");
@@ -2426,14 +2519,14 @@ impl CodeGen {
                     // Simple variable: check array_vars
                     self.array_vars.contains(&desig.ident.name)
                 } else if let Some(Selector::Field(fname, _)) = desig.selectors.last() {
-                    // Record field: resolve the owning record type and check (type, field).
-                    // Falls back to name-only check when type cannot be resolved.
+                    // Record field: use type-aware check to avoid false positives when
+                    // different records have same-named fields with different types
+                    // (e.g., BufRec.body is ARRAY OF CHAR, ByteBuf.Buf.body is a RECORD)
                     if let Some(rec_type) = self.resolve_field_record_type(desig) {
                         self.is_array_field_of(&rec_type, fname)
                     } else {
-                        // Type unresolved (e.g., array[idx].field). Use name-only check
-                        // but guard against false positives: if the RHS is obviously a
-                        // scalar value (literal, enum, arithmetic), never emit memcpy.
+                        // Fallback (type resolution failed): use name-only check but
+                        // guard against false positives with pointer and scalar checks
                         self.is_array_field(fname)
                             && !self.pointer_fields.contains(fname)
                             && !self.is_scalar_expr(expr)
@@ -4098,15 +4191,28 @@ impl CodeGen {
         self.named_array_value_params.pop();
     }
 
-    /// Save array_vars/char_array_vars before entering a procedure scope
-    fn save_array_var_scope(&self) -> (HashSet<String>, HashSet<String>) {
-        (self.array_vars.clone(), self.char_array_vars.clone())
+    /// Save all per-procedure variable tracking sets before entering a scope
+    fn save_var_tracking(&self) -> VarTrackingScope {
+        VarTrackingScope {
+            array_vars: self.array_vars.clone(),
+            char_array_vars: self.char_array_vars.clone(),
+            set_vars: self.set_vars.clone(),
+            cardinal_vars: self.cardinal_vars.clone(),
+            complex_vars: self.complex_vars.clone(),
+            longcomplex_vars: self.longcomplex_vars.clone(),
+            var_types: self.var_types.clone(),
+        }
     }
 
-    /// Restore array_vars/char_array_vars after leaving a procedure scope
-    fn restore_array_var_scope(&mut self, saved: (HashSet<String>, HashSet<String>)) {
-        self.array_vars = saved.0;
-        self.char_array_vars = saved.1;
+    /// Restore all per-procedure variable tracking sets after leaving a scope
+    fn restore_var_tracking(&mut self, saved: VarTrackingScope) {
+        self.array_vars = saved.array_vars;
+        self.char_array_vars = saved.char_array_vars;
+        self.set_vars = saved.set_vars;
+        self.cardinal_vars = saved.cardinal_vars;
+        self.complex_vars = saved.complex_vars;
+        self.longcomplex_vars = saved.longcomplex_vars;
+        self.var_types = saved.var_types;
     }
 
     /// Check if a variable name is accessed through the _env pointer in the current context
@@ -4222,37 +4328,7 @@ impl CodeGen {
         }
     }
 
-    /// Check if a field name belongs to an array-typed record field
-    /// Resolve the record type name that owns the last field selector in a designator.
-    /// For `var.field` returns var_types[var]; for `var^.field` same; for
-    /// `var.f1.f2` chains through record_field_types.
-    fn resolve_field_record_type(&self, desig: &Designator) -> Option<String> {
-        let mut current = self.var_types.get(&desig.ident.name).cloned();
-        // Walk all selectors except the last (which is the field we want the parent type of)
-        let sels = &desig.selectors;
-        if sels.is_empty() {
-            return None;
-        }
-        let stop = sels.len() - 1;
-        for i in 0..stop {
-            match &sels[i] {
-                Selector::Field(name, _) => {
-                    if let Some(ref tn) = current {
-                        current = self.record_field_types.get(&(tn.clone(), name.clone())).cloned();
-                    }
-                }
-                Selector::Deref(_) => {
-                    // pointer deref — current type stays (var_types stores the
-                    // pointed-to record type for POINTER TO Record variables)
-                }
-                Selector::Index(_, _) => {
-                    current = None;
-                }
-            }
-        }
-        current
-    }
-
+    /// Check if a field name belongs to an array-typed record field (name-only, may false-positive)
     fn is_array_field(&self, field_name: &str) -> bool {
         for ((_rec_name, fname)) in &self.array_fields {
             if fname == field_name {
@@ -4262,13 +4338,40 @@ impl CodeGen {
         false
     }
 
-    /// Check if a specific (record_type, field_name) pair is an array field.
+    /// Type-aware check: is `field_name` an array field of record type `record_type`?
     fn is_array_field_of(&self, record_type: &str, field_name: &str) -> bool {
         self.array_fields.contains(&(record_type.to_string(), field_name.to_string()))
     }
 
-    /// Check if an expression is definitely a scalar value (not an array/record).
-    /// Used as a safety guard: memcpy of a scalar source is always wrong.
+    /// Walk a designator's selectors to determine the record type that owns the last field.
+    /// Returns None if we can't resolve the type (e.g., through pointer deref or array indexing).
+    fn resolve_field_record_type(&self, desig: &Designator) -> Option<String> {
+        let mut current = self.var_types.get(&desig.ident.name).cloned();
+        let sels = &desig.selectors;
+        if sels.is_empty() {
+            return None;
+        }
+        // Walk all selectors except the last (which is the field we want the *owner* type for)
+        let stop = sels.len() - 1;
+        for i in 0..stop {
+            match &sels[i] {
+                Selector::Field(name, _) => {
+                    if let Some(ref tn) = current {
+                        current = self.record_field_types.get(&(tn.clone(), name.clone())).cloned();
+                    }
+                }
+                Selector::Deref(_) | Selector::Index(_, _) => {
+                    // Pointer deref or array indexing: type info not tracked, bail out
+                    current = None;
+                }
+            }
+        }
+        current
+    }
+
+    /// Check if an expression is obviously a scalar (literal, arithmetic, non-array variable,
+    /// or a field access to a non-array field). Used as a safety guard to prevent emitting
+    /// memcpy for scalar sources when type resolution fails in the fallback path.
     fn is_scalar_expr(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::IntLit(_)
@@ -4276,38 +4379,25 @@ impl CodeGen {
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::NilLit => true,
-            // Arithmetic, comparison, boolean ops always produce scalars
-            ExprKind::BinaryOp { .. } => true,
-            ExprKind::UnaryOp { .. } => true,
-            ExprKind::Not(_) => true,
-            // Set constructors are scalar-ish (BITSET fits in a word)
-            ExprKind::SetConstructor { .. } => true,
-            // A designator that refers to a known non-array variable
+            ExprKind::BinaryOp { .. } | ExprKind::UnaryOp { .. } | ExprKind::Not(_) => true,
             ExprKind::Designator(d) => {
                 if d.selectors.is_empty() {
-                    // Simple variable: scalar if not in array_vars and not in array_types
-                    let name = &d.ident.name;
-                    !self.array_vars.contains(name)
-                        && !self.var_types.get(name).map_or(false, |t| self.array_types.contains(t))
+                    // Simple variable: scalar if not an array var
+                    !self.array_vars.contains(&d.ident.name)
                 } else if let Some(Selector::Field(fname, _)) = d.selectors.last() {
-                    // Field access (e.g., local.status): resolve record type and
-                    // check whether that field is an array in that specific record.
-                    // If we can prove it's NOT an array field, it's scalar.
+                    // Field access: try type-aware check first
                     if let Some(rec_type) = self.resolve_field_record_type(d) {
                         !self.is_array_field_of(&rec_type, fname)
                     } else {
-                        // Can't resolve record type — check if any record has
-                        // this as an array field. If none do, it's scalar.
+                        // Fallback: if no record type has this as an array field, it's scalar
                         !self.is_array_field(fname)
                     }
                 } else {
                     false
                 }
             }
-            // Function calls — can't tell without return type tracking
-            ExprKind::FuncCall { .. } => false,
-            // String literals are arrays
-            ExprKind::StringLit(_) => false,
+            ExprKind::FuncCall { .. } => true,
+            _ => false,
         }
     }
 
@@ -4584,12 +4674,10 @@ impl CodeGen {
             "NIL" => "NULL".to_string(),
             "TRUE" => "1".to_string(),
             "FALSE" => "0".to_string(),
-            // Avoid C keyword conflicts
-            "auto" | "break" | "case" | "char" | "const" | "continue" | "default" | "do"
-            | "double" | "else" | "enum" | "extern" | "float" | "for" | "goto" | "if"
-            | "int" | "long" | "register" | "return" | "short" | "signed" | "sizeof"
-            | "static" | "struct" | "switch" | "typedef" | "union" | "unsigned" | "void"
-            | "volatile" | "while" => format!("m2_{}", name),
+            // Avoid clashing with m2_ runtime prefix
+            _ if name.starts_with("m2_") => format!("m2v_{}", &name[3..]),
+            // C keywords and standard library names
+            _ if C_RESERVED.contains(name) => format!("m2_{}", name),
             _ => name.to_string(),
         }
     }

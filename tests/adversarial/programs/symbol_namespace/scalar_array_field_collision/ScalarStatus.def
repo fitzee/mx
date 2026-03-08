@@ -1,0 +1,12 @@
+DEFINITION MODULE ScalarStatus;
+
+TYPE
+  Response = RECORD
+    status: CARDINAL;
+    len: CARDINAL;
+  END;
+
+PROCEDURE InitResp(VAR r: Response; s: CARDINAL; l: CARDINAL);
+PROCEDURE GetStatus(VAR r: Response): CARDINAL;
+
+END ScalarStatus.

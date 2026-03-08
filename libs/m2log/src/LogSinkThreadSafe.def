@@ -1,0 +1,20 @@
+DEFINITION MODULE LogSinkThreadSafe;
+
+  (* Thread-safe log sink for m2log.
+     Wraps Format + write in a mutex so each log line is atomic.
+     Uses m2sys_fwrite_str (C fwrite) instead of InOut. *)
+
+  FROM Log IMPORT Sink;
+
+  (* Open file at path for append; return mutex-protected sink.
+     Returns FALSE if file open fails. *)
+  PROCEDURE CreateFile(path: ARRAY OF CHAR; VAR out: Sink): BOOLEAN;
+
+  (* Create a sink that writes to stderr (fd 2), mutex-protected.
+     Always succeeds. *)
+  PROCEDURE CreateStderr(VAR out: Sink);
+
+  (* Close file (if file sink) and destroy mutex. *)
+  PROCEDURE Close(VAR s: Sink);
+
+END LogSinkThreadSafe.

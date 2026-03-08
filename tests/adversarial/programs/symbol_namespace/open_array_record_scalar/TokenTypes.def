@@ -1,0 +1,19 @@
+DEFINITION MODULE TokenTypes;
+
+(* Record with CARDINAL fields following LONGCARD fields,
+   plus an ARRAY OF CHAR field — deliberately creates the
+   name collision scenario for 'status'. *)
+
+TYPE
+  TokenRecord = RECORD
+    name: ARRAY [0..63] OF CHAR;
+    role: CARDINAL;
+    createdAt: LONGCARD;
+    expiresAt: LONGCARD;
+    lastUsedAt: LONGCARD;
+    status: CARDINAL;
+  END;
+
+PROCEDURE InitToken(VAR t: TokenRecord; n: ARRAY OF CHAR; s: CARDINAL);
+
+END TokenTypes.

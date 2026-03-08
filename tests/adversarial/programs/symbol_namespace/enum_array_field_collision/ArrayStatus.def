@@ -1,0 +1,14 @@
+DEFINITION MODULE ArrayStatus;
+
+(* Record where 'status' is an ARRAY OF CHAR — deliberately collides
+   with EnumStatus.Span.status which is an enumeration type. *)
+
+TYPE
+  LogEntry = RECORD
+    status: ARRAY [0..31] OF CHAR;
+    code: CARDINAL;
+  END;
+
+PROCEDURE InitLog(VAR e: LogEntry; s: ARRAY OF CHAR; c: CARDINAL);
+
+END ArrayStatus.

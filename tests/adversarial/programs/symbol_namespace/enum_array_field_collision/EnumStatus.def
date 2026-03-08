@@ -1,0 +1,16 @@
+DEFINITION MODULE EnumStatus;
+
+(* Record where 'status' is an enumeration — deliberately collides
+   with ArrayStatus.LogEntry.status which is ARRAY OF CHAR. *)
+
+TYPE
+  SpanStatus = (Active, Completed, Error, Cancelled);
+  Span = RECORD
+    status: SpanStatus;
+    duration: CARDINAL;
+    name: ARRAY [0..31] OF CHAR;
+  END;
+
+PROCEDURE InitSpan(VAR s: Span; nm: ARRAY OF CHAR; st: SpanStatus; dur: CARDINAL);
+
+END EnumStatus.

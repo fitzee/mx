@@ -165,6 +165,106 @@ impl SemanticAnalyzer {
         self.leave_scope();
     }
 
+    // ── Symbol construction helpers ──────────────────────────────────
+    // These centralize the repeated Symbol { name, kind, typ, exported, module, loc, doc }
+    // boilerplate used across definition modules, declarations, and imports.
+
+    fn make_const_symbol(
+        &mut self, name: &str, expr: &Expr, exported: bool, module: Option<String>, doc: Option<String>,
+    ) -> Symbol {
+        let typ = self.analyze_expr(expr);
+        let val = self.eval_const_expr(expr);
+        Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Constant(val),
+            typ,
+            exported,
+            module,
+            loc: SourceLoc::default(),
+            doc,
+        }
+    }
+
+    fn make_type_symbol(
+        &self, name: &str, type_id: TypeId, exported: bool, module: Option<String>, doc: Option<String>,
+    ) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Type,
+            typ: type_id,
+            exported,
+            module,
+            loc: SourceLoc::default(),
+            doc,
+        }
+    }
+
+    fn define_var_symbols(
+        &mut self, v: &VarDecl, exported: bool, module: Option<String>,
+    ) {
+        let type_id = self.resolve_type_node(&v.typ);
+        for (i, name) in v.names.iter().enumerate() {
+            let sym = Symbol {
+                name: name.clone(),
+                kind: SymbolKind::Variable,
+                typ: type_id,
+                exported,
+                module: module.clone(),
+                loc: SourceLoc::default(),
+                doc: v.doc.clone(),
+            };
+            let loc = v.name_locs.get(i).unwrap_or(&v.loc);
+            self.define_sym(sym, loc);
+        }
+    }
+
+    fn make_proc_symbol(
+        &mut self, h: &ProcHeading, exported: bool, module: Option<String>,
+    ) -> (Symbol, Vec<ParamInfo>, Option<TypeId>) {
+        let (params, ret) = self.analyze_proc_heading(h);
+        let sym = Symbol {
+            name: h.name.clone(),
+            kind: SymbolKind::Procedure {
+                params: params.clone(),
+                return_type: ret,
+                is_builtin: false,
+            },
+            typ: TY_VOID,
+            exported,
+            module,
+            loc: SourceLoc::default(),
+            doc: h.doc.clone(),
+        };
+        (sym, params, ret)
+    }
+
+    fn make_exception_symbol(
+        &mut self, name: &str, exported: bool, module: Option<String>, doc: Option<String>,
+    ) -> Symbol {
+        let type_id = self.types.register(Type::Exception { name: name.to_string() });
+        Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Constant(ConstValue::Integer(type_id as i64)),
+            typ: type_id,
+            exported,
+            module,
+            loc: SourceLoc::default(),
+            doc,
+        }
+    }
+
+    fn make_module_symbol(&self, name: &str, scope_id: usize) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Module { scope_id },
+            typ: TY_VOID,
+            exported: false,
+            module: None,
+            loc: SourceLoc::default(),
+            doc: None,
+        }
+    }
+
     // ── Module analysis ─────────────────────────────────────────────
 
     fn analyze_program_module(&mut self, m: &ProgramModule) {
@@ -174,15 +274,7 @@ impl SemanticAnalyzer {
         self.leave_scope_at();
 
         // Register module in parent scope
-        let sym = Symbol {
-            name: m.name.clone(),
-            kind: SymbolKind::Module { scope_id },
-            typ: TY_VOID,
-            exported: false,
-            module: None,
-            loc: SourceLoc::default(),
-            doc: None,
-        };
+        let sym = self.make_module_symbol(&m.name, scope_id);
         self.define_sym(sym, &m.loc);
 
         // Re-export names from EXPORT clause into the parent (current) scope
@@ -219,51 +311,35 @@ impl SemanticAnalyzer {
         let export_all = !has_export;  // If no EXPORT clause, everything is exported
 
         for def in &m.definitions {
+            let is_exported = |name: &str| export_all || exported_names.contains(&name.to_string());
+            let mod_name = Some(m.name.clone());
             match def {
                 Definition::Const(c) => {
-                    let typ = self.analyze_expr(&c.expr);
-                    let val = self.eval_const_expr(&c.expr);
-                    let sym = Symbol {
-                        name: c.name.clone(),
-                        kind: SymbolKind::Constant(val),
-                        typ,
-                        exported: export_all || exported_names.contains(&c.name),
-                        module: Some(m.name.clone()),
-                        loc: SourceLoc::default(),
-                        doc: c.doc.clone(),
-                    };
+                    let sym = self.make_const_symbol(&c.name, &c.expr, is_exported(&c.name), mod_name, c.doc.clone());
                     self.define_sym(sym, &c.loc);
                 }
                 Definition::Type(t) => {
                     let type_id = if let Some(tn) = &t.typ {
                         self.resolve_type_node(tn)
                     } else {
-                        // Opaque type
                         self.types.register(Type::Opaque {
                             name: t.name.clone(),
                             module: m.name.clone(),
                         })
                     };
-                    let sym = Symbol {
-                        name: t.name.clone(),
-                        kind: SymbolKind::Type,
-                        typ: type_id,
-                        exported: export_all || exported_names.contains(&t.name),
-                        module: Some(m.name.clone()),
-                        loc: SourceLoc::default(),
-                        doc: t.doc.clone(),
-                    };
+                    let sym = self.make_type_symbol(&t.name, type_id, is_exported(&t.name), mod_name, t.doc.clone());
                     self.define_sym(sym, &t.loc);
                 }
                 Definition::Var(v) => {
+                    // Var needs per-name export check, can't use define_var_symbols directly
                     let type_id = self.resolve_type_node(&v.typ);
                     for (i, name) in v.names.iter().enumerate() {
                         let sym = Symbol {
                             name: name.clone(),
                             kind: SymbolKind::Variable,
                             typ: type_id,
-                            exported: export_all || exported_names.contains(name),
-                            module: Some(m.name.clone()),
+                            exported: is_exported(name),
+                            module: mod_name.clone(),
                             loc: SourceLoc::default(),
                             doc: v.doc.clone(),
                         };
@@ -272,48 +348,18 @@ impl SemanticAnalyzer {
                     }
                 }
                 Definition::Procedure(h) => {
-                    let (params, ret) = self.analyze_proc_heading(h);
-                    let sym = Symbol {
-                        name: h.name.clone(),
-                        kind: SymbolKind::Procedure {
-                            params,
-                            return_type: ret,
-                            is_builtin: false,
-                        },
-                        typ: TY_VOID,
-                        exported: export_all || exported_names.contains(&h.name),
-                        module: Some(m.name.clone()),
-                        loc: SourceLoc::default(),
-                        doc: h.doc.clone(),
-                    };
+                    let (sym, _, _) = self.make_proc_symbol(h, is_exported(&h.name), mod_name);
                     self.define_sym(sym, &h.loc);
                 }
                 Definition::Exception(e) => {
-                    let type_id = self.types.register(Type::Exception { name: e.name.clone() });
-                    let sym = Symbol {
-                        name: e.name.clone(),
-                        kind: SymbolKind::Constant(ConstValue::Integer(type_id as i64)),
-                        typ: type_id,
-                        exported: export_all || exported_names.contains(&e.name),
-                        module: Some(m.name.clone()),
-                        loc: SourceLoc::default(),
-                        doc: e.doc.clone(),
-                    };
+                    let sym = self.make_exception_symbol(&e.name, is_exported(&e.name), mod_name, e.doc.clone());
                     self.define_sym(sym, &e.loc);
                 }
             }
         }
         self.leave_scope_at();
 
-        let sym = Symbol {
-            name: m.name.clone(),
-            kind: SymbolKind::Module { scope_id },
-            typ: TY_VOID,
-            exported: false,
-            module: None,
-            loc: SourceLoc::default(),
-            doc: None,
-        };
+        let sym = self.make_module_symbol(&m.name, scope_id);
         self.define_sym(sym, &m.loc);
     }
 
@@ -344,15 +390,7 @@ impl SemanticAnalyzer {
 
         // Only register the module symbol if not already present from the .def
         if self.symtab.lookup(&m.name).is_none() {
-            let sym = Symbol {
-                name: m.name.clone(),
-                kind: SymbolKind::Module { scope_id },
-                typ: TY_VOID,
-                exported: false,
-                module: None,
-                loc: SourceLoc::default(),
-                doc: None,
-            };
+            let sym = self.make_module_symbol(&m.name, scope_id);
             self.define_sym(sym, &m.loc);
         }
     }
@@ -360,93 +398,78 @@ impl SemanticAnalyzer {
     fn process_imports(&mut self, imports: &[Import]) {
         for imp in imports {
             if let Some(from_mod) = &imp.from_module {
-                // Check if this module was already registered (e.g. from a .def file)
-                let existing_scope = self.symtab.lookup_in_scope(self.current_scope, from_mod)
-                    .and_then(|sym| if let SymbolKind::Module { scope_id } = &sym.kind {
-                        Some(*scope_id)
-                    } else {
-                        None
-                    });
-
-                let scope_id = if let Some(sid) = existing_scope {
-                    sid
-                } else {
-                    // FROM Module IMPORT names -- register as stdlib stubs
-                    let sid = self.enter_scope(from_mod);
-                    crate::stdlib::register_module(&mut self.symtab, &mut self.types, sid, from_mod);
-                    self.leave_scope();
-
-                    // Register module
-                    let mod_sym = Symbol {
-                        name: from_mod.clone(),
-                        kind: SymbolKind::Module { scope_id: sid },
-                        typ: TY_VOID,
-                        exported: false,
-                        module: None,
-                        loc: SourceLoc::default(),
-                        doc: None,
-                    };
-                    let _ = self.symtab.define(self.current_scope, mod_sym);
-                    sid
-                };
-
-                // Import specific names into current scope
-                for import_name in &imp.names {
-                    let local = import_name.local_name().to_string();
-                    if let Some(sym) = self.symtab.lookup_in_scope(scope_id, &import_name.name) {
-                        let imported = sym.clone();
-                        let _ = self.symtab.define(self.current_scope, Symbol {
-                            name: local,
-                            kind: imported.kind,
-                            typ: imported.typ,
-                            exported: false,
-                            module: Some(from_mod.clone()),
-                            loc: imported.loc,
-                            doc: imported.doc,
-                        });
-                    } else {
-                        // Register as unknown procedure stub
-                        let sym = Symbol {
-                            name: local,
-                            kind: SymbolKind::Procedure {
-                                params: vec![],
-                                return_type: None,
-                                is_builtin: false,
-                            },
-                            typ: TY_VOID,
-                            exported: false,
-                            module: Some(from_mod.clone()),
-                            loc: SourceLoc::default(),
-                            doc: None,
-                        };
-                        let _ = self.symtab.define(self.current_scope, sym);
-                    }
-                }
+                self.import_from_module(from_mod, &imp.names);
             } else {
-                // IMPORT Module1, Module2, ...
                 for import_name in &imp.names {
-                    let name = &import_name.name;
-                    // Check if this module was pre-registered (e.g., from a .def file)
-                    if self.symtab.lookup(name).is_some() {
-                        continue;
-                    }
-                    let scope_id = self.enter_scope(name);
-                    crate::stdlib::register_module(&mut self.symtab, &mut self.types, scope_id, name);
-                    self.leave_scope();
-
-                    let sym = Symbol {
-                        name: name.clone(),
-                        kind: SymbolKind::Module { scope_id },
-                        typ: TY_VOID,
-                        exported: false,
-                        module: None,
-                        loc: SourceLoc::default(),
-                        doc: None,
-                    };
-                    let _ = self.symtab.define(self.current_scope, sym);
+                    self.import_whole_module(&import_name.name);
                 }
             }
         }
+    }
+
+    /// Ensure a module scope exists (from a prior .def registration or stdlib stubs).
+    /// Returns the scope ID for the module.
+    fn ensure_module_scope(&mut self, mod_name: &str) -> usize {
+        // Check if already registered (e.g. from a .def file)
+        if let Some(sym) = self.symtab.lookup_in_scope(self.current_scope, mod_name) {
+            if let SymbolKind::Module { scope_id } = &sym.kind {
+                return *scope_id;
+            }
+        }
+        // Create new scope with stdlib stubs
+        let sid = self.enter_scope(mod_name);
+        crate::stdlib::register_module(&mut self.symtab, &mut self.types, sid, mod_name);
+        self.leave_scope();
+
+        let mod_sym = self.make_module_symbol(mod_name, sid);
+        let _ = self.symtab.define(self.current_scope, mod_sym);
+        sid
+    }
+
+    /// Handle `FROM Module IMPORT name1, name2, ...`
+    fn import_from_module(&mut self, from_mod: &str, names: &[ImportName]) {
+        let scope_id = self.ensure_module_scope(from_mod);
+
+        for import_name in names {
+            let local = import_name.local_name().to_string();
+            if let Some(sym) = self.symtab.lookup_in_scope(scope_id, &import_name.name) {
+                let imported = sym.clone();
+                let _ = self.symtab.define(self.current_scope, Symbol {
+                    name: local,
+                    kind: imported.kind,
+                    typ: imported.typ,
+                    exported: false,
+                    module: Some(from_mod.to_string()),
+                    loc: imported.loc,
+                    doc: imported.doc,
+                });
+            } else {
+                // Register as unknown procedure stub (permissive for unresolved imports)
+                let sym = Symbol {
+                    name: local,
+                    kind: SymbolKind::Procedure {
+                        params: vec![],
+                        return_type: None,
+                        is_builtin: false,
+                    },
+                    typ: TY_VOID,
+                    exported: false,
+                    module: Some(from_mod.to_string()),
+                    loc: SourceLoc::default(),
+                    doc: None,
+                };
+                let _ = self.symtab.define(self.current_scope, sym);
+            }
+        }
+    }
+
+    /// Handle `IMPORT Module` (whole-module / qualified import)
+    fn import_whole_module(&mut self, name: &str) {
+        // Skip if already registered (e.g., from a .def file)
+        if self.symtab.lookup(name).is_some() {
+            return;
+        }
+        self.ensure_module_scope(name);
     }
 
     // ── Block / declarations ────────────────────────────────────────
@@ -487,17 +510,7 @@ impl SemanticAnalyzer {
     fn analyze_declaration(&mut self, decl: &Declaration) {
         match decl {
             Declaration::Const(c) => {
-                let typ = self.analyze_expr(&c.expr);
-                let val = self.eval_const_expr(&c.expr);
-                let sym = Symbol {
-                    name: c.name.clone(),
-                    kind: SymbolKind::Constant(val),
-                    typ,
-                    exported: false,
-                    module: None,
-                    loc: SourceLoc::default(),
-                    doc: c.doc.clone(),
-                };
+                let sym = self.make_const_symbol(&c.name, &c.expr, false, None, c.doc.clone());
                 self.define_sym(sym, &c.loc);
             }
             Declaration::Type(t) => {
@@ -510,52 +523,19 @@ impl SemanticAnalyzer {
                 // We don't re-define; just look up and update the placeholder's target.
                 if let Some(sym) = self.symtab.lookup(&t.name) {
                     let old_id = sym.typ;
-                    // Replace the placeholder type with the real resolved type
                     *self.types.get_mut(old_id) = self.types.get(type_id).clone();
                 } else {
-                    let sym = Symbol {
-                        name: t.name.clone(),
-                        kind: SymbolKind::Type,
-                        typ: type_id,
-                        exported: false,
-                        module: None,
-                        loc: SourceLoc::default(),
-                        doc: t.doc.clone(),
-                    };
+                    let sym = self.make_type_symbol(&t.name, type_id, false, None, t.doc.clone());
                     self.define_sym(sym, &t.loc);
                 }
             }
             Declaration::Var(v) => {
-                let type_id = self.resolve_type_node(&v.typ);
-                for (i, name) in v.names.iter().enumerate() {
-                    let sym = Symbol {
-                        name: name.clone(),
-                        kind: SymbolKind::Variable,
-                        typ: type_id,
-                        exported: false,
-                        module: None,
-                        loc: SourceLoc::default(),
-                        doc: v.doc.clone(),
-                    };
-                    let loc = v.name_locs.get(i).unwrap_or(&v.loc);
-                    self.define_sym(sym, loc);
-                }
+                self.define_var_symbols(v, false, None);
             }
             Declaration::Procedure(p) => {
-                let (params, ret) = self.analyze_proc_heading(&p.heading);
-                let sym = Symbol {
-                    name: p.heading.name.clone(),
-                    kind: SymbolKind::Procedure {
-                        params: params.clone(),
-                        return_type: ret,
-                        is_builtin: false,
-                    },
-                    typ: TY_VOID,
-                    exported: false,
-                    module: None,
-                    loc: SourceLoc::default(),
-                    doc: p.doc.clone(),
-                };
+                let (sym, params, ret) = self.make_proc_symbol(&p.heading, false, None);
+                // Override doc from ProcDecl (which has the doc), not ProcHeading
+                let sym = Symbol { doc: p.doc.clone(), ..sym };
                 self.define_sym(sym, &p.loc);
 
                 // Analyze procedure body
@@ -585,16 +565,7 @@ impl SemanticAnalyzer {
                 self.analyze_program_module(m);
             }
             Declaration::Exception(e) => {
-                let type_id = self.types.register(Type::Exception { name: e.name.clone() });
-                let sym = Symbol {
-                    name: e.name.clone(),
-                    kind: SymbolKind::Constant(ConstValue::Integer(type_id as i64)),
-                    typ: type_id,
-                    exported: false,
-                    module: None,
-                    loc: SourceLoc::default(),
-                    doc: e.doc.clone(),
-                };
+                let sym = self.make_exception_symbol(&e.name, false, None, e.doc.clone());
                 self.define_sym(sym, &e.loc);
             }
         }

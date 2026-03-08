@@ -1,0 +1,25 @@
+# m2.toml - m2oidc: OIDC/JWKS/RS256 support for Modula-2+ services
+#
+# Provides OIDC discovery parsing, JWKS key set management,
+# RS256 JWT verification, and Keycloak-specific claim extraction.
+#
+# Requires OpenSSL (or LibreSSL) development headers and libraries.
+#   macOS:  brew install openssl@3
+#   Linux:  apt install libssl-dev  (or equivalent)
+manifest_version=1
+name=m2oidc
+version=0.1.0
+edition=pim4
+entry=src/Oidc.mod
+includes=src
+
+[deps]
+m2auth=path:../m2auth
+m2json=path:../m2json
+m2pthreads=path:../m2pthreads
+
+[cc]
+extra-c=src/oidc_bridge.c
+cflags=-I/opt/homebrew/opt/openssl@3/include
+ldflags=-L/opt/homebrew/opt/openssl@3/lib
+libs=-lssl -lcrypto

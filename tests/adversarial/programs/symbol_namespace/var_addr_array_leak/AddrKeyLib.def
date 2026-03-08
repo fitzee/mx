@@ -1,0 +1,12 @@
+DEFINITION MODULE AddrKeyLib;
+
+(* Module with a VAR ADDRESS out parameter named "key".
+   Regression: if ArrayKeyLib's local "key: ARRAY" leaks into
+   array_vars, this procedure's assignment to the VAR ADDRESS
+   will emit memcpy instead of *key = value, corrupting the pointer. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE GetHandle(id: INTEGER; VAR key: ADDRESS): BOOLEAN;
+
+END AddrKeyLib.
