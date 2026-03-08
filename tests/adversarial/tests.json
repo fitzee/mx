@@ -531,5 +531,18 @@
     "c_scan": true,
     "tags": ["ci"],
     "_comment": "Regression: scalar field and array field with same name in different imported records must not collide (memcpy of scalar = SIGSEGV). Covers simple var.field, array[idx].field, and loop assignment."
+  },
+  {
+    "name": "open_array_record_scalar",
+    "category": "symbol_namespace",
+    "dir": "programs/symbol_namespace/open_array_record_scalar",
+    "main": "OpenArrayScalarMain.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "count=3\ns0=1\ns1=42\ns2=99\nw0=777\nseq=1\nw1=777\nok\n",
+    "c_scan": true,
+    "tags": ["ci"],
+    "_comment": "Regression: assigning CARDINAL field via VAR open array element must emit direct assignment, not memcpy. Covers open_array[idx].field := local.field, literal, variable, and nested record field paths."
   }
 ]

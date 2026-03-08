@@ -55,4 +55,13 @@ DEFINITION MODULE FOR "C" AuthBridge;
                                     msg: ADDRESS; msgLen: INTEGER;
                                     sig: ADDRESS): INTEGER;
 
+  (* SHA-256 hash of data[0..dataLen-1] into out (32 bytes).
+     Returns 0 on success, -1 on failure. *)
+  PROCEDURE m2_auth_sha256(data: ADDRESS; dataLen: INTEGER;
+                            out: ADDRESS): INTEGER;
+
+  (* Fill buf[0..len-1] with cryptographically secure random bytes.
+     Returns 0 on success, -1 on failure. *)
+  PROCEDURE m2_auth_rand_bytes(buf: ADDRESS; len: INTEGER): INTEGER;
+
 END AuthBridge.

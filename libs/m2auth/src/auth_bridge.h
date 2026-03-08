@@ -73,4 +73,17 @@ int m2_auth_ed25519_verify(const unsigned char *pub,
                            const unsigned char *msg, int msg_len,
                            const unsigned char *sig);
 
+/* ── SHA-256 ──────────────────────────────────────────── */
+
+/* Compute SHA-256(data[0..data_len-1]).  out must be 32 bytes.
+   Returns 0 on success, -1 on failure. */
+int m2_auth_sha256(const unsigned char *data, int data_len,
+                   unsigned char *out);
+
+/* ── Random bytes ─────────────────────────────────────── */
+
+/* Fill buf[0..len-1] with cryptographically secure random bytes.
+   Returns 0 on success, -1 on failure. */
+int m2_auth_rand_bytes(unsigned char *buf, int len);
+
 #endif /* M2_AUTH_BRIDGE_H */

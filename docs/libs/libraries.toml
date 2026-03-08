@@ -91,6 +91,9 @@ category = "Helpers"
 [m2sqlite]
 category = "Database"
 
+[m2lmdb]
+category = "Database"
+
 [m2ws]
 category = "Transport"
 

@@ -4289,8 +4289,19 @@ impl CodeGen {
                     let name = &d.ident.name;
                     !self.array_vars.contains(name)
                         && !self.var_types.get(name).map_or(false, |t| self.array_types.contains(t))
+                } else if let Some(Selector::Field(fname, _)) = d.selectors.last() {
+                    // Field access (e.g., local.status): resolve record type and
+                    // check whether that field is an array in that specific record.
+                    // If we can prove it's NOT an array field, it's scalar.
+                    if let Some(rec_type) = self.resolve_field_record_type(d) {
+                        !self.is_array_field_of(&rec_type, fname)
+                    } else {
+                        // Can't resolve record type — check if any record has
+                        // this as an array field. If none do, it's scalar.
+                        !self.is_array_field(fname)
+                    }
                 } else {
-                    false // complex designator — can't tell cheaply
+                    false
                 }
             }
             // Function calls — can't tell without return type tracking

@@ -13,6 +13,8 @@
 #include <openssl/hmac.h>
 #include <openssl/crypto.h>
 #include <openssl/opensslv.h>
+#include <openssl/sha.h>
+#include <openssl/rand.h>
 #include <string.h>
 #include <time.h>
 
@@ -319,4 +321,21 @@ done:
     (void)pub; (void)msg; (void)msg_len; (void)sig;
     return -1;
 #endif
+}
+
+/* ── SHA-256 ──────────────────────────────────────────── */
+
+int m2_auth_sha256(const unsigned char *data, int data_len,
+                   unsigned char *out) {
+    if (!data || !out || data_len < 0) return -1;
+    if (!SHA256(data, (size_t)data_len, out)) return -1;
+    return 0;
+}
+
+/* ── Random bytes ─────────────────────────────────────── */
+
+int m2_auth_rand_bytes(unsigned char *buf, int len) {
+    if (!buf || len <= 0) return -1;
+    if (RAND_bytes(buf, len) != 1) return -1;
+    return 0;
 }
