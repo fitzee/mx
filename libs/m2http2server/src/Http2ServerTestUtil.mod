@@ -18,7 +18,8 @@ IMPLEMENTATION MODULE Http2ServerTestUtil;
   FROM Http2Hpack IMPORT DynTable, DynInit, EncodeHeaderBlock,
                           DecodeHeaderBlock;
   FROM Http2ServerConn IMPORT ConnPtr, ConnCreateTest, ConnFeedBytes,
-                               ConnFlush, CpPreface, CpSettings, CpOpen;
+                               ConnFlush, ConnOnEvent, CpPreface,
+                               CpSettings, CpOpen;
   FROM Http2ServerTypes IMPORT Response;
 
   (* ── Frame builders ─────────────────────────────────── *)

@@ -1,6 +1,8 @@
 # m2c - Modula-2 to C Compiler
 
-A Modula-2 compiler that transpiles to readable C. Targets PIM4 with practical extensions (exceptions, objects, reference types, concurrency via `--m2plus`). Ships with a package manager, LSP server, VS Code extension, and libraries covering networking, graphics, crypto, database, compression, and async I/O.
+**v1.0.1** — A Modula-2 compiler that transpiles to readable C. Targets PIM4 with practical extensions (exceptions, objects, reference types, concurrency via `--m2plus`). Ships with a package manager, LSP server, VS Code extension, and libraries covering networking, graphics, crypto, database, compression, and async I/O.
+
+79% compatibility with the GCC gm2 PIM4 test suite (383/483 tests pass). 150 unit tests, 550 adversarial tests across 8 compiler configurations.
 
 **Not [m2sf/m2c](https://github.com/m2sf/m2c).** That project is a C99 translator for the Modula-2 R10 bootstrap kernel subset. **Not [GCC gm2](https://gcc.gnu.org/onlinedocs/gm2/).** That is the GNU Modula-2 frontend shipping with GCC 13, targeting PIM2/PIM4/ISO and compiling to native code through GCC's backend. This project transpiles PIM4+extensions to C and includes a complete toolchain.
 
@@ -63,6 +65,34 @@ m2c test      # run tests
 code --install-extension tools/vscode-m2plus/m2plus-0.1.0.vsix
 ```
 
+## What's new in 1.0.1
+
+### Bug fixes
+
+- **Enum variant scope pollution in multi-module codegen** — Enum variant names (`OK`, `Invalid`, `OutOfMemory`, etc.) shared across different modules no longer collide. Previously, `import_map` entries leaked between embedded modules, causing variant names to resolve to the wrong source module. Each embedded module now starts with a clean import scope, and bare-key `enum_variants` entries are only registered for the main module.
+
+## What's new in 1.0.0
+
+### Codegen improvements
+
+- **POINTER TO RECORD** — Anonymous record types inside pointer declarations now generate correct C struct definitions. Self-referential pointer-to-record types (linked lists, trees) work correctly.
+- **WITH on pointer-to-record** — `WITH p^ DO` resolves fields through the pointer's base record type.
+- **Multi-name pointer fields** — `left, right: POINTER TO Foo` now emits separate C declarations so both names are pointers (not just the first).
+- **SET OF inline enum** — `TYPE s = SET OF (a, b, c)` emits the enum constants and a uint32_t set type with MIN/MAX macros.
+- **Char literals in set operations** — Single-character string literals in INCL, EXCL, IN, set constructors, and array indices are emitted as C char literals instead of string pointers.
+- **Module-level variable forward references** — Procedures can reference module-level variables declared after them. Variables are emitted before procedure bodies.
+- **Constant forward references** — Constants referencing later-declared constants are topologically sorted before emission.
+- **Nested module procedure hoisting** — Procedures inside local modules within a procedure are hoisted to file scope (C doesn't allow nested function definitions).
+- **Nested procedure name mangling** — Same-named procedures nested in different parents get unique C names (`Alpha_Helper`, `Beta_Helper`) to avoid collisions.
+- **MIN/MAX macros** — User-defined enumeration, subrange, and set-of-enum types emit `m2_min_`/`m2_max_` macros for use with the MIN/MAX builtins.
+- **File type mapping** — `File` is only mapped to `m2_File` when imported from FileSystem/FIO, not when it's a user-defined type.
+
+### Test coverage
+
+- 150 cargo unit tests
+- 550 adversarial tests (9 new test programs covering all codegen fixes)
+- 79% gm2 PIM4 compatibility (383/483), up from 54% (260/483)
+
 ## Documentation
 
 Documentation covers language support (PIM4 and Modula-2+ features), toolchain usage, the package manager, LSP configuration, and per-module API reference for all libraries. Available in `docs/` and through the VS Code extension's documentation panel.
@@ -82,10 +112,10 @@ sdk/           Platform SDKs
 ## Tests
 
 ```bash
-cargo test                                    # unit tests
-bash tests/run_all.sh                         # integration tests
-bash tests/conformance.sh                     # conformance tests
-python3 tests/adversarial/run_adversarial.py  # adversarial tests (ASan+UBSan)
+cargo test                                            # 150 unit tests
+bash tests/run_all.sh                                 # integration tests
+bash tests/conformance.sh                             # conformance tests
+python3 tests/adversarial/run_adversarial.py --mode ci  # 550 adversarial tests (ASan+UBSan, 8 compiler configs)
 ```
 
 ## License

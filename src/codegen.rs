@@ -121,6 +121,12 @@ pub struct CodeGen {
     child_captures_stack: Vec<Vec<(String, Vec<String>)>>,
     /// Maps (record_type_name, field_name) -> variant index for variant record field access
     variant_field_map: HashMap<(String, String), usize>,
+    /// Maps pointer type name -> base record struct tag (for WITH resolution through pointers)
+    pointer_base_types: HashMap<String, String>,
+    /// Stack of parent procedure names (for nested proc name mangling)
+    parent_proc_stack: Vec<String>,
+    /// Maps bare nested proc name -> mangled name (parent_child)
+    nested_proc_names: HashMap<String, String>,
     /// True when generating code inside the module body (main function) rather than a procedure
     in_module_body: bool,
     /// Counter for generating unique exception IDs
@@ -468,6 +474,9 @@ impl CodeGen {
             child_env_type_stack: vec![None],
             child_captures_stack: vec![Vec::new()],
             variant_field_map: HashMap::new(),
+            pointer_base_types: HashMap::new(),
+            parent_proc_stack: Vec::new(),
+            nested_proc_names: HashMap::new(),
             in_module_body: false,
             exception_counter: 0,
             exception_names: HashSet::new(),
@@ -845,21 +854,92 @@ impl CodeGen {
     fn emit_record_forward_decls(&mut self, decls: &[Declaration]) {
         for decl in decls {
             if let Declaration::Type(t) = decl {
-                if let Some(TypeNode::Record { .. }) = &t.typ {
-                    let cn = self.type_decl_c_name(&t.name);
-                    self.emitln(&format!("typedef struct {} {};", cn, cn));
+                let cn = self.type_decl_c_name(&t.name);
+                match &t.typ {
+                    Some(TypeNode::Record { .. }) => {
+                        self.emitln(&format!("typedef struct {} {};", cn, cn));
+                    }
+                    Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
+                        let tag = format!("{}_r", cn);
+                        self.emitln(&format!("typedef struct {} {};", tag, tag));
+                        self.emitln(&format!("typedef {} *{};", tag, cn));
+                    }
+                    _ => {}
                 }
             }
         }
     }
 
     /// Emit type and const declarations from a declaration list.
+    /// Types are emitted first (in source order), then constants are topologically
+    /// sorted so that forward references between constants are resolved.
     fn emit_type_and_const_decls(&mut self, decls: &[Declaration]) {
+        // Pass 1: emit all Type declarations in source order
         for decl in decls {
-            match decl {
-                Declaration::Const(c) => self.gen_const_decl(c),
-                Declaration::Type(t) => self.gen_type_decl(t),
-                _ => {}
+            if let Declaration::Type(t) = decl {
+                self.gen_type_decl(t);
+            }
+        }
+        // Pass 2: collect and topologically sort Const declarations
+        let consts: Vec<&ConstDecl> = decls.iter().filter_map(|d| {
+            if let Declaration::Const(c) = d { Some(c) } else { None }
+        }).collect();
+        if consts.is_empty() {
+            return;
+        }
+        let const_names: HashSet<String> = consts.iter().map(|c| c.name.clone()).collect();
+        // Build adjacency: for each const, which other consts does it reference?
+        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+        for c in &consts {
+            let mut refs = HashSet::new();
+            Self::collect_expr_ident_refs(&c.expr, &mut refs);
+            let my_deps: Vec<String> = refs.into_iter().filter(|r| const_names.contains(r) && r != &c.name).collect();
+            deps.insert(c.name.clone(), my_deps);
+        }
+        // Kahn's algorithm for topological sort
+        // deps maps node → [nodes it depends on]. Build reverse graph: dependee → [dependents]
+        let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+        let mut in_degree: HashMap<String, usize> = consts.iter().map(|c| (c.name.clone(), 0)).collect();
+        for (node, dep_list) in &deps {
+            *in_degree.entry(node.clone()).or_insert(0) += dep_list.len();
+            for dep in dep_list {
+                reverse.entry(dep.clone()).or_default().push(node.clone());
+            }
+        }
+        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        // Seed with zero-in-degree nodes (in source order for stability)
+        for c in &consts {
+            if *in_degree.get(&c.name).unwrap_or(&0) == 0 {
+                queue.push_back(c.name.clone());
+            }
+        }
+        let mut sorted_names: Vec<String> = Vec::new();
+        while let Some(name) = queue.pop_front() {
+            sorted_names.push(name.clone());
+            if let Some(dependents) = reverse.get(&name) {
+                for dependent in dependents {
+                    if let Some(deg) = in_degree.get_mut(dependent) {
+                        *deg = deg.saturating_sub(1);
+                        if *deg == 0 {
+                            queue.push_back(dependent.clone());
+                        }
+                    }
+                }
+            }
+        }
+        // If there are cycles, append remaining in source order
+        if sorted_names.len() < consts.len() {
+            for c in &consts {
+                if !sorted_names.contains(&c.name) {
+                    sorted_names.push(c.name.clone());
+                }
+            }
+        }
+        // Build name->const map and emit in sorted order
+        let const_map: HashMap<String, &ConstDecl> = consts.into_iter().map(|c| (c.name.clone(), c)).collect();
+        for name in &sorted_names {
+            if let Some(c) = const_map.get(name) {
+                self.gen_const_decl(c);
             }
         }
     }
@@ -1020,6 +1100,11 @@ impl CodeGen {
         let ctx = self.save_embedded_context();
 
         self.module_name = imp.name.clone();
+        // Each module has its own import scope — start clean to avoid
+        // stale entries from previously-processed embedded modules leaking
+        // enum variant mappings (e.g., "Invalid" → wrong source module).
+        self.import_map.clear();
+        self.import_alias_map.clear();
         // Build import map from the def module's imports first (e.g., FROM Gfx IMPORT Renderer),
         // then overlay with the implementation module's imports.
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
@@ -1472,10 +1557,26 @@ impl CodeGen {
         self.gen_forward_decls(&m.block.decls);
         self.newline();
 
-        // Var declarations and procedure bodies
+        // Pass 1: Emit all Var declarations first (procedures may reference them)
+        for decl in &m.block.decls {
+            if let Declaration::Var(v) = decl {
+                self.gen_var_decl(v);
+            }
+        }
+        // Also emit vars from nested modules
+        for decl in &m.block.decls {
+            if let Declaration::Module(local_mod) = decl {
+                for d in &local_mod.block.decls {
+                    if let Declaration::Var(v) = d {
+                        self.gen_var_decl(v);
+                    }
+                }
+            }
+        }
+        // Pass 2: Emit Procedures and Modules (skip Var/Const/Type)
         for decl in &m.block.decls {
             match decl {
-                Declaration::Const(_) | Declaration::Type(_) => {} // already done
+                Declaration::Const(_) | Declaration::Type(_) | Declaration::Var(_) => {}
                 _ => self.gen_declaration(decl),
             }
         }
@@ -1558,11 +1659,20 @@ impl CodeGen {
         self.emitln(&format!("#define {}_H", m.name.to_uppercase()));
         self.newline();
 
-        // Forward struct declarations for record types
+        // Forward struct declarations for record types (and POINTER TO RECORD)
         for def in &m.definitions {
             if let Definition::Type(t) = def {
-                if let Some(TypeNode::Record { .. }) = &t.typ {
-                    self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                let cn = self.mangle(&t.name);
+                match &t.typ {
+                    Some(TypeNode::Record { .. }) => {
+                        self.emitln(&format!("typedef struct {} {};", cn, cn));
+                    }
+                    Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
+                        let tag = format!("{}_r", cn);
+                        self.emitln(&format!("typedef struct {} {};", tag, tag));
+                        self.emitln(&format!("typedef {} *{};", tag, cn));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1619,8 +1729,17 @@ impl CodeGen {
             for d in &def_mod.definitions {
                 if let Definition::Type(t) = d {
                     if !impl_type_names.contains(&t.name) {
-                        if matches!(&t.typ, Some(TypeNode::Record { .. })) {
-                            self.emitln(&format!("typedef struct {} {};", self.mangle(&t.name), self.mangle(&t.name)));
+                        let cn = self.mangle(&t.name);
+                        match &t.typ {
+                            Some(TypeNode::Record { .. }) => {
+                                self.emitln(&format!("typedef struct {} {};", cn, cn));
+                            }
+                            Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
+                                let tag = format!("{}_r", cn);
+                                self.emitln(&format!("typedef struct {} {};", tag, tag));
+                                self.emitln(&format!("typedef {} *{};", tag, cn));
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -1650,9 +1769,16 @@ impl CodeGen {
         self.gen_forward_decls(&m.block.decls);
         self.newline();
 
+        // Pass 1: Emit Var declarations first
+        for decl in &m.block.decls {
+            if let Declaration::Var(v) = decl {
+                self.gen_var_decl(v);
+            }
+        }
+        // Pass 2: Emit Procedures and Modules (skip Var/Const/Type)
         for decl in &m.block.decls {
             match decl {
-                Declaration::Const(_) | Declaration::Type(_) => {}
+                Declaration::Const(_) | Declaration::Type(_) | Declaration::Var(_) => {}
                 _ => self.gen_declaration(decl),
             }
         }
@@ -1675,10 +1801,23 @@ impl CodeGen {
 
     fn gen_forward_decls(&mut self, decls: &[Declaration]) {
         for decl in decls {
-            if let Declaration::Procedure(p) = decl {
-                self.register_proc_params(&p.heading);
-                self.gen_proc_prototype(&p.heading);
-                self.emit(";\n");
+            match decl {
+                Declaration::Procedure(p) => {
+                    self.register_proc_params(&p.heading);
+                    self.gen_proc_prototype(&p.heading);
+                    self.emit(";\n");
+                }
+                Declaration::Module(m) => {
+                    // Also forward-declare procedures from nested modules
+                    for d in &m.block.decls {
+                        if let Declaration::Procedure(p) = d {
+                            self.register_proc_params(&p.heading);
+                            self.gen_proc_prototype(&p.heading);
+                            self.emit(";\n");
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -1750,9 +1889,15 @@ impl CodeGen {
             Declaration::Var(v) => self.gen_var_decl(v),
             Declaration::Procedure(p) => self.gen_proc_decl(p),
             Declaration::Module(m) => {
-                // Nested module - generate inline
+                // Nested module - generate inline.
+                // If inside a procedure, procedures were already hoisted; skip them here.
+                // At program/implementation module level, generate them normally.
+                let inside_proc = !self.parent_proc_stack.is_empty();
                 self.emitln(&format!("/* Nested module {} */", m.name));
                 for d in &m.block.decls {
+                    if inside_proc && matches!(d, Declaration::Procedure(_)) {
+                        continue;
+                    }
                     self.gen_declaration(d);
                 }
             }
@@ -1782,7 +1927,9 @@ impl CodeGen {
         let ctype = self.infer_c_type(&c.expr);
         self.emit(&format!("static const {} {} = ", ctype, c_name));
         if let ExprKind::StringLit(s) = &c.expr.kind {
-            if s.len() == 1 {
+            if s.is_empty() {
+                self.emit("'\\0'");
+            } else if s.len() == 1 {
                 let ch = s.chars().next().unwrap();
                 self.emit(&format!("'{}'", escape_c_char(ch)));
             } else {
@@ -1820,76 +1967,14 @@ impl CodeGen {
             match tn {
                 TypeNode::Record { fields, loc: _ } => {
                     // Collect field names and types for WITH resolution
-                    let mut field_names = Vec::new();
-                    for fl in fields {
-                        for f in &fl.fixed {
-                            // Track field type name for nested WITH
-                            let field_type_name = if let TypeNode::Named(qi) = &f.typ {
-                                Some(qi.name.clone())
-                            } else {
-                                None
-                            };
-                            for name in &f.names {
-                                field_names.push(name.clone());
-                                if let Some(ref ftn) = field_type_name {
-                                    self.record_field_types.insert(
-                                        (t.name.clone(), name.clone()),
-                                        ftn.clone(),
-                                    );
-                                    // If this field has a procedure type, register for call-site VAR param lookup
-                                    if let Some(pinfo) = self.proc_type_params.get(ftn).cloned() {
-                                        self.field_proc_params.insert(name.clone(), pinfo);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    let field_names = self.collect_record_field_metadata(fields, &t.name);
                     self.record_fields.insert(t.name.clone(), field_names);
 
                     // struct definition (typedef is already forward-declared)
                     self.emitln(&format!("struct {} {{", c_type_name));
                     self.indent += 1;
-                    for fl in fields {
-                        for f in &fl.fixed {
-                            self.emit_indent();
-                            let ctype = self.type_to_c(&f.typ);
-                            let arr_suffix = self.type_array_suffix(&f.typ);
-                            // Track char array record fields for strcpy assignment
-                            if ctype == "char" && !arr_suffix.is_empty() {
-                                for name in &f.names {
-                                    self.char_array_fields.insert((t.name.clone(), name.clone()));
-                                }
-                            }
-                            // Track array record fields for memcpy assignment
-                            if !arr_suffix.is_empty() || self.is_array_type(&f.typ) {
-                                for name in &f.names {
-                                    self.array_fields.insert((t.name.clone(), name.clone()));
-                                }
-                            }
-                            // Track pointer-typed fields to disambiguate array_fields
-                            // (prevents false positives when different records have
-                            // same-named fields with different types)
-                            if self.is_pointer_type(&f.typ) {
-                                for name in &f.names {
-                                    self.pointer_fields.insert(name.clone());
-                                }
-                            }
-                            self.emit(&format!("{} ", ctype));
-                            for (i, name) in f.names.iter().enumerate() {
-                                if i > 0 {
-                                    self.emit(", ");
-                                }
-                                self.emit(name);
-                                if !arr_suffix.is_empty() {
-                                    self.emit(&arr_suffix);
-                                }
-                            }
-                            self.emit(";\n");
-                        }
-                        if let Some(vp) = &fl.variant {
-                            self.gen_variant_part(vp, &t.name);
-                        }
-                    }
+                    let rec_name = t.name.clone();
+                    self.emit_record_fields(fields, &rec_name);
                     self.indent -= 1;
                     self.emitln("};");
                 }
@@ -1914,49 +1999,79 @@ impl CodeGen {
                             let qual_key = format!("{}_{}", mod_name, v);
                             self.enum_variants.insert(qual_key, c_name.clone());
                         }
-                        // Register under bare name (last module wins — used for FROM imports)
-                        self.enum_variants.insert(v.clone(), c_name);
+                        // Register under bare name only for the main module;
+                        // embedded modules use qualified keys to avoid collisions.
+                        if self.generating_for_module.is_none() {
+                            self.enum_variants.insert(v.clone(), c_name);
+                        }
                     }
                     self.emit(&format!(" }} {};\n", type_name));
+                    // Emit MIN/MAX macros for the enum type
+                    let n = variants.len();
+                    self.emitln(&format!("#define m2_min_{} 0", type_name));
+                    if n > 0 {
+                        self.emitln(&format!("#define m2_max_{} {}", type_name, n - 1));
+                    }
                     if self.generating_for_module.is_some() {
                         self.embedded_enum_types.insert(type_name);
                     }
                 }
                 TypeNode::Pointer { base, .. } => {
                     // Track pointer types whose base is a named array type.
-                    // These produce `ArrayType *PtrName` in C (pointer-to-array),
-                    // requiring (*p)[i] for deref+index, not p[i].
                     if let TypeNode::Named(ref qi) = **base {
                         if self.array_types.contains(&qi.name) {
                             self.ptr_to_named_array.insert(t.name.clone());
                             self.ptr_to_named_array.insert(c_type_name.clone());
                         }
                     }
-                    self.emit_indent();
-                    let base_c = self.type_to_c(base);
-                    // When inside an embedded module, the base type may also be
-                    // module-prefixed — resolve it to the prefixed name if available.
-                    let base_c_resolved = if self.generating_for_module.is_some() {
-                        if let TypeNode::Named(ref qi) = **base {
-                            // Only prefix the base type if it's a module-local type,
-                            // not a builtin (CARDINAL, INTEGER, etc.)
-                            let prefixed = self.type_decl_c_name(&qi.name);
-                            if self.embedded_enum_types.contains(&prefixed) {
-                                prefixed
+                    // POINTER TO RECORD: emit a named struct + pointer typedef
+                    if let TypeNode::Record { fields, .. } = &**base {
+                        let tag = format!("{}_r", c_type_name);
+                        self.emitln(&format!("typedef struct {} *{};", tag, c_type_name));
+                        // Collect field metadata under both tag and pointer type name
+                        let field_names = self.collect_record_field_metadata(fields, &t.name);
+                        self.record_fields.insert(t.name.clone(), field_names.clone());
+                        self.record_fields.insert(tag.clone(), field_names);
+                        // Copy record_field_types entries under the tag name too
+                        let entries: Vec<_> = self.record_field_types.iter()
+                            .filter(|((rn, _), _)| rn == &t.name)
+                            .map(|((_, fn_), v)| (fn_.clone(), v.clone()))
+                            .collect();
+                        for (fn_, v) in entries {
+                            self.record_field_types.insert((tag.clone(), fn_), v);
+                        }
+                        self.pointer_base_types.insert(c_type_name.clone(), tag.clone());
+                        self.pointer_base_types.insert(t.name.clone(), tag.clone());
+                        // Emit struct body
+                        self.emitln(&format!("struct {} {{", tag));
+                        self.indent += 1;
+                        let rec_name = t.name.clone();
+                        self.emit_record_fields(fields, &rec_name);
+                        self.indent -= 1;
+                        self.emitln("};");
+                    } else {
+                        self.emit_indent();
+                        let base_c = self.type_to_c(base);
+                        let base_c_resolved = if self.generating_for_module.is_some() {
+                            if let TypeNode::Named(ref qi) = **base {
+                                let prefixed = self.type_decl_c_name(&qi.name);
+                                if self.embedded_enum_types.contains(&prefixed) {
+                                    prefixed
+                                } else {
+                                    base_c
+                                }
                             } else {
                                 base_c
                             }
                         } else {
                             base_c
-                        }
-                    } else {
-                        base_c
-                    };
-                    self.emit(&format!(
-                        "typedef {} *{};\n",
-                        base_c_resolved,
-                        c_type_name
-                    ));
+                        };
+                        self.emit(&format!(
+                            "typedef {} *{};\n",
+                            base_c_resolved,
+                            c_type_name
+                        ));
+                    }
                 }
                 TypeNode::Array { .. } => {
                     // Track if this is an ARRAY OF CHAR type (for string ops)
@@ -2047,6 +2162,50 @@ impl CodeGen {
                     self.emit_indent();
                     self.emit(&format!("typedef void *{};\n", c_type_name));
                 }
+                TypeNode::Set { base, .. } => {
+                    // If base is an inline enumeration, emit the enum constants first
+                    if let TypeNode::Enumeration { variants, .. } = &**base {
+                        let type_name = &c_type_name;
+                        let enum_name = format!("{}_enum", type_name);
+                        self.emit_indent();
+                        self.emit("typedef enum { ");
+                        for (i, v) in variants.iter().enumerate() {
+                            if i > 0 {
+                                self.emit(", ");
+                            }
+                            let c_name = format!("{}_{}", type_name, v);
+                            self.emit(&c_name);
+                            if let Some(ref mod_name) = self.generating_for_module {
+                                let qual_key = format!("{}_{}", mod_name, v);
+                                self.enum_variants.insert(qual_key, c_name.clone());
+                            }
+                            if self.generating_for_module.is_none() {
+                                self.enum_variants.insert(v.clone(), c_name);
+                            }
+                        }
+                        self.emit(&format!(" }} {};\n", enum_name));
+                        self.emitln(&format!("typedef uint32_t {};", type_name));
+                        let n = variants.len();
+                        self.emitln(&format!("#define m2_min_{} 0", type_name));
+                        if n > 0 {
+                            self.emitln(&format!("#define m2_max_{} {}", type_name, n - 1));
+                        }
+                    } else {
+                        self.emit_indent();
+                        self.emit(&format!("typedef uint32_t {};\n", c_type_name));
+                    }
+                }
+                TypeNode::Subrange { low, high, .. } => {
+                    self.emit_indent();
+                    self.emit(&format!("typedef int32_t {};\n", c_type_name));
+                    // Emit MIN/MAX macros if bounds are evaluable
+                    if let Some(lo_val) = self.try_eval_const_int(low) {
+                        self.emitln(&format!("#define m2_min_{} {}", c_type_name, lo_val));
+                    }
+                    if let Some(hi_val) = self.try_eval_const_int(high) {
+                        self.emitln(&format!("#define m2_max_{} {}", c_type_name, hi_val));
+                    }
+                }
                 _ => {
                     self.emit_indent();
                     let ctype = self.type_to_c(tn);
@@ -2064,6 +2223,91 @@ impl CodeGen {
                 "typedef void *{};",
                 c_type_name
             ));
+        }
+    }
+
+    /// Collect field metadata (names, types) for a record's fields and register in tracking maps.
+    /// Returns the list of field names. `record_name` is the key used in record_fields/record_field_types.
+    fn collect_record_field_metadata(&mut self, fields: &[FieldList], record_name: &str) -> Vec<String> {
+        let mut field_names = Vec::new();
+        for fl in fields {
+            for f in &fl.fixed {
+                let field_type_name = if let TypeNode::Named(qi) = &f.typ {
+                    Some(qi.name.clone())
+                } else {
+                    None
+                };
+                for name in &f.names {
+                    field_names.push(name.clone());
+                    if let Some(ref ftn) = field_type_name {
+                        self.record_field_types.insert(
+                            (record_name.to_string(), name.clone()),
+                            ftn.clone(),
+                        );
+                        if let Some(pinfo) = self.proc_type_params.get(ftn).cloned() {
+                            self.field_proc_params.insert(name.clone(), pinfo);
+                        }
+                    }
+                }
+            }
+        }
+        field_names
+    }
+
+    /// Emit struct field declarations for a record body. Handles multi-name pointer fields,
+    /// char array tracking, array tracking, pointer tracking, and variant parts.
+    fn emit_record_fields(&mut self, fields: &[FieldList], record_name: &str) {
+        for fl in fields {
+            for f in &fl.fixed {
+                let ctype = self.type_to_c(&f.typ);
+                let arr_suffix = self.type_array_suffix(&f.typ);
+                // Track char array record fields for strcpy assignment
+                if ctype == "char" && !arr_suffix.is_empty() {
+                    for name in &f.names {
+                        self.char_array_fields.insert((record_name.to_string(), name.clone()));
+                    }
+                }
+                // Track array record fields for memcpy assignment
+                if !arr_suffix.is_empty() || self.is_array_type(&f.typ) {
+                    for name in &f.names {
+                        self.array_fields.insert((record_name.to_string(), name.clone()));
+                    }
+                }
+                // Track pointer-typed fields
+                if self.is_pointer_type(&f.typ) {
+                    for name in &f.names {
+                        self.pointer_fields.insert(name.clone());
+                    }
+                }
+                // Fix 5: When ctype contains '*' and multiple names, emit each separately
+                let is_ptr = ctype.contains('*');
+                if is_ptr && f.names.len() > 1 {
+                    for name in &f.names {
+                        self.emit_indent();
+                        self.emit(&format!("{} {}", ctype, name));
+                        if !arr_suffix.is_empty() {
+                            self.emit(&arr_suffix);
+                        }
+                        self.emit(";\n");
+                    }
+                } else {
+                    self.emit_indent();
+                    self.emit(&format!("{} ", ctype));
+                    for (i, name) in f.names.iter().enumerate() {
+                        if i > 0 {
+                            self.emit(", ");
+                        }
+                        self.emit(name);
+                        if !arr_suffix.is_empty() {
+                            self.emit(&arr_suffix);
+                        }
+                    }
+                    self.emit(";\n");
+                }
+            }
+            if let Some(vp) = &fl.variant {
+                self.gen_variant_part(vp, record_name);
+            }
         }
     }
 
@@ -2099,6 +2343,47 @@ impl CodeGen {
                         }
                     }
                     self.emit(";\n");
+                }
+                // Flatten nested variant parts into parent variant struct
+                if let Some(nested_vp) = &fl.variant {
+                    // Emit the nested tag field
+                    if let Some(tag) = &nested_vp.tag_name {
+                        self.emit_indent();
+                        let tag_c = self.qualident_to_c(&nested_vp.tag_type);
+                        self.emit(&format!("{} {};\n", tag_c, tag));
+                        // Register nested tag as variant field of parent
+                        self.variant_field_map.insert(
+                            (record_name.to_string(), tag.clone()),
+                            i,
+                        );
+                        if let Some(fields) = self.record_fields.get_mut(record_name) {
+                            fields.push(tag.clone());
+                        }
+                    }
+                    // Emit all nested variant fields flattened
+                    for nv in &nested_vp.variants {
+                        for nvfl in &nv.fields {
+                            for f in &nvfl.fixed {
+                                self.emit_indent();
+                                let ctype = self.type_to_c(&f.typ);
+                                self.emit(&format!("{} ", ctype));
+                                for (j, name) in f.names.iter().enumerate() {
+                                    if j > 0 {
+                                        self.emit(", ");
+                                    }
+                                    self.emit(name);
+                                    self.variant_field_map.insert(
+                                        (record_name.to_string(), name.clone()),
+                                        i,
+                                    );
+                                    if let Some(fields) = self.record_fields.get_mut(record_name) {
+                                        fields.push(name.clone());
+                                    }
+                                }
+                                self.emit(";\n");
+                            }
+                        }
+                    }
                 }
             }
             self.indent -= 1;
@@ -2226,6 +2511,16 @@ impl CodeGen {
         if Self::is_proc_type(&v.typ) {
             // Procedure type variables need special C declaration syntax:
             // RetType (*name)(params) instead of type name
+            // For PROC builtin, synthesize a parameterless procedure type
+            let effective_type = if matches!(&v.typ, TypeNode::Named(qi) if qi.name == "PROC") {
+                TypeNode::ProcedureType {
+                    params: vec![],
+                    return_type: None,
+                    loc: crate::errors::SourceLoc::default(),
+                }
+            } else {
+                v.typ.clone()
+            };
             for (i, name) in v.names.iter().enumerate() {
                 self.emit_indent();
                 let c_name = if self.embedded_local_vars.contains(name) {
@@ -2233,7 +2528,7 @@ impl CodeGen {
                 } else {
                     self.mangle(name)
                 };
-                let decl = self.proc_type_decl(&v.typ, &c_name, false);
+                let decl = self.proc_type_decl(&effective_type, &c_name, false);
                 self.emit(&format!("{};\n", decl));
             }
         } else {
@@ -2275,13 +2570,26 @@ impl CodeGen {
         self.register_proc_params(&p.heading);
 
         // Collect nested procedure declarations and other declarations
+        // Also hoist procedures from local modules inside this procedure
         let mut nested_procs = Vec::new();
         let mut other_decls = Vec::new();
         for decl in &p.block.decls {
-            if let Declaration::Procedure(np) = decl {
-                nested_procs.push(np.clone());
-            } else {
-                other_decls.push(decl);
+            match decl {
+                Declaration::Procedure(np) => {
+                    nested_procs.push(np.clone());
+                }
+                Declaration::Module(m) => {
+                    // Hoist procs from local module (illegal to define C functions inside C functions)
+                    for d in &m.block.decls {
+                        if let Declaration::Procedure(np) = d {
+                            nested_procs.push(np.clone());
+                        }
+                    }
+                    other_decls.push(decl);
+                }
+                _ => {
+                    other_decls.push(decl);
+                }
             }
         }
 
@@ -2349,8 +2657,14 @@ impl CodeGen {
         self.child_env_type_stack.push(if has_any_captures { Some(env_type_name.clone()) } else { None });
         self.child_captures_stack.push(child_capture_info.clone());
 
+        // Push parent proc name — stays for entire proc scope (nested proc mangling + Module skip)
+        self.parent_proc_stack.push(p.heading.name.clone());
+
         // Generate nested procs (lifted to top level, with env param if they have captures)
         for np in &nested_procs {
+            // Register mangled name for nested procs if we have a parent
+            let mangled = format!("{}_{}", p.heading.name, np.heading.name);
+            self.nested_proc_names.insert(np.heading.name.clone(), mangled);
             // If this nested proc has captures, push its env access names
             if let Some(_) = self.closure_env_type.get(&np.heading.name) {
                 // Compute which vars this specific proc (and its descendants) needs from outer scopes
@@ -2475,6 +2789,7 @@ impl CodeGen {
         self.child_captures_stack.pop();
         self.restore_var_tracking(saved_var_tracking);
         self.pop_var_scope();
+        self.parent_proc_stack.pop();
         self.indent -= 1;
         self.emitln("}");
     }
@@ -2488,6 +2803,9 @@ impl CodeGen {
         };
         let c_name = if let Some(ref ecn) = h.export_c_name {
             ecn.clone()
+        } else if let Some(mangled) = self.nested_proc_names.get(&h.name).cloned() {
+            // Nested proc: use parent-prefixed mangled name
+            mangled
         } else {
             self.mangle(&h.name)
         };
@@ -2586,9 +2904,11 @@ impl CodeGen {
                     self.emit_indent();
                     self.gen_designator(desig);
                     self.emit(" = ");
-                    // Special case: single-char string assigned to char variable
+                    // Special case: single-char or empty string assigned to char variable
                     if let ExprKind::StringLit(s) = &expr.kind {
-                        if s.len() == 1 {
+                        if s.is_empty() {
+                            self.emit("'\\0'");
+                        } else if s.len() == 1 {
                             let ch = s.chars().next().unwrap();
                             self.emit(&format!("'{}'", escape_c_char(ch)));
                         } else {
@@ -2642,8 +2962,12 @@ impl CodeGen {
                 } else if builtins::is_builtin_proc(&actual_name) {
                     self.emit_indent();
                     let char_builtins = ["CAP", "ORD", "CHR", "Write"];
-                    let arg_strs: Vec<String> = args.iter().map(|a| {
+                    let is_set_elem_builtin = actual_name == "INCL" || actual_name == "EXCL";
+                    let arg_strs: Vec<String> = args.iter().enumerate().map(|(idx, a)| {
                         if char_builtins.contains(&actual_name.as_ref()) {
+                            self.expr_to_char_string(a)
+                        } else if is_set_elem_builtin && idx == 1 {
+                            // Second arg of INCL/EXCL is the element — coerce char
                             self.expr_to_char_string(a)
                         } else {
                             self.expr_to_string(a)
@@ -2925,6 +3249,16 @@ impl CodeGen {
                     }
                 }
 
+                // Resolve through pointer_base_types if type_name points to a pointer-to-record
+                if let Some(ref tn) = type_name {
+                    let fields = self.record_fields.get(tn);
+                    if fields.is_none() || fields.map_or(false, |f| f.is_empty()) {
+                        if let Some(base) = self.pointer_base_types.get(tn).cloned() {
+                            type_name = Some(base);
+                        }
+                    }
+                }
+
                 let field_names = if let Some(tn) = &type_name {
                     self.record_fields.get(tn).cloned().unwrap_or_default()
                 } else {
@@ -3102,8 +3436,11 @@ impl CodeGen {
                     }
                     // For builtins that take char args, convert single-char strings to char literals
                     let char_builtins = ["CAP", "ORD", "CHR", "Write"];
-                    let arg_strs: Vec<String> = args.iter().map(|a| {
+                    let is_set_elem_builtin = actual_name == "INCL" || actual_name == "EXCL";
+                    let arg_strs: Vec<String> = args.iter().enumerate().map(|(idx, a)| {
                         if char_builtins.contains(&actual_name.as_ref()) {
+                            self.expr_to_char_string(a)
+                        } else if is_set_elem_builtin && idx == 1 {
                             self.expr_to_char_string(a)
                         } else {
                             self.expr_to_string(a)
@@ -3192,10 +3529,17 @@ impl CodeGen {
                     self.emit("((");
                     self.gen_expr(right);
                     self.emit(" >> ");
-                    self.gen_expr(left);
+                    self.gen_expr_for_binop(left);
                     self.emit(") & 1)");
                 } else if matches!(op, BinaryOp::IntDiv) {
-                    if self.is_unsigned_expr(left) || self.is_unsigned_expr(right) {
+                    if self.is_address_expr(left) || self.is_address_expr(right) {
+                        // ADDRESS DIV: cast to uintptr_t for pointer arithmetic
+                        self.emit("(void*)((uintptr_t)");
+                        self.gen_expr(left);
+                        self.emit(" / (uintptr_t)");
+                        self.gen_expr(right);
+                        self.emit(")");
+                    } else if self.is_unsigned_expr(left) || self.is_unsigned_expr(right) {
                         // Unsigned DIV (CARDINAL or LONGCARD): plain C division.
                         // No explicit cast — operands already have the correct
                         // unsigned type; casting to uint32_t would truncate LONGCARD.
@@ -3213,7 +3557,14 @@ impl CodeGen {
                         self.emit(")");
                     }
                 } else if matches!(op, BinaryOp::Mod) {
-                    if self.is_unsigned_expr(left) || self.is_unsigned_expr(right) {
+                    if self.is_address_expr(left) || self.is_address_expr(right) {
+                        // ADDRESS MOD: cast to uintptr_t for pointer arithmetic
+                        self.emit("(void*)((uintptr_t)");
+                        self.gen_expr(left);
+                        self.emit(" % (uintptr_t)");
+                        self.gen_expr(right);
+                        self.emit(")");
+                    } else if self.is_unsigned_expr(left) || self.is_unsigned_expr(right) {
                         // Unsigned MOD (CARDINAL or LONGCARD): plain C modulo.
                         // No explicit cast — operands already have the correct
                         // unsigned type; casting to uint32_t would truncate LONGCARD.
@@ -3416,15 +3767,15 @@ impl CodeGen {
                         match elem {
                             SetElement::Single(e) => {
                                 self.emit("(1u << ");
-                                self.gen_expr(e);
+                                self.gen_expr_for_binop(e);
                                 self.emit(")");
                             }
                             SetElement::Range(lo, hi) => {
                                 // Generate a mask: ((2u << hi) - (1u << lo))
                                 self.emit("((2u << ");
-                                self.gen_expr(hi);
+                                self.gen_expr_for_binop(hi);
                                 self.emit(") - (1u << ");
-                                self.gen_expr(lo);
+                                self.gen_expr_for_binop(lo);
                                 self.emit("))");
                             }
                         }
@@ -3642,7 +3993,7 @@ impl CodeGen {
                 }
                 Selector::Index(indices, _) => {
                     for idx in indices {
-                        let idx_str = self.expr_to_string(idx);
+                        let idx_str = self.expr_to_char_string(idx);
                         result.push('[');
                         result.push_str(&idx_str);
                         result.push(']');
@@ -3684,7 +4035,7 @@ impl CodeGen {
                                 result = format!("(*{})", result);
                             }
                             for idx in indices {
-                                let idx_str = self.expr_to_string(idx);
+                                let idx_str = self.expr_to_char_string(idx);
                                 result.push('[');
                                 result.push_str(&idx_str);
                                 result.push(']');
@@ -3706,7 +4057,10 @@ impl CodeGen {
     /// Used in binary ops where single-char strings should be treated as CHAR.
     fn gen_expr_for_binop(&mut self, expr: &Expr) {
         if let ExprKind::StringLit(s) = &expr.kind {
-            if s.len() == 1 {
+            if s.is_empty() {
+                self.emit("'\\0'");
+                return;
+            } else if s.len() == 1 {
                 let ch = s.chars().next().unwrap();
                 self.emit(&format!("'{}'", escape_c_char(ch)));
                 return;
@@ -3725,7 +4079,9 @@ impl CodeGen {
     /// Like expr_to_string but for expressions that should be chars (single-char strings become char literals)
     fn expr_to_char_string(&mut self, expr: &Expr) -> String {
         if let ExprKind::StringLit(s) = &expr.kind {
-            if s.len() == 1 {
+            if s.is_empty() {
+                return "'\\0'".to_string();
+            } else if s.len() == 1 {
                 let ch = s.chars().next().unwrap();
                 return format!("'{}'", escape_c_char(ch));
             }
@@ -3816,9 +4172,59 @@ impl CodeGen {
         }
     }
 
-    /// Check if a TypeNode is a ProcedureType
+    /// Check if a TypeNode is a ProcedureType (including the PROC builtin)
+    /// Walk an expression tree and collect all bare identifier references.
+    fn collect_expr_ident_refs(expr: &Expr, out: &mut HashSet<String>) {
+        match &expr.kind {
+            ExprKind::IntLit(_) | ExprKind::RealLit(_) | ExprKind::StringLit(_) | ExprKind::CharLit(_) => {}
+            ExprKind::Designator(d) => {
+                if d.ident.module.is_none() {
+                    out.insert(d.ident.name.clone());
+                }
+                for sel in &d.selectors {
+                    if let Selector::Index(indices, _) = sel {
+                        for idx in indices {
+                            Self::collect_expr_ident_refs(idx, out);
+                        }
+                    }
+                }
+            }
+            ExprKind::UnaryOp { operand, .. } => {
+                Self::collect_expr_ident_refs(operand, out);
+            }
+            ExprKind::BinaryOp { left, right, .. } => {
+                Self::collect_expr_ident_refs(left, out);
+                Self::collect_expr_ident_refs(right, out);
+            }
+            ExprKind::FuncCall { desig, args } => {
+                if desig.ident.module.is_none() {
+                    out.insert(desig.ident.name.clone());
+                }
+                for arg in args {
+                    Self::collect_expr_ident_refs(arg, out);
+                }
+            }
+            ExprKind::SetConstructor { elements, .. } => {
+                for elem in elements {
+                    match elem {
+                        SetElement::Single(e) => Self::collect_expr_ident_refs(e, out),
+                        SetElement::Range(lo, hi) => {
+                            Self::collect_expr_ident_refs(lo, out);
+                            Self::collect_expr_ident_refs(hi, out);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn is_proc_type(tn: &TypeNode) -> bool {
-        matches!(tn, TypeNode::ProcedureType { .. })
+        match tn {
+            TypeNode::ProcedureType { .. } => true,
+            TypeNode::Named(qi) if qi.module.is_none() && qi.name == "PROC" => true,
+            _ => false,
+        }
     }
 
     fn named_type_to_c(&self, qi: &QualIdent) -> String {
@@ -3863,7 +4269,10 @@ impl CodeGen {
             "LONGCARD" => "uint64_t".to_string(),
             "COMPLEX" => "m2_COMPLEX".to_string(),
             "LONGCOMPLEX" => "m2_LONGCOMPLEX".to_string(),
-            "File" => "m2_File".to_string(),
+            "PROC" => "void (*)(void)".to_string(),
+            "File" if self.import_map.get("File").map_or(false, |m| {
+                matches!(m.as_str(), "FileSystem" | "FIO" | "RawIO" | "StreamFile")
+            }) => "m2_File".to_string(),
             other => {
                 // Check if this is a module-local enum type in an embedded implementation
                 // (e.g., "Status" inside Poller module → "Poller_Status")
@@ -3967,7 +4376,7 @@ impl CodeGen {
         match &expr.kind {
             ExprKind::IntLit(_) => "int32_t".to_string(),
             ExprKind::RealLit(_) => "float".to_string(),
-            ExprKind::StringLit(s) if s.len() == 1 => "char".to_string(),
+            ExprKind::StringLit(s) if s.len() <= 1 => "char".to_string(),
             ExprKind::StringLit(_) => "const char *".to_string(),
             ExprKind::CharLit(_) => "char".to_string(),
             ExprKind::BoolLit(_) => "int".to_string(),
@@ -4521,7 +4930,23 @@ impl CodeGen {
     }
 
     /// Check if an expression is likely CARDINAL/unsigned (for DIV/MOD codegen)
+    fn is_address_expr(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Designator(d) => {
+                d.ident.module.is_none() && d.selectors.is_empty()
+                    && self.var_types.get(&d.ident.name).map_or(false, |t| t == "ADDRESS")
+            }
+            ExprKind::BinaryOp { left, right, .. } => {
+                self.is_address_expr(left) || self.is_address_expr(right)
+            }
+            _ => false,
+        }
+    }
+
     fn is_unsigned_expr(&self, expr: &Expr) -> bool {
+        if self.is_address_expr(expr) {
+            return true;
+        }
         match &expr.kind {
             ExprKind::Designator(d) => {
                 d.ident.module.is_none() && d.selectors.is_empty()
@@ -4649,6 +5074,10 @@ impl CodeGen {
             if !stdlib::is_stdlib_module(module) {
                 return format!("{}_{}", module, orig);
             }
+        }
+        // Check if this is a nested proc with a mangled name
+        if let Some(mangled) = self.nested_proc_names.get(name) {
+            return mangled.clone();
         }
         // Check if this name has an EXPORTC alias
         if let Some(ecn) = self.export_c_names.get(name) {

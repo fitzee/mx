@@ -29,8 +29,8 @@ FROM InOut IMPORT WriteString, WriteLn, WriteInt, WriteCard;
 FROM AllocUtil IMPORT ByteArray, BytePtr, IsPowerOfTwo, AlignUp,
                       PtrAdd, PtrDiff, FillBytes,
                       ReadAddr, WriteAddr;
-FROM Arena IMPORT Arena;
-FROM Pool IMPORT Pool;
+IMPORT Arena;
+IMPORT Pool;
 
 VAR
   passed, failed, total: INTEGER;
@@ -151,7 +151,7 @@ END TestAddrRW;
 
 PROCEDURE TestArenaBasic;
 VAR buf: ARRAY [0..1023] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p1, p2, p3: ADDRESS;
     ok: BOOLEAN;
 BEGIN
@@ -179,7 +179,7 @@ END TestArenaBasic;
 
 PROCEDURE TestArenaFull;
 VAR buf: ARRAY [0..63] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p: ADDRESS;
     ok: BOOLEAN;
 BEGIN
@@ -202,7 +202,7 @@ END TestArenaFull;
 
 PROCEDURE TestArenaHighwater;
 VAR buf: ARRAY [0..255] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p: ADDRESS;
     ok: BOOLEAN;
     m: CARDINAL;
@@ -227,7 +227,7 @@ END TestArenaHighwater;
 
 PROCEDURE TestArenaMarkReset;
 VAR buf: ARRAY [0..255] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p1, p2: ADDRESS;
     ok: BOOLEAN;
     m: CARDINAL;
@@ -252,7 +252,7 @@ END TestArenaMarkReset;
 
 PROCEDURE TestArenaResetInvalid;
 VAR buf: ARRAY [0..127] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p: ADDRESS;
     ok: BOOLEAN;
 BEGIN
@@ -266,7 +266,7 @@ END TestArenaResetInvalid;
 
 PROCEDURE TestArenaClear;
 VAR buf: ARRAY [0..127] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p: ADDRESS;
     ok: BOOLEAN;
 BEGIN
@@ -280,7 +280,7 @@ END TestArenaClear;
 
 PROCEDURE TestArenaAlignVaried;
 VAR buf: ARRAY [0..1023] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p: ADDRESS;
     ok: BOOLEAN;
 BEGIN
@@ -313,7 +313,7 @@ END TestArenaAlignVaried;
 
 PROCEDURE TestArenaPoison;
 VAR buf: ARRAY [0..255] OF CHAR;
-    a: Arena;
+    a: Arena.Arena;
     p: ADDRESS;
     ok: BOOLEAN;
     bp: BytePtr;
@@ -340,7 +340,7 @@ END TestArenaPoison;
 
 PROCEDURE TestPoolBasic;
 VAR buf: ARRAY [0..511] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
     blk: ADDRESS;
     i, count: CARDINAL;
@@ -368,7 +368,7 @@ END TestPoolBasic;
 
 PROCEDURE TestPoolFreeRealloc;
 VAR buf: ARRAY [0..255] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
     a1, a2, a3, r1, r2: ADDRESS;
 BEGIN
@@ -395,7 +395,7 @@ END TestPoolFreeRealloc;
 
 PROCEDURE TestPoolCounters;
 VAR buf: ARRAY [0..255] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
     a1, a2, a3: ADDRESS;
 BEGIN
@@ -416,7 +416,7 @@ END TestPoolCounters;
 
 PROCEDURE TestPoolInvalidNil;
 VAR buf: ARRAY [0..127] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
 BEGIN
   Pool.Init(pl, ADR(buf), 128, 16, ok);
@@ -430,7 +430,7 @@ END TestPoolInvalidNil;
 PROCEDURE TestPoolInvalidRange;
 VAR buf: ARRAY [0..127] OF CHAR;
     other: ARRAY [0..31] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
 BEGIN
   Pool.Init(pl, ADR(buf), 128, 16, ok);
@@ -443,7 +443,7 @@ END TestPoolInvalidRange;
 
 PROCEDURE TestPoolInvalidAlign;
 VAR buf: ARRAY [0..127] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
     unaligned: ADDRESS;
 BEGIN
@@ -459,7 +459,7 @@ END TestPoolInvalidAlign;
 
 PROCEDURE TestPoolPoison;
 VAR buf: ARRAY [0..255] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
     blk: ADDRESS;
     bp: BytePtr;
@@ -485,7 +485,7 @@ END TestPoolPoison;
 
 PROCEDURE TestPoolStress;
 VAR buf: ARRAY [0..2047] OF CHAR;
-    pl: Pool;
+    pl: Pool.Pool;
     ok: BOOLEAN;
     ptrs: ARRAY [0..63] OF ADDRESS;
     held: ARRAY [0..63] OF BOOLEAN;

@@ -29,6 +29,7 @@ impl TypeRegistry {
         reg.register(Type::Complex);     // 15
         reg.register(Type::LongComplex); // 16
         reg.register(Type::RefAny);      // 17
+        reg.register(Type::ProcedureType { params: vec![], return_type: None }); // 18 - PROC
         reg
     }
 
@@ -66,6 +67,7 @@ pub const TY_LONGCARD: TypeId = 14;
 pub const TY_COMPLEX: TypeId = 15;
 pub const TY_LONGCOMPLEX: TypeId = 16;
 pub const TY_REFANY: TypeId = 17;
+pub const TY_PROC: TypeId = 18;
 
 #[derive(Debug, Clone)]
 pub enum Type {
@@ -287,6 +289,12 @@ pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bo
     if dt.is_integer_type() && st.is_integer_type() {
         return true;
     }
+    // ADDRESS is compatible with integer types (PIM4 SYSTEM)
+    if (matches!(dt, Type::Address) && st.is_integer_type())
+        || (dt.is_integer_type() && matches!(st, Type::Address))
+    {
+        return true;
+    }
     // REAL types
     if dt.is_real_type() && st.is_numeric() {
         return true;
@@ -305,6 +313,14 @@ pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bo
     // Pointer-to-pointer assignment: any pointer can be assigned to another pointer
     // of the same or compatible base type (simplified: allow any pointer assignment)
     if dt.is_pointer() && st.is_pointer() {
+        return true;
+    }
+    // Opaque types are pointers in PIM4: accept NIL, ADDRESS, and other pointer types
+    if matches!(dt, Type::Opaque { .. }) && (matches!(st, Type::Nil) || st.is_pointer()) {
+        return true;
+    }
+    // Opaque types can also be assigned to pointer/ADDRESS targets
+    if dt.is_pointer() && matches!(st, Type::Opaque { .. }) {
         return true;
     }
     // REFANY accepts any REF type
@@ -326,9 +342,9 @@ pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bo
             return true;
         }
     }
-    // CHAR and single-char string
+    // CHAR and single-char or empty string (empty string = NUL character)
     if dst == TY_CHAR {
-        if let Type::StringLit(1) = st {
+        if matches!(st, Type::StringLit(0) | Type::StringLit(1)) {
             return true;
         }
     }
@@ -358,6 +374,23 @@ pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bo
     if matches!(dt, Type::OpenArray { .. }) && matches!(st, Type::Array { .. } | Type::OpenArray { .. }) {
         return true;
     }
+    // Procedure type structural equivalence
+    if let (Type::ProcedureType { params: dp, return_type: dr },
+            Type::ProcedureType { params: sp, return_type: sr }) = (dt, st) {
+        let params_match = dp.len() == sp.len()
+            && dp.iter().zip(sp.iter()).all(|(a, b)| {
+                a.is_var == b.is_var
+                    && (a.typ == b.typ || assignment_compatible(reg, a.typ, b.typ))
+            });
+        let ret_match = match (dr, sr) {
+            (None, None) => true,
+            (Some(d), Some(s)) => *d == *s || assignment_compatible(reg, *d, *s),
+            _ => false,
+        };
+        if params_match && ret_match {
+            return true;
+        }
+    }
     // Alias resolution
     if let Type::Alias { target, .. } = dt {
         return assignment_compatible(reg, *target, src);
@@ -384,6 +417,13 @@ pub fn expression_compatible(reg: &TypeRegistry, t1: TypeId, t2: TypeId) -> bool
     let ty2 = reg.get(t2);
 
     if ty1.is_numeric() && ty2.is_numeric() {
+        return true;
+    }
+    // ADDRESS is compatible with integer types for arithmetic (PIM4 SYSTEM)
+    if (matches!(ty1, Type::Address) && ty2.is_integer_type())
+        || (ty1.is_integer_type() && matches!(ty2, Type::Address))
+        || (matches!(ty1, Type::Address) && matches!(ty2, Type::Address))
+    {
         return true;
     }
     if ty1.is_set() && ty2.is_set() {

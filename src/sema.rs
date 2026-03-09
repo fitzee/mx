@@ -523,7 +523,21 @@ impl SemanticAnalyzer {
                 // We don't re-define; just look up and update the placeholder's target.
                 if let Some(sym) = self.symtab.lookup(&t.name) {
                     let old_id = sym.typ;
-                    *self.types.get_mut(old_id) = self.types.get(type_id).clone();
+                    // If the resolved type is a forward-reference placeholder (Opaque with
+                    // empty module from first pass), create an Alias so it tracks the target
+                    // when the target is resolved later.
+                    let is_forward_placeholder = matches!(
+                        self.types.get(type_id),
+                        Type::Opaque { module, .. } if module.is_empty()
+                    );
+                    if is_forward_placeholder && type_id != old_id {
+                        *self.types.get_mut(old_id) = Type::Alias {
+                            name: t.name.clone(),
+                            target: type_id,
+                        };
+                    } else {
+                        *self.types.get_mut(old_id) = self.types.get(type_id).clone();
+                    }
                 } else {
                     let sym = self.make_type_symbol(&t.name, type_id, false, None, t.doc.clone());
                     self.define_sym(sym, &t.loc);
@@ -671,6 +685,32 @@ impl SemanticAnalyzer {
                                         });
                                     }
                                 }
+                                // Collect fields from nested variant parts
+                                if let Some(nested_vp) = &vfl.variant {
+                                    // Add nested tag field
+                                    if let Some(nested_tag) = &nested_vp.tag_name {
+                                        let nested_tag_type = self.resolve_named_type(&nested_vp.tag_type);
+                                        vfields.push(RecordField {
+                                            name: nested_tag.clone(),
+                                            typ: nested_tag_type,
+                                            offset: 0,
+                                        });
+                                    }
+                                    for nv in &nested_vp.variants {
+                                        for nvfl in &nv.fields {
+                                            for f in &nvfl.fixed {
+                                                let typ = self.resolve_type_node(&f.typ);
+                                                for name in &f.names {
+                                                    vfields.push(RecordField {
+                                                        name: name.clone(),
+                                                        typ,
+                                                        offset: 0,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             vcases.push(VariantCase {
                                 labels,
@@ -758,8 +798,20 @@ impl SemanticAnalyzer {
             TypeNode::Subrange { low, high, loc } => {
                 let lo = self.eval_const_int(low).unwrap_or(0);
                 let hi = self.eval_const_int(high).unwrap_or(0);
+                // Infer base type from bound expressions
+                let lo_val = self.eval_const_expr(low);
+                let hi_val = self.eval_const_expr(high);
+                let lo_is_char = matches!(&lo_val, ConstValue::Char(_))
+                    || matches!(&lo_val, ConstValue::String(s) if s.len() == 1);
+                let hi_is_char = matches!(&hi_val, ConstValue::Char(_))
+                    || matches!(&hi_val, ConstValue::String(s) if s.len() == 1);
+                let base = if lo_is_char || hi_is_char {
+                    TY_CHAR
+                } else {
+                    TY_INTEGER
+                };
                 self.types.register(Type::Subrange {
-                    base: TY_INTEGER,
+                    base,
                     low: lo,
                     high: hi,
                 })
@@ -867,6 +919,7 @@ impl SemanticAnalyzer {
                 "ADDRESS" => TY_ADDRESS,
                 "LONGINT" => TY_LONGINT,
                 "LONGCARD" => TY_LONGCARD,
+                "PROC" => TY_PROC,
                 _ => {
                     self.error(&qi.loc, format!("undefined type '{}'", qi.name));
                     TY_VOID
@@ -1213,10 +1266,14 @@ impl SemanticAnalyzer {
                         TY_REAL
                     }
                     BinaryOp::IntDiv | BinaryOp::Mod => {
-                        if lt != TY_VOID && !self.types.get(lt).is_integer_type() {
+                        if lt != TY_VOID && !self.types.get(lt).is_integer_type() && lt != TY_ADDRESS {
                             self.error(&expr.loc, "DIV/MOD requires integer operands");
                         }
-                        TY_INTEGER
+                        if lt == TY_ADDRESS || rt == TY_ADDRESS {
+                            TY_ADDRESS
+                        } else {
+                            TY_INTEGER
+                        }
                     }
                     BinaryOp::And | BinaryOp::Or => {
                         if lt != TY_VOID && lt != TY_BOOLEAN {

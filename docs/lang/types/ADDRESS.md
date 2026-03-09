@@ -7,7 +7,7 @@ Untyped pointer type for low-level programming. Defined in the SYSTEM module.
 - **Size**: One machine word (pointer-sized)
 - **Module**: Must import from `SYSTEM`
 - **Compatibility**: Assignment compatible with any pointer type
-- **Operations**: `+`, `-` (address arithmetic, implementation-defined)
+- **Operations**: `+`, `-`, `DIV`, `MOD` (address arithmetic, implementation-defined)
 - **Standard functions**: `ADR`, `SIZE`, `TSIZE`
 - **Null value**: `NIL`
 

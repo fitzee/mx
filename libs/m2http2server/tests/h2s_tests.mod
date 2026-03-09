@@ -191,7 +191,7 @@ MODULE h2s_tests;
 
     (* Send first DATA chunk *)
     Init(bodyBuf1, 64);
-    AppendChars(bodyBuf1, "Hello ");
+    AppendChars(bodyBuf1, "Hello ", 6);
     body1 := AsView(bodyBuf1);
 
     Init(input, 256);
@@ -212,7 +212,7 @@ MODULE h2s_tests;
 
     (* Send second DATA chunk with END_STREAM *)
     Init(bodyBuf2, 64);
-    AppendChars(bodyBuf2, "World!");
+    AppendChars(bodyBuf2, "World!", 6);
     body2 := AsView(bodyBuf2);
 
     Init(input, 256);
@@ -317,7 +317,7 @@ MODULE h2s_tests;
     (* Send 1000 bytes of DATA *)
     Init(bodyBuf, 1024);
     WHILE bodyBuf.len < 1000 DO
-      AppendByte(bodyBuf, "X");
+      AppendByte(bodyBuf, ORD("X"));
     END;
     bodyView := AsView(bodyBuf);
 
@@ -382,7 +382,7 @@ MODULE h2s_tests;
 
     (* Send PING with 8 bytes of data *)
     Init(pingData, 8);
-    AppendChars(pingData, "01234567");
+    AppendChars(pingData, "01234567", 8);
     pingView := AsView(pingData);
 
     Init(input, 64);
@@ -430,7 +430,7 @@ MODULE h2s_tests;
     Init(output, 4096);
 
     (* Send garbage instead of preface *)
-    AppendChars(input, "NOT A VALID HTTP2 PREFACE!");
+    AppendChars(input, "NOT A VALID HTTP2 PREFACE!", 25);
 
     FeedAndCollect(cp, input, output);
 

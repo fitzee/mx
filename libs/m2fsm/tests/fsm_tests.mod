@@ -19,7 +19,11 @@ FROM Fsm IMPORT Fsm, Transition, StepStatus,
                 Ok, NoTransition, GuardRejected, Error,
                 ActionProc, GuardProc, HookProc, TraceProc,
                 StateId, EventId, ActionId, GuardId,
-                NoState, NoAction, NoGuard;
+                NoState, NoAction, NoGuard,
+                Init, Reset, SetActions, SetGuards, SetHooks,
+                SetTrace, Step, CurrentState, StepCount,
+                InvalidCount, RejectCount, ErrorCount,
+                SetTrans, ClearTable;
 
 VAR
   passed, failed, total: INTEGER;
@@ -124,37 +128,37 @@ VAR
   acts: ARRAY [0..2] OF ActionProc;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
+  ClearTable(ADR(table), NS * NE);
 
   (* S0+E0 -> S1, action 1 *)
-  Fsm.SetTrans(table[0*NE+0], 1, 1, NoGuard);
+  SetTrans(table[0*NE+0], 1, 1, NoGuard);
   (* S1+E1 -> S2, action 2 *)
-  Fsm.SetTrans(table[1*NE+1], 2, 2, NoGuard);
+  SetTrans(table[1*NE+1], 2, 2, NoGuard);
   (* S2+E2 -> S0, no action *)
-  Fsm.SetTrans(table[2*NE+2], 0, NoAction, NoGuard);
+  SetTrans(table[2*NE+2], 0, NoAction, NoGuard);
 
   acts[0] := NIL;
   acts[1] := GoodAction;
   acts[2] := GoodAction;
 
-  Fsm.Init(f, 0, NIL, NS, NE, ADR(table));
-  Fsm.SetActions(f, ADR(acts), 3);
+  Init(f, 0, NIL, NS, NE, ADR(table));
+  SetActions(f, ADR(acts), 3);
   actionCallCount := 0;
 
-  Fsm.Step(f, 0, NIL, status);
+  Step(f, 0, NIL, status);
   Check("basic: S0+E0 ok", status = Ok);
-  Check("basic: state=1", Fsm.CurrentState(f) = 1);
+  Check("basic: state=1", CurrentState(f) = 1);
   Check("basic: action called", actionCallCount = 1);
 
-  Fsm.Step(f, 1, NIL, status);
+  Step(f, 1, NIL, status);
   Check("basic: S1+E1 ok", status = Ok);
-  Check("basic: state=2", Fsm.CurrentState(f) = 2);
+  Check("basic: state=2", CurrentState(f) = 2);
 
-  Fsm.Step(f, 2, NIL, status);
+  Step(f, 2, NIL, status);
   Check("basic: S2+E2 ok", status = Ok);
-  Check("basic: state=0", Fsm.CurrentState(f) = 0);
+  Check("basic: state=0", CurrentState(f) = 0);
 
-  Check("basic: steps=3", Fsm.StepCount(f) = 3);
+  Check("basic: steps=3", StepCount(f) = 3);
   Check("basic: actions=2", actionCallCount = 2)
 END TestBasic;
 
@@ -168,22 +172,22 @@ VAR
   table: ARRAY [0..8] OF Transition;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
+  ClearTable(ADR(table), NS * NE);
   (* Only S0+E0 -> S1 defined *)
-  Fsm.SetTrans(table[0*NE+0], 1, NoAction, NoGuard);
+  SetTrans(table[0*NE+0], 1, NoAction, NoGuard);
 
-  Fsm.Init(f, 0, NIL, NS, NE, ADR(table));
+  Init(f, 0, NIL, NS, NE, ADR(table));
 
   (* E1 has no transition from S0 *)
-  Fsm.Step(f, 1, NIL, status);
+  Step(f, 1, NIL, status);
   Check("notrans: status", status = NoTransition);
-  Check("notrans: state unchanged", Fsm.CurrentState(f) = 0);
-  Check("notrans: invalid=1", Fsm.InvalidCount(f) = 1);
+  Check("notrans: state unchanged", CurrentState(f) = 0);
+  Check("notrans: invalid=1", InvalidCount(f) = 1);
 
   (* E2 also has no transition from S0 *)
-  Fsm.Step(f, 2, NIL, status);
-  Check("notrans: invalid=2", Fsm.InvalidCount(f) = 2);
-  Check("notrans: steps=0", Fsm.StepCount(f) = 0)
+  Step(f, 2, NIL, status);
+  Check("notrans: invalid=2", InvalidCount(f) = 2);
+  Check("notrans: steps=0", StepCount(f) = 0)
 END TestNoTransition;
 
 (* ── Test 3: Guard rejected ───────────────────────── *)
@@ -197,32 +201,32 @@ VAR
   guards: ARRAY [0..1] OF GuardProc;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
+  ClearTable(ADR(table), NS * NE);
   (* S0+E0 -> S1, guard 1 *)
-  Fsm.SetTrans(table[0*NE+0], 1, NoAction, 1);
+  SetTrans(table[0*NE+0], 1, NoAction, 1);
 
   guards[0] := NIL;
   guards[1] := TestGuard;
 
-  Fsm.Init(f, 0, NIL, NS, NE, ADR(table));
-  Fsm.SetGuards(f, ADR(guards), 2);
+  Init(f, 0, NIL, NS, NE, ADR(table));
+  SetGuards(f, ADR(guards), 2);
 
   (* Guard allows *)
   guardShouldReject := FALSE;
   guardCallCount := 0;
-  Fsm.Step(f, 0, NIL, status);
+  Step(f, 0, NIL, status);
   Check("guard: allow ok", status = Ok);
-  Check("guard: state=1", Fsm.CurrentState(f) = 1);
+  Check("guard: state=1", CurrentState(f) = 1);
   Check("guard: called once", guardCallCount = 1);
 
   (* Reset and try with rejection *)
-  Fsm.Reset(f);
+  Reset(f);
   guardShouldReject := TRUE;
   guardCallCount := 0;
-  Fsm.Step(f, 0, NIL, status);
+  Step(f, 0, NIL, status);
   Check("guard: reject status", status = GuardRejected);
-  Check("guard: state unchanged", Fsm.CurrentState(f) = 0);
-  Check("guard: reject count=1", Fsm.RejectCount(f) = 1);
+  Check("guard: state unchanged", CurrentState(f) = 0);
+  Check("guard: reject count=1", RejectCount(f) = 1);
   Check("guard: guard called", guardCallCount = 1)
 END TestGuardReject;
 
@@ -238,11 +242,11 @@ VAR
   exitH: ARRAY [0..2] OF HookProc;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
+  ClearTable(ADR(table), NS * NE);
   (* S0+E0 -> S1 *)
-  Fsm.SetTrans(table[0*NE+0], 1, NoAction, NoGuard);
+  SetTrans(table[0*NE+0], 1, NoAction, NoGuard);
   (* S1+E1 -> S2 *)
-  Fsm.SetTrans(table[1*NE+1], 2, NoAction, NoGuard);
+  SetTrans(table[1*NE+1], 2, NoAction, NoGuard);
 
   enter[0] := EnterHook;
   enter[1] := EnterHook;
@@ -251,15 +255,15 @@ BEGIN
   exitH[1] := ExitHook;
   exitH[2] := ExitHook;
 
-  Fsm.Init(f, 0, ADR(f), NS, NE, ADR(table));
-  Fsm.SetHooks(f, ADR(enter), ADR(exitH));
+  Init(f, 0, ADR(f), NS, NE, ADR(table));
+  SetHooks(f, ADR(enter), ADR(exitH));
 
   hookIdx := 0;
   exitSeenState := 999;
   enterSeenState := 999;
 
   (* S0 -> S1 *)
-  Fsm.Step(f, 0, NIL, status);
+  Step(f, 0, NIL, status);
   Check("hooks: ok", status = Ok);
   Check("hooks: exit first", hookLog[0] = 200);  (* exit S0 *)
   Check("hooks: enter second", hookLog[1] = 101);  (* enter S1 *)
@@ -269,7 +273,7 @@ BEGIN
   (* S1 -> S2 *)
   exitSeenState := 999;
   enterSeenState := 999;
-  Fsm.Step(f, 1, NIL, status);
+  Step(f, 1, NIL, status);
   Check("hooks: exit S1", hookLog[2] = 201);  (* exit S1 *)
   Check("hooks: enter S2", hookLog[3] = 102);  (* enter S2 *)
   Check("hooks: exit sees S1", exitSeenState = 1);
@@ -287,24 +291,24 @@ VAR
   acts: ARRAY [0..1] OF ActionProc;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
+  ClearTable(ADR(table), NS * NE);
   (* S0+E0 -> S1, action 1 (will fail) *)
-  Fsm.SetTrans(table[0*NE+0], 1, 1, NoGuard);
+  SetTrans(table[0*NE+0], 1, 1, NoGuard);
 
   acts[0] := NIL;
   acts[1] := BadAction;
 
-  Fsm.Init(f, 0, NIL, NS, NE, ADR(table));
-  Fsm.SetActions(f, ADR(acts), 2);
+  Init(f, 0, NIL, NS, NE, ADR(table));
+  SetActions(f, ADR(acts), 2);
   actionCallCount := 0;
 
-  Fsm.Step(f, 0, NIL, status);
+  Step(f, 0, NIL, status);
   Check("actfail: status=Error", status = Error);
   Check("actfail: action called", actionCallCount = 1);
-  Check("actfail: errors=1", Fsm.ErrorCount(f) = 1);
+  Check("actfail: errors=1", ErrorCount(f) = 1);
   (* State remains changed on error (documented) *)
-  Check("actfail: state=1", Fsm.CurrentState(f) = 1);
-  Check("actfail: steps=0", Fsm.StepCount(f) = 0)
+  Check("actfail: state=1", CurrentState(f) = 1);
+  Check("actfail: steps=0", StepCount(f) = 0)
 END TestActionFail;
 
 (* ── Test 6: Trace correctness ────────────────────── *)
@@ -318,20 +322,20 @@ VAR
   acts: ARRAY [0..1] OF ActionProc;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
+  ClearTable(ADR(table), NS * NE);
   (* S0+E0 -> S1, action 1 *)
-  Fsm.SetTrans(table[0*NE+0], 1, 1, NoGuard);
+  SetTrans(table[0*NE+0], 1, 1, NoGuard);
 
   acts[0] := NIL;
   acts[1] := GoodAction;
 
-  Fsm.Init(f, 0, NIL, NS, NE, ADR(table));
-  Fsm.SetActions(f, ADR(acts), 2);
-  Fsm.SetTrace(f, TraceCb, NIL);
+  Init(f, 0, NIL, NS, NE, ADR(table));
+  SetActions(f, ADR(acts), 2);
+  SetTrace(f, TraceCb, NIL);
   traceCallCount := 0;
 
   (* Ok transition *)
-  Fsm.Step(f, 0, NIL, status);
+  Step(f, 0, NIL, status);
   Check("trace: called once", traceCallCount = 1);
   Check("trace: from=0", traceFrom = 0);
   Check("trace: to=1", traceTo = 1);
@@ -340,7 +344,7 @@ BEGIN
   Check("trace: status=Ok", traceSt = Ok);
 
   (* NoTransition *)
-  Fsm.Step(f, 1, NIL, status);
+  Step(f, 1, NIL, status);
   Check("trace: notrans called", traceCallCount = 2);
   Check("trace: notrans from=1", traceFrom = 1);
   Check("trace: notrans to=1", traceTo = 1);
@@ -357,18 +361,18 @@ VAR
   table: ARRAY [0..1] OF Transition;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
-  Fsm.SetTrans(table[0*NE+0], 1, NoAction, NoGuard);
+  ClearTable(ADR(table), NS * NE);
+  SetTrans(table[0*NE+0], 1, NoAction, NoGuard);
 
-  Fsm.Init(f, 0, NIL, NS, NE, ADR(table));
+  Init(f, 0, NIL, NS, NE, ADR(table));
 
-  Fsm.Step(f, 0, NIL, status);
-  Check("reset: state=1 before", Fsm.CurrentState(f) = 1);
+  Step(f, 0, NIL, status);
+  Check("reset: state=1 before", CurrentState(f) = 1);
 
-  Fsm.Reset(f);
-  Check("reset: state=0 after", Fsm.CurrentState(f) = 0);
-  Check("reset: steps=0", Fsm.StepCount(f) = 0);
-  Check("reset: invalid=0", Fsm.InvalidCount(f) = 0)
+  Reset(f);
+  Check("reset: state=0 after", CurrentState(f) = 0);
+  Check("reset: steps=0", StepCount(f) = 0);
+  Check("reset: invalid=0", InvalidCount(f) = 0)
 END TestReset;
 
 (* ── Test 8: Bounds check ─────────────────────────── *)
@@ -381,14 +385,14 @@ VAR
   table: ARRAY [0..3] OF Transition;
   status: StepStatus;
 BEGIN
-  Fsm.ClearTable(ADR(table), NS * NE);
-  Fsm.Init(f, 0, NIL, NS, NE, ADR(table));
+  ClearTable(ADR(table), NS * NE);
+  Init(f, 0, NIL, NS, NE, ADR(table));
 
   (* Event out of range *)
-  Fsm.Step(f, 99, NIL, status);
+  Step(f, 99, NIL, status);
   Check("bounds: status=Error", status = Error);
-  Check("bounds: errors=1", Fsm.ErrorCount(f) = 1);
-  Check("bounds: state unchanged", Fsm.CurrentState(f) = 0)
+  Check("bounds: errors=1", ErrorCount(f) = 1);
+  Check("bounds: state unchanged", CurrentState(f) = 0)
 END TestBounds;
 
 (* ── Test 9: ClearTable ───────────────────────────── *)
@@ -403,7 +407,7 @@ BEGIN
   table[0].guard := 2;
 
   (* Clear *)
-  Fsm.ClearTable(ADR(table), 4);
+  ClearTable(ADR(table), 4);
 
   Check("clear: [0].next", table[0].next = NoState);
   Check("clear: [0].action", table[0].action = NoAction);
@@ -417,7 +421,7 @@ PROCEDURE TestSetTrans;
 VAR
   t: Transition;
 BEGIN
-  Fsm.SetTrans(t, 7, 3, 2);
+  SetTrans(t, 7, 3, 2);
   Check("settrans: next=7", t.next = 7);
   Check("settrans: action=3", t.action = 3);
   Check("settrans: guard=2", t.guard = 2)

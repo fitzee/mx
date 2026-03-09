@@ -84,6 +84,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
         ("LONGCARD", TY_LONGCARD),
         ("COMPLEX", TY_COMPLEX),
         ("LONGCOMPLEX", TY_LONGCOMPLEX),
+        ("PROC", TY_PROC),
     ];
     for (name, typ) in builtins {
         let _ = symtab.define(

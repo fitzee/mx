@@ -205,7 +205,7 @@ BEGIN
   src[i] := '"'; INC(i);
   src[i] := 0C;
 
-  Init(p, ADR(src), i - 1);
+  Init(p, ADR(src), i);
   Check("esc: tok", Next(p, t));
   Check("esc: kind=JString", t.kind = JString);
   Check("esc: getstr", GetString(p, t, buf));
@@ -403,7 +403,7 @@ BEGIN
   src[i] := '"'; INC(i);
   src[i] := 0C;
 
-  Init(p, ADR(src), i - 1);
+  Init(p, ADR(src), i);
   Check("gets: tok", Next(p, t));
   Check("gets: ok", GetString(p, t, buf));
   Check("gets: [0]=a", buf[0] = 'a');
@@ -542,7 +542,7 @@ BEGIN
   src[i] := '"'; INC(i);
   src[i] := 0C;
 
-  Init(p, ADR(src), i - 1);
+  Init(p, ADR(src), i);
   Check("uni: tok", Next(p, t));
   Check("uni: kind=JString", t.kind = JString);
   Check("uni: getstr", GetString(p, t, buf));

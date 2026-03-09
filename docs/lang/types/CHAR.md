@@ -33,4 +33,5 @@ END;
 - Octal character constants are written as digits followed by `C` (e.g., `101C` for `'A'`).
 - CHAR is an ordinal type and can be used in `CASE` selectors and subrange definitions.
 - A string literal of length 1 (e.g., `"X"`) is compatible with CHAR.
+- An empty string literal (`""` or `''`) is compatible with CHAR and represents the NUL character (`CHR(0)`).
 - `CAP` converts lowercase to uppercase; non-letter characters are unchanged.
