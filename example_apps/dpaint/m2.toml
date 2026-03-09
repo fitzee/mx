@@ -7,7 +7,9 @@ includes=src ../../libs/m2gfx/src
 [deps]
 
 [cc]
-cflags=-I/opt/homebrew/include
-ldflags=-L/opt/homebrew/lib
 libs=SDL2 SDL2_ttf
 extra-c=../../libs/m2gfx/src/gfx_bridge.c
+
+[cc.feature.MACOS]
+cflags=-I/opt/homebrew/include
+ldflags=-L/opt/homebrew/lib

@@ -23,6 +23,8 @@ entry=tests/auth_tests.mod
 
 [cc]
 extra-c=src/auth_bridge.c
+libs=-lssl -lcrypto
+
+[cc.feature.MACOS]
 cflags=-I/opt/homebrew/opt/openssl@3/include
 ldflags=-L/opt/homebrew/opt/openssl@3/lib
-libs=-lssl -lcrypto

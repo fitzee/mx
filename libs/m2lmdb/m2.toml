@@ -17,6 +17,8 @@ includes=src
 
 [cc]
 extra-c=src/lmdb_bridge.c
+libs=-llmdb
+
+[cc.feature.MACOS]
 cflags=-I/opt/homebrew/include -I/usr/local/include
 ldflags=-L/opt/homebrew/lib -L/usr/local/lib
-libs=-llmdb

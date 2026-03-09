@@ -257,11 +257,23 @@ pub fn build_project(
     opts.cc = config.cc.clone();
     opts.opt_level = config.opt_level;
     opts.verbose = config.verbose;
-    opts.features = config.features.clone();
     opts.debug = config.debug;
 
+    // Auto-inject platform feature (MACOS or LINUX)
+    let mut features = config.features.clone();
+    if cfg!(target_os = "macos") {
+        if !features.contains(&"MACOS".to_string()) {
+            features.push("MACOS".to_string());
+        }
+    } else if cfg!(target_os = "linux") {
+        if !features.contains(&"LINUX".to_string()) {
+            features.push("LINUX".to_string());
+        }
+    }
+    opts.features = features.clone();
+
     // Apply manifest [cc] section, merged with any active feature-gated [cc] sections
-    let effective_cc = manifest.merged_cc(&config.features);
+    let effective_cc = manifest.merged_cc(&features);
     opts.extra_cflags = effective_cc.cflags.clone();
     opts.frameworks = effective_cc.frameworks.clone();
     for extra in &effective_cc.extra_c {
@@ -290,7 +302,7 @@ pub fn build_project(
         .and_then(|c| crate::project_resolver::Lockfile::parse(&c));
 
     // Merge transitive [cc] sections from dependencies
-    let dep_cc = crate::project_resolver::collect_transitive_cc(root, manifest, lockfile.as_ref());
+    let dep_cc = crate::project_resolver::collect_transitive_cc(root, manifest, lockfile.as_ref(), &features);
     for f in &dep_cc.cflags {
         if !opts.extra_cflags.contains(f) {
             opts.extra_cflags.push(f.clone());

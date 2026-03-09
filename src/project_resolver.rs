@@ -431,6 +431,7 @@ fn collect_dep_cc(
     manifest: &Manifest,
     cc: &mut CcSection,
     visited: &mut HashSet<PathBuf>,
+    features: &[String],
 ) {
     for dep in &manifest.deps {
         let dep_root = match &dep.source {
@@ -455,23 +456,24 @@ fn collect_dep_cc(
             let dep_manifest_path = dep_root.join("m2.toml");
             if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
                 if let Some(dep_manifest) = Manifest::parse(&dep_content) {
-                    // Merge this dep's [cc] section
-                    for f in &dep_manifest.cc.cflags {
+                    // Merge this dep's [cc] section (with platform features applied)
+                    let dep_cc = dep_manifest.merged_cc(features);
+                    for f in &dep_cc.cflags {
                         if !cc.cflags.contains(f) {
                             cc.cflags.push(f.clone());
                         }
                     }
-                    for f in &dep_manifest.cc.ldflags {
+                    for f in &dep_cc.ldflags {
                         if !cc.ldflags.contains(f) {
                             cc.ldflags.push(f.clone());
                         }
                     }
-                    for f in &dep_manifest.cc.libs {
+                    for f in &dep_cc.libs {
                         if !cc.libs.contains(f) {
                             cc.libs.push(f.clone());
                         }
                     }
-                    for f in &dep_manifest.cc.extra_c {
+                    for f in &dep_cc.extra_c {
                         // Resolve relative to the dep's root, canonicalize to avoid duplicates
                         let joined = dep_root.join(f);
                         let abs = joined.canonicalize()
@@ -481,13 +483,13 @@ fn collect_dep_cc(
                             cc.extra_c.push(abs);
                         }
                     }
-                    for f in &dep_manifest.cc.frameworks {
+                    for f in &dep_cc.frameworks {
                         if !cc.frameworks.contains(f) {
                             cc.frameworks.push(f.clone());
                         }
                     }
                     // Recurse into transitive deps
-                    collect_dep_cc(&dep_root, &dep_manifest, cc, visited);
+                    collect_dep_cc(&dep_root, &dep_manifest, cc, visited, features);
                 }
             }
         }
@@ -500,6 +502,7 @@ pub fn collect_transitive_cc(
     root: &Path,
     manifest: &Manifest,
     lockfile: Option<&Lockfile>,
+    features: &[String],
 ) -> CcSection {
     let mut cc = CcSection::default();
 
@@ -512,20 +515,21 @@ pub fn collect_transitive_cc(
             let dep_manifest_path = dep_root.join("m2.toml");
             if let Ok(dep_content) = std::fs::read_to_string(&dep_manifest_path) {
                 if let Some(dep_manifest) = Manifest::parse(&dep_content) {
-                    for f in &dep_manifest.cc.cflags {
+                    let dep_cc = dep_manifest.merged_cc(features);
+                    for f in &dep_cc.cflags {
                         if !cc.cflags.contains(f) { cc.cflags.push(f.clone()); }
                     }
-                    for f in &dep_manifest.cc.ldflags {
+                    for f in &dep_cc.ldflags {
                         if !cc.ldflags.contains(f) { cc.ldflags.push(f.clone()); }
                     }
-                    for f in &dep_manifest.cc.libs {
+                    for f in &dep_cc.libs {
                         if !cc.libs.contains(f) { cc.libs.push(f.clone()); }
                     }
-                    for f in &dep_manifest.cc.extra_c {
+                    for f in &dep_cc.extra_c {
                         let abs = dep_root.join(f).to_string_lossy().into_owned();
                         if !cc.extra_c.contains(&abs) { cc.extra_c.push(abs); }
                     }
-                    for f in &dep_manifest.cc.frameworks {
+                    for f in &dep_cc.frameworks {
                         if !cc.frameworks.contains(f) { cc.frameworks.push(f.clone()); }
                     }
                 }
@@ -533,7 +537,7 @@ pub fn collect_transitive_cc(
         }
     } else if !manifest.deps.is_empty() {
         let mut visited = HashSet::new();
-        collect_dep_cc(root, manifest, &mut cc, &mut visited);
+        collect_dep_cc(root, manifest, &mut cc, &mut visited, features);
     }
 
     cc

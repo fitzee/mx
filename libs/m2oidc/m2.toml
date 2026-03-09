@@ -20,6 +20,8 @@ m2pthreads=path:../m2pthreads
 
 [cc]
 extra-c=src/oidc_bridge.c
+libs=-lssl -lcrypto
+
+[cc.feature.MACOS]
 cflags=-I/opt/homebrew/opt/openssl@3/include
 ldflags=-L/opt/homebrew/opt/openssl@3/lib
-libs=-lssl -lcrypto

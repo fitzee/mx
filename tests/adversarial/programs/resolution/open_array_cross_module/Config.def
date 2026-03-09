@@ -1,0 +1,11 @@
+DEFINITION MODULE Config;
+
+TYPE
+  Settings = RECORD
+    verbose: BOOLEAN;
+  END;
+
+(* Same name "Init" as Encoder.Init — this is the collision that triggers the bug *)
+PROCEDURE Init(VAR s: Settings);
+
+END Config.

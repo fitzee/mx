@@ -2,7 +2,7 @@
 
 **v1.0.1** — A Modula-2 compiler that transpiles to readable C. Targets PIM4 with practical extensions (exceptions, objects, reference types, concurrency via `--m2plus`). Ships with a package manager, LSP server, VS Code extension, and libraries covering networking, graphics, crypto, database, compression, and async I/O.
 
-79% compatibility with the GCC gm2 PIM4 test suite (383/483 tests pass). 150 unit tests, 550 adversarial tests across 8 compiler configurations.
+79% compatibility with the GCC gm2 PIM4 test suite (383/483 tests pass). 150 unit tests, 558 adversarial tests across 8 compiler configurations.
 
 **Not [m2sf/m2c](https://github.com/m2sf/m2c).** That project is a C99 translator for the Modula-2 R10 bootstrap kernel subset. **Not [GCC gm2](https://gcc.gnu.org/onlinedocs/gm2/).** That is the GNU Modula-2 frontend shipping with GCC 13, targeting PIM2/PIM4/ISO and compiling to native code through GCC's backend. This project transpiles PIM4+extensions to C and includes a complete toolchain.
 
@@ -70,6 +70,8 @@ code --install-extension tools/vscode-m2plus/m2plus-0.1.0.vsix
 ### Bug fixes
 
 - **Enum variant scope pollution in multi-module codegen** — Enum variant names (`OK`, `Invalid`, `OutOfMemory`, etc.) shared across different modules no longer collide. Previously, `import_map` entries leaked between embedded modules, causing variant names to resolve to the wrong source module. Each embedded module now starts with a clean import scope, and bare-key `enum_variants` entries are only registered for the main module.
+- **Open array high bound missing in cross-module calls** — When multiple imported modules exported procedures with the same name (e.g., `Init`), calling the FROM-imported one with an open array parameter could omit the `_high` argument in the generated C. The symtab's `lookup_any` found the wrong module's procedure first, returning param info without the open array flag. FROM-import prefixed lookup now takes priority over bare-name symtab lookup, matching the existing FuncCall path.
+- **Cross-platform build support** — Homebrew-specific include/library paths (`/opt/homebrew`) are now gated behind `[cc.feature.MACOS]` in library m2.toml files. The build system auto-injects `MACOS` or `LINUX` as implicit platform features at build time. The compiler driver gates GC paths and `-framework` flags on `cfg!(target_os = "macos")`. Libraries now build on Linux with system-installed packages (e.g., `libssl-dev`, `liblmdb-dev`) without extra flags.
 
 ## What's new in 1.0.0
 
@@ -90,7 +92,7 @@ code --install-extension tools/vscode-m2plus/m2plus-0.1.0.vsix
 ### Test coverage
 
 - 150 cargo unit tests
-- 550 adversarial tests (9 new test programs covering all codegen fixes)
+- 558 adversarial tests
 - 79% gm2 PIM4 compatibility (383/483), up from 54% (260/483)
 
 ## Documentation
@@ -115,7 +117,7 @@ sdk/           Platform SDKs
 cargo test                                            # 150 unit tests
 bash tests/run_all.sh                                 # integration tests
 bash tests/conformance.sh                             # conformance tests
-python3 tests/adversarial/run_adversarial.py --mode ci  # 550 adversarial tests (ASan+UBSan, 8 compiler configs)
+python3 tests/adversarial/run_adversarial.py --mode ci  # 558 adversarial tests (ASan+UBSan, 8 compiler configs)
 ```
 
 ## License

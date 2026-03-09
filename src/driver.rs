@@ -965,7 +965,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
             if opts.m2plus {
                 if let Ok(c_src) = std::fs::read_to_string(&c_file) {
-                    if c_src.contains("#define M2_USE_GC 1") {
+                    if c_src.contains("#define M2_USE_GC 1") && cfg!(target_os = "macos") {
                         compile_cmd.arg("-I/opt/homebrew/include");
                     }
                 }
@@ -1000,9 +1000,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             for lib in &opts.link_libs {
                 link_cmd.arg(format!("-l{}", lib));
             }
-            for fw in &opts.frameworks {
-                link_cmd.arg("-framework");
-                link_cmd.arg(fw);
+            if cfg!(target_os = "macos") {
+                for fw in &opts.frameworks {
+                    link_cmd.arg("-framework");
+                    link_cmd.arg(fw);
+                }
             }
             if opts.m2plus {
                 if let Ok(c_src) = std::fs::read_to_string(&c_file) {
@@ -1010,7 +1012,9 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         link_cmd.arg("-lpthread");
                     }
                     if c_src.contains("#define M2_USE_GC 1") {
-                        link_cmd.arg("-L/opt/homebrew/lib");
+                        if cfg!(target_os = "macos") {
+                            link_cmd.arg("-L/opt/homebrew/lib");
+                        }
                         link_cmd.arg("-lgc");
                     }
                 }
@@ -1060,9 +1064,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             for flag in &opts.extra_cflags {
                 cmd.arg(flag);
             }
-            for fw in &opts.frameworks {
-                cmd.arg("-framework");
-                cmd.arg(fw);
+            if cfg!(target_os = "macos") {
+                for fw in &opts.frameworks {
+                    cmd.arg("-framework");
+                    cmd.arg(fw);
+                }
             }
 
             if opts.m2plus {
@@ -1071,8 +1077,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         cmd.arg("-lpthread");
                     }
                     if c_src.contains("#define M2_USE_GC 1") {
-                        cmd.arg("-I/opt/homebrew/include");
-                        cmd.arg("-L/opt/homebrew/lib");
+                        if cfg!(target_os = "macos") {
+                            cmd.arg("-I/opt/homebrew/include");
+                            cmd.arg("-L/opt/homebrew/lib");
+                        }
                         cmd.arg("-lgc");
                     }
                 }

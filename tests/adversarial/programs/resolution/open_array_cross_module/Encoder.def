@@ -1,0 +1,6 @@
+DEFINITION MODULE Encoder;
+
+(* Init takes an open array — the high bound must be passed in generated C *)
+PROCEDURE Init(VAR buf: ARRAY OF CHAR; len: CARDINAL);
+
+END Encoder.

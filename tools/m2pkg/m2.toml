@@ -11,5 +11,7 @@ m2http=path:../../libs/m2http
 m2auth=path:../../libs/m2auth
 
 [cc]
+
+[cc.feature.MACOS]
 cflags=-I/opt/homebrew/opt/openssl@3/include
 ldflags=-L/opt/homebrew/opt/openssl@3/lib

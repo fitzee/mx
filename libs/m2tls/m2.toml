@@ -20,6 +20,8 @@ m2evloop=path:../m2evloop
 
 [cc]
 extra-c=src/tls_bridge.c
+libs=-lssl -lcrypto
+
+[cc.feature.MACOS]
 cflags=-I/opt/homebrew/opt/openssl@3/include
 ldflags=-L/opt/homebrew/opt/openssl@3/lib
-libs=-lssl -lcrypto

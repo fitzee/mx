@@ -8,7 +8,10 @@ includes=src
 [deps]
 
 [cc]
-cflags=-I/opt/homebrew/include -D_THREAD_SAFE
-ldflags=-L/opt/homebrew/lib
+cflags=-D_THREAD_SAFE
 libs=-lSDL2 -lSDL2_ttf
 extra-c=src/gfx_bridge.c
+
+[cc.feature.MACOS]
+cflags=-I/opt/homebrew/include
+ldflags=-L/opt/homebrew/lib

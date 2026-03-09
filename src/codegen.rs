@@ -2990,21 +2990,23 @@ impl CodeGen {
                     } else {
                         self.resolve_proc_name(desig)
                     };
-                    // Look up param info: try module-prefixed name, then actual name,
-                    // then FROM-import prefixed name
+                    // Look up param info: try module-prefixed name first (most precise),
+                    // then fall back to bare name / symtab lookup
                     let mut param_info = if let Some((mod_name, _)) = module_qualified {
                         let prefixed = format!("{}_{}", mod_name, actual_name);
                         let info = self.get_param_info(&prefixed);
                         if info.is_empty() { self.get_param_info(&actual_name) } else { info }
                     } else {
-                        let mut info = self.get_param_info(&actual_name);
+                        // For FROM-imported names, prefer the module-prefixed lookup
+                        // to avoid symtab collisions with same-named procs in other modules
+                        let mut info = Vec::new();
+                        if let Some(module) = self.import_map.get(&actual_name).cloned() {
+                            let orig = self.original_import_name(&actual_name).to_string();
+                            let prefixed = format!("{}_{}", module, orig);
+                            info = self.get_param_info(&prefixed);
+                        }
                         if info.is_empty() {
-                            // Try FROM Module IMPORT name: check import_map for module prefix
-                            if let Some(module) = self.import_map.get(&actual_name) {
-                                let orig = self.original_import_name(&actual_name).to_string();
-                                let prefixed = format!("{}_{}", module, orig);
-                                info = self.get_param_info(&prefixed);
-                            }
+                            info = self.get_param_info(&actual_name);
                         }
                         info
                     };

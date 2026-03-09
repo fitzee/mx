@@ -412,6 +412,18 @@
     "_comment": "Tests procedure type typedefs with open array params include _high in the C typedef."
   },
   {
+    "name": "open_array_cross_module",
+    "category": "resolution",
+    "dir": "programs/resolution/open_array_cross_module",
+    "main": "OpenArrayCrossModule.mod",
+    "include_dirs": ["."],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "fixed array high OK\nfixed array fill OK\nopen array forward OK\nall open array cross module OK\n",
+    "tags": ["ci"],
+    "_comment": "Regression: FROM-imported proc with open array param must resolve correct module's param info when another module exports a same-named proc without open arrays."
+  },
+  {
     "name": "args_getarg_high_test",
     "category": "resolution",
     "dir": "programs/resolution",
