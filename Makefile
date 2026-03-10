@@ -11,7 +11,7 @@ PREFIX ?= $(HOME)/.mx
 .PHONY: build install uninstall clean check-deps
 
 build: check-deps
-	cargo build --release
+	cargo build --release --workspace
 	@echo "Bootstrapping mxpkg..."
 	@cd tools/mxpkg && ../../target/release/mxpkg0 build
 
