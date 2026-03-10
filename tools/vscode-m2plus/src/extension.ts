@@ -254,6 +254,17 @@ export function activate(context: vscode.ExtensionContext) {
     },
   };
 
+  // Register task provider and docs tree view first (before LSP client)
+  // so the UI works even if mx isn't on PATH yet.
+  context.subscriptions.push(
+    vscode.tasks.registerTaskProvider("mx", new MxTaskProvider())
+  );
+
+  const docTree = new DocTreeProvider();
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider("mxDocsBrowser", docTree)
+  );
+
   client = new LanguageClient(
     "mx-lsp",
     "Modula-2+ Language Server",
@@ -261,18 +272,11 @@ export function activate(context: vscode.ExtensionContext) {
     clientOptions
   );
 
-  client.start();
-
-  // Register task provider
-  context.subscriptions.push(
-    vscode.tasks.registerTaskProvider("mx", new MxTaskProvider())
-  );
-
-  // Register docs tree view
-  const docTree = new DocTreeProvider();
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider("mxDocsBrowser", docTree)
-  );
+  client.start().catch((err: Error) => {
+    vscode.window.showWarningMessage(
+      `mx language server failed to start: ${err.message}. Ensure mx is on your PATH.`
+    );
+  });
 
   // Command: show a single doc in webview (used by tree item click)
   context.subscriptions.push(
