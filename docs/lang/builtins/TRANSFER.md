@@ -35,5 +35,5 @@ END
 - `TRANSFER` is a PIM4 pervasive procedure imported from `SYSTEM`.
 - After the call, `from` holds the saved state of the calling coroutine so that it can be resumed later.
 - `TRANSFER` is the only way to switch between coroutines created with `NEWPROCESS`.
-- **Deprecated in m2c**: coroutine primitives are provided for PIM4 compatibility but their use is discouraged. Prefer the `Thread` module (with `--m2plus`) for concurrent programming.
+- **Deprecated in mx**: coroutine primitives are provided for PIM4 compatibility but their use is discouraged. Prefer the `Thread` module (with `--m2plus`) for concurrent programming.
 - See also `NEWPROCESS` for creating coroutines and `IOTRANSFER` for interrupt-driven transfers.

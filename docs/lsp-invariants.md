@@ -1,6 +1,8 @@
-# m2c LSP — Best-Effort Invariants
+# mx LSP — Best-Effort Invariants
 
-The m2c language server uses a **best-effort, eventually consistent** indexing
+> Internal specification for contributors. For user-facing LSP documentation (features, configuration, troubleshooting), see [lsp.md](lsp.md).
+
+The mx language server uses a **best-effort, eventually consistent** indexing
 model. This document specifies what is guaranteed and what may be stale.
 
 ## Non-Negotiable Invariants
@@ -75,7 +77,7 @@ The server uses a **threaded event loop** with three event sources:
 - **Stdin reader thread** — reads JSON-RPC messages from stdin, sends
   `ServerEvent::Message(Json)` to the main channel.
 - **Timer thread** — sends `ServerEvent::Tick` every N ms (default 50ms,
-  configurable via `M2C_LSP_TICK_MS` env var).
+  configurable via `MX_LSP_TICK_MS` env var).
 - **StdinClosed** — sent when stdin reaches EOF.
 
 On `textDocument/didChange`, the server:
@@ -99,9 +101,9 @@ and symbol index reflect open-document edits without waiting for save.
 Configuration:
 - `initializationOptions.diagnostics.debounce_ms` — set in client config.
 - `initializationOptions.diagnostics.index_debounce_ms` — set in client config.
-- `M2C_LSP_DEBOUNCE_MS` environment variable — fallback for diagnostics.
-- `M2C_LSP_INDEX_DEBOUNCE_MS` environment variable — fallback for index updates.
-- `M2C_LSP_TICK_MS` — timer thread interval (default 50ms).
+- `MX_LSP_DEBOUNCE_MS` environment variable — fallback for diagnostics.
+- `MX_LSP_INDEX_DEBOUNCE_MS` environment variable — fallback for index updates.
+- `MX_LSP_TICK_MS` — timer thread interval (default 50ms).
 - Set debounce to `0` to disable (immediate diagnostics/indexing on every change).
 
 `textDocument/didSave` always triggers immediate diagnostics (bypasses debounce).
@@ -132,18 +134,8 @@ The server supports multiple workspace folders from `initialize` params:
 
 ## Manual Reindex
 
-Send a request with method `m2/reindexWorkspace`:
-
-```json
-{"jsonrpc": "2.0", "id": 1, "method": "m2/reindexWorkspace", "params": {}}
-```
-
-Response:
-```json
-{"jsonrpc": "2.0", "id": 1, "result": {"files": 15, "symbols": 87}}
-```
-
-This clears all cached file stamps and rebuilds the index from scratch.
+The `m2/reindexWorkspace` custom request clears all cached file stamps and
+rebuilds the index from scratch. See [lsp.md — Forced reindex](lsp.md#forced-reindex) for the request/response format.
 
 ## Identity-Based Inverted Indexes
 
@@ -201,21 +193,8 @@ change, or mtime granularity issues).
 
 ## Semantic Tokens
 
-`textDocument/semanticTokens/full` returns delta-encoded token data with the
-standard LSP legend:
-
-| Index | Token Type  |
-|-------|------------|
-| 0     | keyword    |
-| 1     | type       |
-| 2     | function   |
-| 3     | variable   |
-| 4     | parameter  |
-| 5     | property   |
-| 6     | namespace  |
-| 7     | enumMember |
-| 8     | number     |
-| 9     | string     |
+`textDocument/semanticTokens/full` returns delta-encoded token data. See
+[lsp.md — Semantic token types](lsp.md#semantic-token-types) for the token legend.
 
 The server re-lexes the source (using `crate::lexer`), classifies each token via
 `ReferenceIndex` + `SymbolTable`, and produces delta-encoded `[deltaLine,

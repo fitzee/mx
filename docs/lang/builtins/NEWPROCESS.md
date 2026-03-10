@@ -36,4 +36,4 @@ END
 - `NEWPROCESS` is a PIM4 pervasive procedure imported from `SYSTEM`.
 - The workspace must be large enough for the coroutine's stack usage; insufficient space causes undefined behavior.
 - The created coroutine does not begin executing until control is transferred to it via `TRANSFER`.
-- **Deprecated in m2c**: coroutine primitives are provided for PIM4 compatibility but their use is discouraged. Prefer the `Thread` module (with `--m2plus`) for concurrent programming.
+- **Deprecated in mx**: coroutine primitives are provided for PIM4 compatibility but their use is discouraged. Prefer the `Thread` module (with `--m2plus`) for concurrent programming.

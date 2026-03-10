@@ -1,6 +1,9 @@
+[workspace]
+members = [".", "tools/mxpkg0"]
+
 [package]
-name = "m2c"
-version = "1.0.1"
+name = "mx"
+version = "1.0.2"
 edition = "2021"
 
 [dependencies]

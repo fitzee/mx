@@ -2,11 +2,11 @@
 
 ## Why Modula-2+?
 
-Modula-2 is a systems programming language designed by Niklaus Wirth. It has strong typing, modules, and clean syntax. Modula-2+ (from DEC SRC) adds exceptions, reference types, objects, and concurrency — features needed for real-world programs without abandoning M2's simplicity. m2c supports both standard PIM4 Modula-2 and these extensions via the `--m2plus` flag.
+Modula-2 is a systems programming language designed by Niklaus Wirth. It has strong typing, modules, and clean syntax. Modula-2+ (from DEC SRC) adds exceptions, reference types, objects, and concurrency -- features needed for real-world programs without abandoning M2's simplicity. mx supports both standard PIM4 Modula-2 and these extensions via the `--m2plus` flag.
 
 ## Why transpile to C?
 
-C is the universal portable assembly language. By emitting C, m2c inherits:
+C is the universal portable assembly language. By emitting C, mx inherits:
 
 - Every platform's C compiler and optimizer
 - Cross-compilation support (just set `--cc` to a cross compiler)
@@ -24,19 +24,19 @@ The LSP server uses a synchronous event loop with two background threads (stdin 
 
 ## How do I report a bug?
 
-File an issue at https://github.com/fitzee/m2c/issues with:
+File an issue on the project's GitHub repository with:
 
 - The `.mod` source that triggers the bug
 - The compiler command you ran
 - Expected vs. actual output
-- `m2c --version-json` output
+- `mx --version-json` output
 
 ## Where is the registry/cache stored?
 
 | Path | Contents |
 |------|----------|
-| `~/.m2pkg/registry/` | Package index and published packages |
-| `~/.m2pkg/cache/` | Downloaded and cached packages |
+| `~/.mxpkg/registry/` | Package index and published packages |
+| `~/.mxpkg/cache/` | Downloaded and cached packages |
 
 ## How do I force the LSP to reindex?
 
@@ -62,10 +62,10 @@ Between updates, cross-file features (references, rename, call hierarchy) may sh
 By default, raw C compiler errors are hidden. To see them:
 
 ```bash
-M2C_SHOW_C_ERRORS=1 m2c program.mod -o program
+MX_SHOW_C_ERRORS=1 mx program.mod -o program
 ```
 
-## What Modula-2 standard does m2c follow?
+## What Modula-2 standard does mx follow?
 
 PIM4 (Programming in Modula-2, 4th Edition by Niklaus Wirth). Keywords are always case-insensitive; identifiers are case-sensitive by default. Use `--case-insensitive` for full case insensitivity.
 
@@ -76,7 +76,7 @@ PIM4 (Programming in Modula-2, 4th Edition by Niklaus Wirth). Keywords are alway
 **From the command line**:
 
 ```bash
-m2c -g program.mod -o program
+mx -g program.mod -o program
 lldb ./program
 (lldb) breakpoint set -f program.mod -l 10
 (lldb) run
@@ -84,12 +84,12 @@ lldb ./program
 
 The `-g` flag emits `#line` directives so debuggers show your `.mod` source directly. Variables, stepping, and breakpoints all work at the Modula-2 level.
 
-## Can I use m2c without m2pkg?
+## Can I use mx without mxpkg?
 
 Yes. The compiler works standalone:
 
 ```bash
-m2c myprogram.mod -o myprogram
+mx myprogram.mod -o myprogram
 ```
 
-m2pkg is optional and only needed for dependency management. The `m2c build`/`run`/`test` subcommands require an `m2.toml` manifest but do not require m2pkg.
+mxpkg is optional and only needed for dependency management. The `mx build`/`run`/`test` subcommands require an `m2.toml` manifest but do not require mxpkg.

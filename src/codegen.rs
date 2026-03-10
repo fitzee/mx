@@ -805,12 +805,12 @@ impl CodeGen {
         }
 
         if self.multi_tu {
-            self.emit("/* M2C_HEADER_BEGIN */\n");
+            self.emit("/* MX_HEADER_BEGIN */\n");
         }
         // Generate header
         self.emit(&stdlib::generate_runtime_header());
         if self.multi_tu {
-            self.emit("/* M2C_HEADER_END */\n");
+            self.emit("/* MX_HEADER_END */\n");
         }
 
         match unit {
@@ -874,6 +874,14 @@ impl CodeGen {
     /// Types are emitted first (in source order), then constants are topologically
     /// sorted so that forward references between constants are resolved.
     fn emit_type_and_const_decls(&mut self, decls: &[Declaration]) {
+        // Pre-pass: collect integer constant values so array bounds can be inlined
+        for decl in decls {
+            if let Declaration::Const(c) = decl {
+                if let Some(val) = self.try_eval_const_int(&c.expr) {
+                    self.const_int_values.insert(c.name.clone(), val);
+                }
+            }
+        }
         // Pass 1: emit all Type declarations in source order
         for decl in decls {
             if let Declaration::Type(t) = decl {
@@ -1135,7 +1143,7 @@ impl CodeGen {
         }
 
         if self.multi_tu {
-            self.emit(&format!("/* M2C_MODULE_BEGIN {} */\n", imp.name));
+            self.emit(&format!("/* MX_MODULE_BEGIN {} */\n", imp.name));
         }
         self.emitln(&format!("/* Imported Module {} */", imp.name));
         self.newline();
@@ -1302,7 +1310,7 @@ impl CodeGen {
         // Emit the MODULE_DEFS marker — everything below here is the module "body"
         // (var definitions, proc bodies, init function) that goes into this module's TU.
         if self.multi_tu {
-            self.emit(&format!("/* M2C_MODULE_DEFS {} */\n", imp.name));
+            self.emit(&format!("/* MX_MODULE_DEFS {} */\n", imp.name));
         }
 
         // Variable declarations from definition module (exported VARs)
@@ -1437,7 +1445,7 @@ impl CodeGen {
         }
 
         if self.multi_tu {
-            self.emit(&format!("/* M2C_MODULE_END {} */\n", imp.name));
+            self.emit(&format!("/* MX_MODULE_END {} */\n", imp.name));
         }
 
         self.restore_embedded_context(ctx, &imp.name);
@@ -1540,7 +1548,7 @@ impl CodeGen {
         self.emit_preamble_for_imports()?;
 
         if self.multi_tu {
-            self.emit(&format!("/* M2C_MAIN_BEGIN {} */\n", m.name));
+            self.emit(&format!("/* MX_MAIN_BEGIN {} */\n", m.name));
         }
         self.emitln(&format!("/* Module {} */", m.name));
         self.newline();
@@ -1647,7 +1655,7 @@ impl CodeGen {
         self.indent -= 1;
         self.emitln("}");
         if self.multi_tu {
-            self.emit("/* M2C_MAIN_END */\n");
+            self.emit("/* MX_MAIN_END */\n");
         }
         Ok(())
     }
@@ -2882,7 +2890,34 @@ impl CodeGen {
                     false
                 };
 
-                if is_string_literal_assign && !is_array_assign {
+                if is_string_literal_assign && is_array_assign {
+                    // String literal to array of char: zero-fill then copy literal bytes
+                    if let ExprKind::StringLit(s) = &expr.kind {
+                        let lit_size = s.len() + 1; // include NUL terminator
+                        self.emit_indent();
+                        self.emit("memset(");
+                        self.gen_designator(desig);
+                        self.emit(", 0, sizeof(");
+                        self.gen_designator(desig);
+                        self.emit("));\n");
+                        self.emit_indent();
+                        self.emit("memcpy(");
+                        self.gen_designator(desig);
+                        self.emit(", ");
+                        self.gen_expr(expr);
+                        self.emit(&format!(", {});\n", lit_size));
+                    } else {
+                        // char array variable to array → normal memcpy is safe
+                        self.emit_indent();
+                        self.emit("memcpy(");
+                        self.gen_designator(desig);
+                        self.emit(", ");
+                        self.gen_expr(expr);
+                        self.emit(", sizeof(");
+                        self.gen_designator(desig);
+                        self.emit("));\n");
+                    }
+                } else if is_string_literal_assign && !is_array_assign {
                     // String literal to 1D char array → strcpy
                     self.emit_indent();
                     self.emit("strcpy(");

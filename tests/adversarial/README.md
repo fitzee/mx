@@ -1,6 +1,6 @@
-# Adversarial Test Suite for m2c
+# Adversarial Test Suite for mx
 
-Stress tests for the m2c Modula-2 -> C transpiler, targeting:
+Stress tests for the mx Modula-2 -> C transpiler, targeting:
 
 - **Symbol namespace collisions** -- enum/type/constant name uniqueness in generated C
 - **Semantic correctness** -- short-circuit, aliasing, init order, integer bounds
@@ -43,7 +43,7 @@ python3 tests/adversarial/run_adversarial.py --mode ci --sanitizers on --strict 
 ## Requirements
 
 - Python 3.8+  (stdlib only, no pip dependencies)
-- Rust toolchain (for `cargo run` to build m2c)
+- Rust toolchain (for `cargo run` to build mx)
 - At least one of: `clang`, `gcc`, or `cc`
 - For runtime tests: OpenSSL development headers (`brew install openssl@3` on macOS)
 
@@ -93,7 +93,7 @@ Deterministic output-based tests for language semantics.
 | `var_aliasing` | VAR param aliasing (same var passed twice), array element VAR params |
 | `module_init_order` | Module body initialization runs in dependency order |
 
-**Note:** SET type tests are not included (SET types not currently supported by m2c).
+**Note:** SET type tests are not included (SET types not currently supported by mx).
 
 ### C) Name Resolution (`resolution`)
 
@@ -206,10 +206,10 @@ references through complex selectors, pointer chains, parallel arrays of records
 
 The `--link-mode` flag supports `single_tu` (default) and `multi_tu`.
 
-**Single-TU** (default): m2c emits one amalgamated `.c` file. The runner compiles it directly
+**Single-TU** (default): mx emits one amalgamated `.c` file. The runner compiles it directly
 with `cc -O0/-O2`, optionally with ASan+UBSan.
 
-**Multi-TU**: m2c uses `--emit-per-module` to emit separate C files per module:
+**Multi-TU**: mx uses `--emit-per-module` to emit separate C files per module:
 - `_common.h` -- runtime header + all module type/prototype/extern declarations
 - `<Module>.c` -- module variable definitions, procedure bodies, init function
 - `_main.c` -- the main module

@@ -61,7 +61,7 @@ VAR
   src: ARRAY [0..63] OF CHAR;
 
 BEGIN
-  src := '{"name":"m2c","version":1}';
+  src := '{"name":"mx","version":1}';
   Init(p, ADR(src), 26);
 
   WHILE Next(p, tok) DO

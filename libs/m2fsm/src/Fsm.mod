@@ -1,18 +1,32 @@
 IMPLEMENTATION MODULE Fsm;
+(* Cache-optimised, PIM4-compliant FSM core.
+ *
+ * Transition record layout (CARDINAL = uint32_t on m2c):
+ *   Offset 0: next   (4 bytes, align 4)
+ *   Offset 4: action (4 bytes, align 4)
+ *   Offset 8: guard  (4 bytes, align 4)
+ *   Stride:   12 bytes  (multiple of 4 — no padding needed)
+ *
+ * Every element in a contiguous ARRAY OF Transition is naturally
+ * aligned when addressed by base + idx * TSIZE(Transition).
+ * Cache density: 5 transitions per 64-byte line.
+ *
+ * Pointer arithmetic uses LONGCARD (uint64_t) type transfers
+ * so addresses are never truncated on ARM64 (M4 / Graviton).
+ * No ISO ADDADR, no hardcoded array overlays.
+ *)
 
 FROM SYSTEM IMPORT ADDRESS, TSIZE;
 
-(* ── Internal overlay types for array access ─────────── *)
+(* ── Pointer-to-element types ───────────────────────── *)
+(* One pointer type per element kind.  Arithmetic is done in
+   LONGCARD; the result is type-transferred back.             *)
 
 TYPE
-  TransArr  = ARRAY [0..16383] OF Transition;
-  TransPtr  = POINTER TO TransArr;
-  ActArr    = ARRAY [0..255] OF ActionProc;
-  ActArrPtr = POINTER TO ActArr;
-  GrdArr    = ARRAY [0..255] OF GuardProc;
-  GrdArrPtr = POINTER TO GrdArr;
-  HkArr     = ARRAY [0..255] OF HookProc;
-  HkArrPtr  = POINTER TO HkArr;
+  TransPtr = POINTER TO Transition;
+  ActPtr   = POINTER TO ActionProc;
+  GrdPtr   = POINTER TO GuardProc;
+  HookPtr  = POINTER TO HookProc;
 
 (* ── Internal helpers ────────────────────────────────── *)
 
@@ -87,106 +101,125 @@ BEGIN
 END SetTrace;
 
 (* ── Core ────────────────────────────────────────────── *)
+(* Fast-path layout:
+ *   1. Bounds check          (cold — branch predictor learns quickly)
+ *   2. Table lookup          (one multiply + pointer add)
+ *   3. NoTransition check    (single compare against sentinel)
+ *   4. Guard check           (skipped entirely when grdId = 0)
+ *   5. Exit hook / transition / Enter hook
+ *   6. Action
+ *
+ * NoTransition and GuardRejected exit before any state mutation,
+ * keeping the hot path (Ok) as a straight-line fall-through.     *)
 
 PROCEDURE Step(VAR f: Fsm; ev: EventId; payload: ADDRESS;
                VAR status: StepStatus);
 VAR
   tp: TransPtr;
-  ap: ActArrPtr;
-  gp: GrdArrPtr;
-  hp: HkArrPtr;
+  ap: ActPtr;
+  gp: GrdPtr;
+  hp: HookPtr;
   act: ActionProc;
   grd: GuardProc;
   hook: HookProc;
-  t: Transition;
-  fromState: StateId;
+  fromState, nextState: StateId;
+  actId: ActionId;
+  grdId: GuardId;
   idx: CARDINAL;
   allow, ok: BOOLEAN;
 BEGIN
   fromState := f.state;
 
-  (* Bounds check *)
-  IF (f.state >= f.numStates) OR (ev >= f.numEvents) THEN
+  (* 1. Bounds check — cold path *)
+  IF (fromState >= f.numStates) OR (ev >= f.numEvents) THEN
     status := Error;
     INC(f.errors);
-    DoTrace(f, fromState, f.state, ev, NoAction, Error);
+    DoTrace(f, fromState, fromState, ev, NoAction, Error);
     RETURN
   END;
 
-  (* Lookup transition *)
-  idx := f.state * f.numEvents + ev;
-  tp := f.trans;
-  t := tp^[idx];
+  (* 2. Table lookup — O(1), one pointer add *)
+  idx := fromState * f.numEvents + ev;
+  tp := TransPtr(LONGCARD(f.trans)
+        + LONGCARD(idx * TSIZE(Transition)));
+  nextState := tp^.next;
 
-  IF t.next = NoState THEN
+  (* 3. NoTransition — fast reject before any work *)
+  IF nextState = NoState THEN
     status := NoTransition;
     INC(f.invalid);
-    DoTrace(f, fromState, f.state, ev, NoAction, NoTransition);
+    DoTrace(f, fromState, fromState, ev, NoAction, NoTransition);
     RETURN
   END;
 
-  (* Guard check *)
-  IF (t.guard # NoGuard) AND (f.guards # NIL) AND
-     (t.guard < f.numGuards) THEN
-    gp := f.guards;
-    grd := gp^[t.guard];
-    IF grd # NIL THEN
-      allow := TRUE;
-      grd(f.ctx, ev, payload, allow);
-      IF NOT allow THEN
-        status := GuardRejected;
-        INC(f.rejected);
-        DoTrace(f, fromState, f.state, ev, t.action, GuardRejected);
-        RETURN
+  (* Load action/guard from the same cache line as next *)
+  actId := tp^.action;
+  grdId := tp^.guard;
+
+  (* 4. Guard — single sentinel check gates the entire block *)
+  IF grdId # NoGuard THEN
+    IF (f.guards # NIL) AND (grdId < f.numGuards) THEN
+      gp := GrdPtr(LONGCARD(f.guards)
+            + LONGCARD(grdId * TSIZE(GuardProc)));
+      grd := gp^;
+      IF grd # NIL THEN
+        allow := TRUE;
+        grd(f.ctx, ev, payload, allow);
+        IF NOT allow THEN
+          status := GuardRejected;
+          INC(f.rejected);
+          DoTrace(f, fromState, fromState, ev, actId, GuardRejected);
+          RETURN
+        END
       END
     END
   END;
 
-  (* Exit hook *)
+  (* 5a. Exit hook — fromState already bounds-checked *)
   IF f.onExit # NIL THEN
-    hp := f.onExit;
-    IF f.state < f.numStates THEN
-      hook := hp^[f.state];
-      IF hook # NIL THEN
-        hook(f.ctx, f.state, payload)
-      END
+    hp := HookPtr(LONGCARD(f.onExit)
+          + LONGCARD(fromState * TSIZE(HookProc)));
+    hook := hp^;
+    IF hook # NIL THEN
+      hook(f.ctx, fromState, payload)
     END
   END;
 
-  (* Transition *)
-  f.state := t.next;
+  (* 5b. State transition *)
+  f.state := nextState;
 
-  (* Enter hook *)
-  IF f.onEnter # NIL THEN
-    hp := f.onEnter;
-    IF f.state < f.numStates THEN
-      hook := hp^[f.state];
-      IF hook # NIL THEN
-        hook(f.ctx, f.state, payload)
-      END
+  (* 5c. Enter hook — bounds-check nextState (table could be wrong) *)
+  IF (f.onEnter # NIL) AND (nextState < f.numStates) THEN
+    hp := HookPtr(LONGCARD(f.onEnter)
+          + LONGCARD(nextState * TSIZE(HookProc)));
+    hook := hp^;
+    IF hook # NIL THEN
+      hook(f.ctx, nextState, payload)
     END
   END;
 
-  (* Action *)
-  IF (t.action # NoAction) AND (f.acts # NIL) AND
-     (t.action < f.numActs) THEN
-    ap := f.acts;
-    act := ap^[t.action];
-    IF act # NIL THEN
-      ok := TRUE;
-      act(f.ctx, ev, payload, ok);
-      IF NOT ok THEN
-        status := Error;
-        INC(f.errors);
-        DoTrace(f, fromState, f.state, ev, t.action, Error);
-        RETURN
+  (* 6. Action *)
+  IF actId # NoAction THEN
+    IF (f.acts # NIL) AND (actId < f.numActs) THEN
+      ap := ActPtr(LONGCARD(f.acts)
+            + LONGCARD(actId * TSIZE(ActionProc)));
+      act := ap^;
+      IF act # NIL THEN
+        ok := TRUE;
+        act(f.ctx, ev, payload, ok);
+        IF NOT ok THEN
+          status := Error;
+          INC(f.errors);
+          DoTrace(f, fromState, nextState, ev, actId, Error);
+          RETURN
+        END
       END
     END
   END;
 
   status := Ok;
   INC(f.steps);
-  DoTrace(f, fromState, f.state, ev, t.action, Ok)
+  DoTrace(f, fromState, nextState, ev, actId, Ok)
 END Step;
 
 (* ── Queries ─────────────────────────────────────────── *)
@@ -229,12 +262,13 @@ END SetTrans;
 PROCEDURE ClearTable(trans: ADDRESS; n: CARDINAL);
 VAR tp: TransPtr; i: CARDINAL;
 BEGIN
-  tp := trans;
   i := 0;
   WHILE i < n DO
-    tp^[i].next := NoState;
-    tp^[i].action := NoAction;
-    tp^[i].guard := NoGuard;
+    tp := TransPtr(LONGCARD(trans)
+          + LONGCARD(i * TSIZE(Transition)));
+    tp^.next := NoState;
+    tp^.action := NoAction;
+    tp^.guard := NoGuard;
     INC(i)
   END
 END ClearTable;

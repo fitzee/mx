@@ -15,7 +15,7 @@ This example shows the server-side TLS pattern:
 ## Build
 
 ```bash
-m2c --m2plus example_apps/tls_echo_server.mod \
+mx --m2plus examples/networking/tls_echo_server.mod \
   -I libs/m2tls/src \
   -I libs/m2evloop/src \
   -I libs/m2futures/src \

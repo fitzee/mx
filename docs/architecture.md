@@ -1,23 +1,23 @@
 # Architecture
 
-This document covers the internal architecture of m2c for contributors.
+This document covers the internal architecture of mx for contributors.
 
 ## Compiler pipeline
 
 ```
 Source (.mod/.def)
-  → Lexer (src/lexer.rs)      tokenize into TokenKind stream
-  → Parser (src/parser.rs)    recursive-descent → AST
-  → Sema (src/sema.rs)        type checking, scope resolution, symbol table
-  → CodeGen (src/codegen.rs)  AST → C source string
-  → Driver (src/driver.rs)    write C to temp file, invoke cc, link
+  -> Lexer (src/lexer.rs)      tokenize into TokenKind stream
+  -> Parser (src/parser.rs)    recursive-descent -> AST
+  -> Sema (src/sema.rs)        type checking, scope resolution, symbol table
+  -> CodeGen (src/codegen.rs)  AST -> C source string
+  -> Driver (src/driver.rs)    write C to temp file, invoke cc, link
 ```
 
 ### Lexer
 
 `Lexer::new(source, filename)` produces a `Vec<Token>`. Keywords are always matched case-insensitively (the input is uppercased before keyword lookup). Identifiers preserve original case by default; with `case_sensitive: false`, they are uppercased.
 
-The lexer handles feature-gate pragmas (`(*$IF name*)` / `(*$ELSE*)` / `(*$END*)`) at the token level — disabled blocks are skipped entirely, so the parser never sees them.
+The lexer handles feature-gate pragmas (`(*$IF name*)` / `(*$ELSE*)` / `(*$END*)`) at the token level -- disabled blocks are skipped entirely, so the parser never sees them.
 
 ### Parser
 
@@ -60,20 +60,20 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 
 1. Read source file
 2. Find and parse all transitively imported `.def` and `.mod` files
-3. Run lexer → parser → codegen
+3. Run lexer -> parser -> codegen
 4. Write generated C to a file
 5. Invoke the system C compiler (`cc` by default)
 6. Link and produce the final binary
 
 The driver handles include path resolution, finding `.def`/`.mod` files, and constructing the C compiler command line.
 
-**Debug mode** (`-g`): The driver uses a two-step compile (`.c` → `.o` → executable) so the `.o` file stays on disk for DWARF debug info. On macOS, `dsymutil` creates a `.dSYM` bundle after linking. The codegen emits `#line` directives and `setvbuf(stdout, NULL, _IONBF, 0)` for unbuffered I/O. The C compiler receives `-g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info`.
+**Debug mode** (`-g`): The driver uses a two-step compile (`.c` -> `.o` -> executable) so the `.o` file stays on disk for DWARF debug info. On macOS, `dsymutil` creates a `.dSYM` bundle after linking. The codegen emits `#line` directives and `setvbuf(stdout, NULL, _IONBF, 0)` for unbuffered I/O. The C compiler receives `-g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info`.
 
 **Release mode**: Single-step compile+link; the `.c` file is cleaned up after compilation.
 
 ## Analysis-only path (LSP)
 
-`src/analyze.rs` provides `analyze_source()`, which runs lex → parse → sema without C codegen. This is the path used by the LSP server.
+`src/analyze.rs` provides `analyze_source()`, which runs lex -> parse -> sema without C codegen. This is the path used by the LSP server.
 
 ### AnalysisResult
 
@@ -126,7 +126,7 @@ Each symbol has:
 |-----------|------|---------|
 | `files` | `HashMap<PathBuf, IndexedFile>` | Per-file index data, keyed by canonical path |
 | `symbols` | `Vec<WorkspaceSymbol>` | Flat symbol list for workspace/symbol search |
-| `symbols_by_name` | `HashMap<String, Vec<usize>>` | Name → symbol indices (case-insensitive) |
+| `symbols_by_name` | `HashMap<String, Vec<usize>>` | Name -> symbol indices (case-insensitive) |
 | `refs_by_identity` | `HashMap<IdentityKey, Vec<IdentityRef>>` | Cross-file references by identity |
 | `defs_by_identity` | `HashMap<IdentityKey, IdentityLocation>` | Definition locations by identity |
 | `refs_by_name` | `HashMap<String, Vec<IndexedRef>>` | Name-based fallback references |
@@ -156,8 +156,8 @@ Files are stamped with `(mtime, size, content_hash)` using FNV-1a hashing. A fil
 ### Threads
 
 ```
-stdin_reader_thread  →  ServerEvent::Message(Json)
-timer_thread         →  ServerEvent::Tick  (every M2C_LSP_TICK_MS, default 50ms)
+stdin_reader_thread  ->  ServerEvent::Message(Json)
+timer_thread         ->  ServerEvent::Tick  (every MX_LSP_TICK_MS, default 50ms)
 main loop:
   on Tick:    flush_pending_diagnostics()
               flush_pending_index_updates()
@@ -192,21 +192,21 @@ A `match` on the JSON-RPC `method` string routes to handler functions. Unknown m
 `src/project_resolver.rs` is a crate-root module shared between the LSP server and the build system.
 
 It provides:
-- `Manifest::parse(content)` — INI-style parsing with `[section]` support
-- `Lockfile::parse(content)` — with `[dep.NAME]` sections
-- `Lockfile::content_hash(content)` — FNV-1a hash for cache keys
-- `find_project_root(path)` — walk-up directory search for `m2.toml`
-- `ProjectContext::load(root, cli_paths)` — reads manifest + lockfile, resolves all include paths
+- `Manifest::parse(content)` -- INI-style parsing with `[section]` support
+- `Lockfile::parse(content)` -- with `[dep.NAME]` sections
+- `Lockfile::content_hash(content)` -- FNV-1a hash for cache keys
+- `find_project_root(path)` -- walk-up directory search for `m2.toml`
+- `ProjectContext::load(root, cli_paths)` -- reads manifest + lockfile, resolves all include paths
 
 The LSP's `src/lsp/workspace.rs` re-exports these types.
 
 ## Build system
 
-`src/build.rs` implements the `m2c build`/`run`/`test`/`clean` subcommands.
+`src/build.rs` implements the `mx build`/`run`/`test`/`clean` subcommands.
 
 ### Stamp-based skip
 
-The build system stamps all source files (mtime + size + FNV-1a hash) and stores the combined hash in `.m2c/build_state.json`. If no stamps changed and the artifact exists, compilation is skipped.
+The build system stamps all source files (mtime + size + FNV-1a hash) and stores the combined hash in `.mx/build_state.json`. If no stamps changed and the artifact exists, compilation is skipped.
 
 ### Build flow
 
@@ -221,7 +221,7 @@ The build system stamps all source files (mtime + size + FNV-1a hash) and stores
 
 ### Unit tests (cargo test)
 
-135 tests covering:
+150 tests covering:
 - Lexer: tokenization, keywords, case sensitivity, feature pragmas
 - Parser: AST construction for various constructs
 - CodeGen: `#line` directive emission, debug/non-debug mode
@@ -231,13 +231,11 @@ The build system stamps all source files (mtime + size + FNV-1a hash) and stores
 
 ### Integration tests (tests/run_all.sh)
 
-72 `.mod` files compiled and executed. Each test has an expected output comment at the top. The test runner compiles with `m2c`, runs the binary, and compares stdout against expected output.
+Categorized `.mod` files in `examples/` compiled and executed. Each test has an expected output comment at the top. The test runner compiles with `mx`, runs the binary, and compares stdout against expected output.
 
-Special tests:
-- `tests/ffitest.mod` + `tests/cadd.c`: C FFI integration
-- `tests/exportc_test.mod` + `tests/exportc_main.c`: EXPORTC pragma
+### Adversarial tests (tests/adversarial/)
 
-4 tests are skipped (require features not yet implemented).
+883 tests across 8 compiler configurations (PIM4, M2+, optimized, with/without sanitizers). Tests are defined in `tests/adversarial/tests.json` and run via `run_adversarial.py`.
 
 ### Conformance tests (tests/conformance.sh)
 
@@ -252,9 +250,10 @@ Special tests:
 ### Running all tests
 
 ```bash
-cargo test                    # unit tests
-bash tests/run_all.sh         # integration tests (run from project root)
-bash tests/conformance.sh     # conformance tests (run from project root)
+cargo test                                              # 150 unit tests
+bash tests/run_all.sh                                   # integration tests
+bash tests/conformance.sh                               # conformance tests
+python3 tests/adversarial/run_adversarial.py --mode ci  # 883 adversarial tests
 ```
 
 ## File reference

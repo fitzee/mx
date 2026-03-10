@@ -1,0 +1,9 @@
+[package]
+name = "mxpkg0"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal bootstrapper for mxpkg — the Modula-2 package manager"
+
+[[bin]]
+name = "mxpkg0"
+path = "src/main.rs"

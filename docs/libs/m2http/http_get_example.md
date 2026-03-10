@@ -1,6 +1,6 @@
 # HTTP GET Example
 
-Walkthrough of `example_apps/http_get.mod` — a complete HTTP GET client.
+Walkthrough of `examples/networking/http_get.mod` — a complete HTTP GET client.
 
 ## What It Does
 
@@ -13,7 +13,7 @@ Fetches `http://httpbin.org/get` and prints:
 ## Build
 
 ```bash
-m2c --m2plus example_apps/http_get.mod \
+mx --m2plus examples/networking/http_get.mod \
   -I libs/m2http/src \
   -I libs/m2evloop/src \
   -I libs/m2futures/src \

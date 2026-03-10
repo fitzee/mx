@@ -23,7 +23,10 @@ FROM InOut IMPORT WriteString, WriteLn, WriteCard;
 FROM Fsm IMPORT Fsm, Transition, StepStatus,
                 ActionProc, TraceProc,
                 StateId, EventId, ActionId,
-                NoState, NoAction, NoGuard;
+                NoState, NoAction, NoGuard,
+                Init, SetActions, SetTrace, Step,
+                CurrentState, StepCount, ErrorCount,
+                SetTrans, ClearTable;
 FROM FsmTrace IMPORT ConsoleTrace;
 
 CONST
@@ -74,12 +77,12 @@ END DoClose;
 
 BEGIN
   (* Build transition table *)
-  Fsm.ClearTable(ADR(table), NumStates * NumEvents);
-  Fsm.SetTrans(table[StInit*NumEvents + EvSendHello],
+  ClearTable(ADR(table), NumStates * NumEvents);
+  SetTrans(table[StInit*NumEvents + EvSendHello],
                StSentHello, ActSendHello, NoGuard);
-  Fsm.SetTrans(table[StSentHello*NumEvents + EvRecvAck],
+  SetTrans(table[StSentHello*NumEvents + EvRecvAck],
                StEstablished, ActRecvAck, NoGuard);
-  Fsm.SetTrans(table[StEstablished*NumEvents + EvClose],
+  SetTrans(table[StEstablished*NumEvents + EvClose],
                StInit, ActClose, NoGuard);
 
   (* Action table *)
@@ -89,21 +92,21 @@ BEGIN
   acts[ActClose] := DoClose;
 
   (* Init FSM *)
-  Fsm.Init(f, StInit, NIL, NumStates, NumEvents, ADR(table));
-  Fsm.SetActions(f, ADR(acts), NumActions);
-  Fsm.SetTrace(f, ConsoleTrace, NIL);
+  Init(f, StInit, NIL, NumStates, NumEvents, ADR(table));
+  SetActions(f, ADR(acts), NumActions);
+  SetTrace(f, ConsoleTrace, NIL);
 
   WriteString("[handshake] starting in state ");
-  WriteCard(Fsm.CurrentState(f), 0); WriteLn;
+  WriteCard(CurrentState(f), 0); WriteLn;
 
   (* Run protocol *)
-  Fsm.Step(f, EvSendHello, NIL, status);
-  Fsm.Step(f, EvRecvAck, NIL, status);
-  Fsm.Step(f, EvClose, NIL, status);
+  Step(f, EvSendHello, NIL, status);
+  Step(f, EvRecvAck, NIL, status);
+  Step(f, EvClose, NIL, status);
 
   WriteString("[handshake] done, steps=");
-  WriteCard(Fsm.StepCount(f), 0);
+  WriteCard(StepCount(f), 0);
   WriteString("  errors=");
-  WriteCard(Fsm.ErrorCount(f), 0);
+  WriteCard(ErrorCount(f), 0);
   WriteLn
 END Handshake.

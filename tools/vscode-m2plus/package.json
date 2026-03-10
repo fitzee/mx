@@ -1,9 +1,9 @@
 {
   "name": "m2plus",
-  "displayName": "Modula-2+ (m2c)",
-  "description": "Modula-2 / Modula-2+ language support powered by m2c",
+  "displayName": "Modula-2+ (mx)",
+  "description": "Modula-2 / Modula-2+ language support powered by mx",
   "version": "0.1.0",
-  "publisher": "m2c",
+  "publisher": "mx",
   "license": "MIT",
   "engines": {
     "vscode": "^1.75.0"
@@ -13,7 +13,7 @@
   ],
   "activationEvents": [
     "onLanguage:modula2",
-    "onView:m2cDocsBrowser"
+    "onView:mxDocsBrowser"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -42,19 +42,19 @@
       }
     ],
     "configuration": {
-      "title": "Modula-2+ (m2c)",
+      "title": "Modula-2+ (mx)",
       "properties": {
-        "m2c.serverPath": {
+        "mx.serverPath": {
           "type": "string",
-          "default": "m2c",
-          "description": "Path to the m2c binary"
+          "default": "mx",
+          "description": "Path to the mx binary"
         },
-        "m2c.m2plus": {
+        "mx.m2plus": {
           "type": "boolean",
           "default": true,
           "description": "Enable Modula-2+ extensions"
         },
-        "m2c.includePaths": {
+        "mx.includePaths": {
           "type": "array",
           "items": {
             "type": "string"
@@ -62,7 +62,7 @@
           "default": [],
           "description": "Additional include paths (-I flags)"
         },
-        "m2c.diagnostics.debounceMs": {
+        "mx.diagnostics.debounceMs": {
           "type": "number",
           "default": 250,
           "description": "Diagnostics debounce delay in milliseconds"
@@ -72,54 +72,54 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "m2c-docs",
+          "id": "mx-docs",
           "title": "Modula-2 Docs",
           "icon": "$(book)"
         }
       ]
     },
     "views": {
-      "m2c-docs": [
+      "mx-docs": [
         {
-          "id": "m2cDocsBrowser",
+          "id": "mxDocsBrowser",
           "name": "Language Reference"
         }
       ]
     },
     "commands": [
       {
-        "command": "m2c.restartServer",
+        "command": "mx.restartServer",
         "title": "Restart Language Server",
         "category": "Modula-2+"
       },
       {
-        "command": "m2c.reindexWorkspace",
+        "command": "mx.reindexWorkspace",
         "title": "Reindex Workspace",
         "category": "Modula-2+"
       },
       {
-        "command": "m2c.openDocumentation",
+        "command": "mx.openDocumentation",
         "title": "Open Documentation",
         "category": "Modula-2+"
       },
       {
-        "command": "m2c.refreshDocs",
+        "command": "mx.refreshDocs",
         "title": "Refresh Documentation",
         "category": "Modula-2+",
         "icon": "$(refresh)"
       },
       {
-        "command": "m2c.showDoc",
+        "command": "mx.showDoc",
         "title": "Show Documentation Entry",
         "category": "Modula-2+"
       },
       {
-        "command": "m2c.initProject",
+        "command": "mx.initProject",
         "title": "Initialize Project",
         "category": "Modula-2+"
       },
       {
-        "command": "m2c.createDebugConfig",
+        "command": "mx.createDebugConfig",
         "title": "Create Debug Configuration",
         "category": "Modula-2+"
       }
@@ -127,19 +127,19 @@
     "menus": {
       "view/title": [
         {
-          "command": "m2c.refreshDocs",
-          "when": "view == m2cDocsBrowser",
+          "command": "mx.refreshDocs",
+          "when": "view == mxDocsBrowser",
           "group": "navigation"
         }
       ]
     },
     "taskDefinitions": [
       {
-        "type": "m2c",
+        "type": "mx",
         "properties": {
           "command": {
             "type": "string",
-            "description": "The m2c subcommand to run (build, run, test, clean, init)"
+            "description": "The mx subcommand to run (build, run, test, clean, init)"
           }
         },
         "required": ["command"]
@@ -152,8 +152,8 @@
     ],
     "problemMatchers": [
       {
-        "name": "m2c",
-        "owner": "m2c",
+        "name": "mx",
+        "owner": "mx",
         "fileLocation": ["relative", "${workspaceFolder}"],
         "pattern": {
           "regexp": "^(.+):(\\d+):(\\d+): (error|warning): (.+)$",

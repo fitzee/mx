@@ -38,5 +38,5 @@ END
 - `IOTRANSFER` is a PIM4 pervasive procedure imported from `SYSTEM`.
 - After the call, control passes to the coroutine `to`. When interrupt `vec` fires, control automatically returns to the coroutine that called `IOTRANSFER`.
 - The semantics of interrupt vectors are hardware- and OS-dependent.
-- **Deprecated in m2c**: coroutine and interrupt primitives are provided for PIM4 compatibility but their use is discouraged. Modern systems should use signal handlers or the `Thread` module (with `--m2plus`) instead.
+- **Deprecated in mx**: coroutine and interrupt primitives are provided for PIM4 compatibility but their use is discouraged. Modern systems should use signal handlers or the `Thread` module (with `--m2plus`) instead.
 - See also `NEWPROCESS` and `TRANSFER` for the other coroutine primitives.

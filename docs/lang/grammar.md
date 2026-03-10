@@ -1,6 +1,6 @@
 # Modula-2 PIM4 Grammar Reference
 
-Concise EBNF grammar for PIM4 Modula-2 as implemented by m2c. Modula-2+
+Concise EBNF grammar for PIM4 Modula-2 as implemented by mx. Modula-2+
 extensions are marked with **(M2+)**.
 
 ## Notation

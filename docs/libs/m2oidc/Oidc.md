@@ -334,7 +334,7 @@ application-specific roles (e.g. admin, operator, annotator, viewer).
 - JWKS must contain `"keys"` array at the top level
 - Each JWK must have a `kid` field to be usable
 
-## Known m2c Issue
+## Known mx Issue
 
 Assignment to a `VAR key: ADDRESS` out parameter generates incorrect C
 code (`memcpy` instead of direct pointer assignment). The `FindKey`
@@ -342,4 +342,4 @@ procedure was simplified to return only a status (no key output) as a
 workaround. `VerifyRS256` does its own internal kid lookup and does not
 expose the raw key handle.
 
-See `m2c-pitfalls.md` item 9 for details.
+See `mx-pitfalls.md` item 9 for details.

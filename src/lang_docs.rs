@@ -355,11 +355,11 @@ fn parse_libraries_toml(content: &str) -> Vec<(String, String)> {
 
 /// Resolve the docs root directory.
 /// Checks (in order):
-///   1. M2C_DOCS_PATH environment variable
+///   1. MX_DOCS_PATH environment variable
 ///   2. Walk up from the binary's real path looking for docs/libs/libraries.toml
 pub fn resolve_docs_root() -> Option<PathBuf> {
     // 1. Environment variable
-    if let Ok(path) = std::env::var("M2C_DOCS_PATH") {
+    if let Ok(path) = std::env::var(crate::identity::ENV_DOCS_PATH) {
         let p = PathBuf::from(&path);
         if p.join("libs").join("libraries.toml").exists() {
             return Some(p);
@@ -383,10 +383,10 @@ pub fn resolve_docs_root() -> Option<PathBuf> {
         }
     }
 
-    // 3. Check install prefix (M2C_HOME or ~/.m2c)
-    let prefix = std::env::var_os("M2C_HOME")
+    // 3. Check install prefix (MX_HOME or ~/.mx)
+    let prefix = std::env::var_os(crate::identity::ENV_HOME)
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".m2c")));
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(crate::identity::HOME_DIR)));
     if let Some(p) = prefix {
         let candidate = p.join("docs");
         if candidate.join("libs").join("libraries.toml").exists() {

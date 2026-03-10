@@ -1,9 +1,0 @@
-IMPLEMENTATION MODULE ExportCTest;
-
-(*$EXPORTC "get_value"*)
-PROCEDURE GetValue(): INTEGER;
-BEGIN
-  RETURN 42
-END GetValue;
-
-END ExportCTest.

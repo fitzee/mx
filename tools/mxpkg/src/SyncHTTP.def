@@ -1,0 +1,31 @@
+DEFINITION MODULE SyncHTTP;
+
+  FROM SYSTEM IMPORT ADDRESS;
+  FROM HTTPClient IMPORT ResponsePtr, Status;
+
+  (* Synchronous HTTP GET. Blocks until response received or failure.
+     Caller must call HTTPClient.FreeResponse when done.
+     Set skipVerify=TRUE for self-signed certs (MXPKG_INSECURE). *)
+  PROCEDURE SyncGet(VAR url: ARRAY OF CHAR;
+                    skipVerify: BOOLEAN;
+                    VAR resp: ResponsePtr): Status;
+
+  (* Synchronous download to file. GET url, write body to destPath.
+     Returns status code in httpStatus (200=ok, 404=not found, etc).
+     Returns HTTPClient.OK on transport success regardless of HTTP status. *)
+  PROCEDURE SyncDownload(VAR url: ARRAY OF CHAR;
+                         skipVerify: BOOLEAN;
+                         VAR destPath: ARRAY OF CHAR;
+                         VAR httpStatus: INTEGER): Status;
+
+  (* Synchronous HTTP PUT with body. Blocks until response received.
+     Caller must call HTTPClient.FreeResponse when done.
+     Set skipVerify=TRUE for self-signed certs (MXPKG_INSECURE). *)
+  PROCEDURE SyncPut(VAR url: ARRAY OF CHAR;
+                    skipVerify: BOOLEAN;
+                    bodyData: ADDRESS; bodyLen: INTEGER;
+                    VAR contentType: ARRAY OF CHAR;
+                    VAR authorization: ARRAY OF CHAR;
+                    VAR resp: ResponsePtr): Status;
+
+END SyncHTTP.

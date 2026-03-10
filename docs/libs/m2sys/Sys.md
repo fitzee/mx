@@ -6,14 +6,14 @@ C FFI shim providing file I/O, filesystem operations, process execution, SHA-256
 
 Modula-2 has no built-in file system access, process spawning, or cryptographic hashing. Sys bridges that gap with a flat C API (`m2sys.c` / `m2sys.h`) that Modula-2 code imports via a `DEFINITION MODULE FOR "C"` foreign binding. All functions use `ADDRESS`-based string passing (null-terminated) and integer return codes, making them directly callable from generated C code.
 
-Sys is used by m2pkg, m2log, the build system, and any application that needs OS interaction.
+Sys is used by mxpkg, m2log, the build system, and any application that needs OS interaction.
 
 ## Linking
 
 Compile and link `libs/m2sys/m2sys.c` with your program. The header is at `libs/m2sys/m2sys.h`.
 
 ```
-m2c compile main.mod --extra-c libs/m2sys/m2sys.c -o main
+mx compile main.mod --extra-c libs/m2sys/m2sys.c -o main
 ```
 
 ## File I/O

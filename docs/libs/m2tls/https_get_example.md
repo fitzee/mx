@@ -1,6 +1,6 @@
 # HTTPS GET Example
 
-Walkthrough of `example_apps/https_get.mod` -- a complete HTTPS GET client demonstrating TLS verification.
+Walkthrough of `examples/networking/https_get.mod` -- a complete HTTPS GET client demonstrating TLS verification.
 
 ## What It Does
 
@@ -15,7 +15,7 @@ TLS peer verification is ON by default. The connection uses TLS 1.2+ with the sy
 ## Build
 
 ```bash
-m2c --m2plus example_apps/https_get.mod \
+mx --m2plus examples/networking/https_get.mod \
   -I libs/m2http/src \
   -I libs/m2tls/src \
   -I libs/m2evloop/src \

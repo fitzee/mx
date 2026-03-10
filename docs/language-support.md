@@ -1,15 +1,15 @@
 # Language Support
 
-What m2c supports across standard Modula-2 (PIM4) and the Modula-2+ extensions.
+What mx supports across standard Modula-2 (PIM4) and the Modula-2+ extensions.
 
 ## Compatibility
 
-m2c is a **superset of PIM4 Modula-2**. Existing PIM4 code should compile with m2c as-is. However, code using m2c-specific extensions (import aliases, C FFI pragmas, conditional compilation, bitwise builtins, or Modula-2+ features) will not compile with other Modula-2 compilers such as GNU Modula-2 (gm2).
+mx is a **superset of PIM4 Modula-2**. Existing PIM4 code should compile with mx as-is. However, code using mx-specific extensions (import aliases, C FFI pragmas, conditional compilation, bitwise builtins, or Modula-2+ features) will not compile with other Modula-2 compilers such as GNU Modula-2 (gm2).
 
 | Direction | Compatibility |
 |-----------|--------------|
-| Legacy M2 code -> m2c | Should work (PIM4 compatible) |
-| m2c code -> other compilers | Only if no m2c extensions are used |
+| Legacy M2 code -> mx | Should work (PIM4 compatible) |
+| mx code -> other compilers | Only if no mx extensions are used |
 
 ## PIM4 Modula-2
 
@@ -22,7 +22,7 @@ m2c is a **superset of PIM4 Modula-2**. Existing PIM4 code should compile with m
 | Implementation modules (`.mod`) | Supported |
 | `FROM Module IMPORT name` | Supported |
 | `IMPORT Module` (qualified access) | Supported |
-| `FROM Module IMPORT Name AS Alias` | Supported (m2c extension) |
+| `FROM Module IMPORT Name AS Alias` | Supported (mx extension) |
 | `EXPORT QUALIFIED` | Supported |
 | Opaque types in `.def` | Supported |
 | Separate compilation | Supported (via C translation units) |
@@ -94,7 +94,7 @@ m2c is a **superset of PIM4 Modula-2**. Existing PIM4 code should compile with m
 | Bitwise | `SHL`, `SHR`, `BAND`, `BOR`, `BXOR`, `BNOT`, `SHIFT`, `ROTATE` |
 | Complex numbers | `CMPLX`, `RE`, `IM` (ISO) |
 | Control | `HALT` |
-| Coroutines | `NEWPROCESS`, `TRANSFER`, `IOTRANSFER` (declared for compatibility; not implemented — exits with error at runtime) |
+| Coroutines | `NEWPROCESS`, `TRANSFER`, `IOTRANSFER` (declared for compatibility; not implemented -- exits with error at runtime) |
 
 ### Operators
 
@@ -278,100 +278,10 @@ Implementation: `M2_ISA` walks `M2_TypeDesc` parent chain with depth early-out. 
 
 ---
 
-## Tooling
+## See also
 
-### Project Build System
-
-```bash
-m2c init myproject       # scaffold m2.toml + src/Main.mod
-m2c build                # compile project
-m2c build -g             # compile with debug info
-m2c run                  # compile and run
-m2c test                 # compile and run tests
-m2c clean                # remove build artifacts
-```
-
-Manifest-driven builds via `m2.toml` with `[deps]`, `[cc]`, `[features]`, and `[test]` sections.
-
-### Package Manager (m2pkg)
-
-Self-hosted package manager written in Modula-2+.
-
-```bash
-m2pkg init               # create m2.toml
-m2pkg build              # build with dependencies
-m2pkg run                # build and run
-m2pkg publish            # publish to registry
-m2pkg fetch              # download dependencies
-m2pkg resolve            # resolve dependency versions
-m2pkg lock               # generate lockfile
-m2pkg verify             # verify lockfile integrity
-```
-
-- Local dependencies: `mylib=path:../mylib`
-- Registry dependencies: `mylib=0.1.0` (semver with `^`, `~`, `>=` ranges)
-- Transitive dependency resolution
-- SHA-256 integrity verification
-- JWT-authenticated publishing over HTTP/2
-
-### LSP Server
-
-Built into the compiler, activated with `m2c --lsp`.
-
-| Feature | Status |
-|---------|--------|
-| Diagnostics (errors/warnings) | Supported |
-| Hover (type info + docs) | Supported |
-| Go to definition | Supported |
-| Code completion (scope-aware) | Supported |
-| Document symbols | Supported |
-| Workspace symbols | Supported |
-| Rename | Supported |
-| Semantic tokens | Supported |
-| Call hierarchy (incoming/outgoing) | Supported (workspace-wide) |
-| Signature help | Supported |
-| Document highlight | Supported |
-| Code actions | Supported |
-
-### VS Code Extension
-
-- Syntax highlighting (TextMate grammar)
-- Language configuration (brackets, comments, folding)
-- Integrated documentation browser
-- Debug configuration generator (CodeLLDB)
-- Task provider (`m2c build/run/test/clean`)
-
-### Debug Support
-
-```bash
-m2c build -g             # build with DWARF debug info
-lldb .m2c/bin/myproject  # debug with source-level stepping in .mod files
-```
-
-Emits `#line` directives mapping C output back to `.mod` source lines. macOS: generates `.dSYM` bundles via `dsymutil`.
-
----
-
-## Libraries
-
-m2c ships with libraries for networking, async I/O, graphics, and more. See [library documentation](README.md#libraries) for details.
-
-| Library | Description |
-|---------|-------------|
-| m2futures | Promises/futures for single-threaded async |
-| m2evloop | Event loop with I/O watchers and timers |
-| m2stream | Transport-agnostic byte streams (TCP, TLS) |
-| m2sockets | POSIX/BSD socket networking |
-| m2tls | TLS via OpenSSL/LibreSSL |
-| m2http | HTTP client (HTTP/1.1 + HTTP/2) |
-| m2http2 | HTTP/2 framing + HPACK |
-| m2http2server | HTTP/2 server with routing and middleware |
-| m2rpc | Length-prefixed RPC framing |
-| m2auth | JWT HS256, Ed25519 PASETO, policy engine |
-| m2gfx | SDL2-based 2D graphics |
-| m2log | Structured logging |
-| m2bytes | Byte buffers and binary codecs |
-| m2alloc | Arena and pool allocators |
-| m2fsm | Table-driven finite state machine |
-| m2cli | CLI argument parser |
-| m2sys | C shim (file I/O, exec, SHA-256, tar) |
+- [Using the toolchain](toolchain.md) — compiler flags, project builds, debugging, environment variables
+- [mxpkg package manager](mxpkg.md) — dependency management, manifests, registry
+- [LSP capabilities](lsp.md) — diagnostics, hover, completion, rename, call hierarchy
+- [VS Code integration](vscode.md) — extension setup, debugging, tasks
+- [Library index](README.md#libraries) — networking, graphics, async, crypto, and more

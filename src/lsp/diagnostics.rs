@@ -39,7 +39,7 @@ pub fn errors_to_diagnostics(errors: &[CompileError]) -> Vec<Json> {
             ])),
             ("severity", Json::int_val(severity)),
             ("code", Json::str_val(code)),
-            ("source", Json::str_val("m2c")),
+            ("source", Json::str_val(crate::identity::COMPILER_ID)),
             ("message", Json::str_val(&e.message)),
         ])
     }).collect()

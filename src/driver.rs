@@ -7,13 +7,14 @@ use crate::codegen::CodeGen;
 use crate::errors::{CompileError, CompileResult};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::identity;
 
-/// Return the m2c install prefix directory.
-/// Uses M2C_HOME env var if set, otherwise defaults to ~/.m2c.
-fn m2c_home() -> Option<PathBuf> {
-    std::env::var_os("M2C_HOME")
+/// Return the mx install prefix directory.
+/// Uses MX_HOME env var if set, otherwise defaults to ~/.mx.
+fn mx_home() -> Option<PathBuf> {
+    std::env::var_os(identity::ENV_HOME)
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".m2c")))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(identity::HOME_DIR)))
 }
 
 #[derive(Debug, Clone)]
@@ -106,8 +107,8 @@ pub(crate) fn find_def_file(module_name: &str, input_path: &Path, include_paths:
             }
         }
     }
-    // Fallback: scan installed libraries at ~/.m2c/lib/*/src/
-    if let Some(home) = m2c_home() {
+    // Fallback: scan installed libraries at ~/HOME_DIR/lib/*/src/
+    if let Some(home) = mx_home() {
         let lib_dir = home.join("lib");
         if let Ok(entries) = fs::read_dir(&lib_dir) {
             for entry in entries.flatten() {
@@ -164,8 +165,8 @@ pub(crate) fn find_mod_file_candidates(module_name: &str, input_path: &Path, inc
             }
         }
     }
-    // Fallback: scan installed libraries at ~/.m2c/lib/*/src/
-    if let Some(home) = m2c_home() {
+    // Fallback: scan installed libraries at ~/HOME_DIR/lib/*/src/
+    if let Some(home) = mx_home() {
         let lib_dir = home.join("lib");
         if let Ok(entries) = fs::read_dir(&lib_dir) {
             for entry in entries.flatten() {
@@ -190,16 +191,16 @@ pub(crate) fn find_mod_file_candidates(module_name: &str, input_path: &Path, inc
 }
 
 /// Build a driver error from C compiler failure, suppressing raw C errors
-/// unless M2C_SHOW_C_ERRORS=1 is set.
+/// unless MX_SHOW_C_ERRORS=1 is set.
 /// Split multi-TU C output on markers and write per-module files + manifest.
 ///
 /// Marker structure in the amalgamated C:
-///   /* M2C_HEADER_BEGIN */  ... runtime header ...  /* M2C_HEADER_END */
-///   /* M2C_MODULE_BEGIN ModName */  ... types/protos ...
-///   /* M2C_MODULE_DEFS ModName */   ... vars/bodies/init ...
-///   /* M2C_MODULE_END ModName */
+///   /* MX_HEADER_BEGIN */  ... runtime header ...  /* MX_HEADER_END */
+///   /* MX_MODULE_BEGIN ModName */  ... types/protos ...
+///   /* MX_MODULE_DEFS ModName */   ... vars/bodies/init ...
+///   /* MX_MODULE_END ModName */
 ///   ...more modules...
-///   /* M2C_MAIN_BEGIN MainName */  ... main module ...  /* M2C_MAIN_END */
+///   /* MX_MAIN_BEGIN MainName */  ... main module ...  /* MX_MAIN_END */
 ///
 /// Output files:
 ///   <out_dir>/_common.h   — header + all module declaration sections
@@ -208,16 +209,16 @@ pub(crate) fn find_mod_file_candidates(module_name: &str, input_path: &Path, inc
 ///   <out_dir>/_manifest.txt — list of .c files
 fn write_per_module_files(c_code: &str, opts: &CompileOptions) -> CompileResult<()> {
     let out_dir = opts.out_dir.clone().unwrap_or_else(|| {
-        opts.input.parent().unwrap_or(Path::new(".")).join("m2c_out")
+        opts.input.parent().unwrap_or(Path::new(".")).join("mx_out")
     });
     fs::create_dir_all(&out_dir).map_err(|e| {
         CompileError::driver(format!("cannot create output dir '{}': {}", out_dir.display(), e))
     })?;
 
     // Extract the header section (runtime header)
-    let header_begin = c_code.find("/* M2C_HEADER_BEGIN */\n")
+    let header_begin = c_code.find("/* MX_HEADER_BEGIN */\n")
         .unwrap_or(0);
-    let header_end_marker = "/* M2C_HEADER_END */\n";
+    let header_end_marker = "/* MX_HEADER_END */\n";
     let header_end = c_code.find(header_end_marker)
         .map(|p| p + header_end_marker.len())
         .unwrap_or(0);
@@ -232,18 +233,18 @@ fn write_per_module_files(c_code: &str, opts: &CompileOptions) -> CompileResult<
 
     // Scan for MODULE_BEGIN markers
     let mut search_pos = 0;
-    while let Some(mb_offset) = remaining[search_pos..].find("/* M2C_MODULE_BEGIN ") {
+    while let Some(mb_offset) = remaining[search_pos..].find("/* MX_MODULE_BEGIN ") {
         let mb_start = search_pos + mb_offset;
         // Extract module name from marker
-        let name_start = mb_start + "/* M2C_MODULE_BEGIN ".len();
+        let name_start = mb_start + "/* MX_MODULE_BEGIN ".len();
         let name_end = remaining[name_start..].find(" */")
             .map(|p| name_start + p)
             .unwrap_or(name_start);
         let mod_name = remaining[name_start..name_end].to_string();
 
         // Find MODULE_DEFS marker
-        let defs_marker = format!("/* M2C_MODULE_DEFS {} */\n", mod_name);
-        let end_marker = format!("/* M2C_MODULE_END {} */\n", mod_name);
+        let defs_marker = format!("/* MX_MODULE_DEFS {} */\n", mod_name);
+        let end_marker = format!("/* MX_MODULE_END {} */\n", mod_name);
 
         if let Some(defs_offset) = remaining[mb_start..].find(&defs_marker) {
             let defs_pos = mb_start + defs_offset;
@@ -270,8 +271,8 @@ fn write_per_module_files(c_code: &str, opts: &CompileOptions) -> CompileResult<
     }
 
     // Extract main section
-    let main_begin_marker = "/* M2C_MAIN_BEGIN ";
-    let main_end_marker = "/* M2C_MAIN_END */\n";
+    let main_begin_marker = "/* MX_MAIN_BEGIN ";
+    let main_end_marker = "/* MX_MAIN_END */\n";
     if let Some(main_start) = remaining.find(main_begin_marker) {
         let content_start = remaining[main_start..].find('\n')
             .map(|p| main_start + p + 1)
@@ -313,7 +314,7 @@ fn write_per_module_files(c_code: &str, opts: &CompileOptions) -> CompileResult<
     })?;
 
     if opts.verbose {
-        eprintln!("m2c: wrote {} per-module files to {}", manifest_lines.len(), out_dir.display());
+        eprintln!("{}: wrote {} per-module files to {}", identity::COMPILER_NAME, manifest_lines.len(), out_dir.display());
     }
 
     Ok(())
@@ -489,9 +490,9 @@ fn map_cc_message(msg: &str) -> String {
     format!("(C backend) {}", msg)
 }
 
-/// Add -I flags for the m2c install prefix (m2sys headers, etc.)
-fn add_m2c_home_includes(cmd: &mut Command) {
-    if let Some(home) = m2c_home() {
+/// Add -I flags for the mx install prefix (m2sys headers, etc.)
+fn add_mx_home_includes(cmd: &mut Command) {
+    if let Some(home) = mx_home() {
         let m2sys_dir = home.join("lib").join("m2sys");
         if m2sys_dir.is_dir() {
             cmd.arg(format!("-I{}", m2sys_dir.display()));
@@ -509,14 +510,14 @@ fn is_m2_file(path: &str) -> bool {
 /// to Modula-2 source locations via #line directives.
 fn handle_cc_failure(stderr: &[u8], is_link_phase: bool, diagnostics_json: bool) -> CompileError {
     let raw = String::from_utf8_lossy(stderr);
-    let show_c = std::env::var("M2C_SHOW_C_ERRORS").map_or(false, |v| v == "1");
+    let show_c = std::env::var(identity::ENV_SHOW_C_ERRORS).map_or(false, |v| v == "1");
 
     // Linker errors have a different format — fall back to raw stderr
     if is_link_phase {
         if show_c || raw.contains("Undefined symbols") || raw.contains("ld:") {
             return CompileError::driver(format!("link failed:\n{}", raw.trim()));
         }
-        return CompileError::driver("link failed (internal error). Re-run with M2C_SHOW_C_ERRORS=1 for details.");
+        return CompileError::driver(format!("link failed (internal error). Re-run with {}=1 for details.", identity::ENV_SHOW_C_ERRORS));
     }
 
     let cc_diags = parse_cc_stderr(&raw);
@@ -582,7 +583,7 @@ fn handle_cc_failure(stderr: &[u8], is_link_phase: bool, diagnostics_json: bool)
         CompileError::driver(format!("C backend failed:\n{}", raw.trim()))
     } else {
         CompileError::driver(
-            "C backend failed (internal error). Re-run with M2C_SHOW_C_ERRORS=1 for details."
+            format!("C backend failed (internal error). Re-run with {}=1 for details.", identity::ENV_SHOW_C_ERRORS)
         )
     }
 }
@@ -622,7 +623,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     let filename = opts.input.to_string_lossy().to_string();
 
     if opts.verbose {
-        eprintln!("m2c: compiling {}", filename);
+        eprintln!("{}: compiling {}", identity::COMPILER_NAME, filename);
     }
 
     // Lex
@@ -642,7 +643,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     };
 
     if opts.verbose {
-        eprintln!("m2c: {} tokens", tokens.len());
+        eprintln!("{}: {} tokens", identity::COMPILER_NAME, tokens.len());
     }
 
     // Parse
@@ -663,14 +664,14 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     };
 
     if opts.verbose {
-        eprintln!("m2c: parsed successfully");
+        eprintln!("{}: parsed successfully", identity::COMPILER_NAME);
     }
 
     // If this is an implementation module, look for the corresponding definition module
     let own_def = if let CompilationUnit::ImplementationModule(ref m) = unit {
         if let Some(def_path) = find_def_file(&m.name, &opts.input, &opts.include_paths) {
             if opts.verbose {
-                eprintln!("m2c: found definition module: {}", def_path.display());
+                eprintln!("{}: found definition module: {}", identity::COMPILER_NAME, def_path.display());
             }
             let def_unit = parse_file(&def_path, opts.case_sensitive, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
@@ -731,7 +732,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
         if let Some(def_path) = find_def_file(&mod_name, &opts.input, &opts.include_paths) {
             if opts.verbose {
-                eprintln!("m2c: found definition module for {}: {}", mod_name, def_path.display());
+                eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, mod_name, def_path.display());
             }
             let def_unit = parse_file(&def_path, opts.case_sensitive, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
@@ -766,7 +767,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         // Skip .mod lookup for foreign (C ABI) modules — they have no M2 implementation
         if codegen.is_foreign_module(&mod_name) {
             if opts.verbose {
-                eprintln!("m2c: skipping .mod lookup for foreign module {}", mod_name);
+                eprintln!("{}: skipping .mod lookup for foreign module {}", identity::COMPILER_NAME, mod_name);
             }
             loaded_modules.insert(mod_name.clone());
             continue;
@@ -775,13 +776,13 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         let mut found_impl = None;
         for mod_path in &mod_candidates {
             if opts.verbose {
-                eprintln!("m2c: trying implementation module for {}: {}", mod_name, mod_path.display());
+                eprintln!("{}: trying implementation module for {}: {}", identity::COMPILER_NAME, mod_name, mod_path.display());
             }
             let mod_unit = parse_file(mod_path, opts.case_sensitive, &opts.features)?;
             if let CompilationUnit::ImplementationModule(imp) = mod_unit {
                 found_impl = Some(imp);
                 if opts.verbose {
-                    eprintln!("m2c: found implementation module for {}: {}", mod_name, mod_path.display());
+                    eprintln!("{}: found implementation module for {}: {}", identity::COMPILER_NAME, mod_name, mod_path.display());
                 }
                 break;
             }
@@ -795,7 +796,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         if !registered_defs.contains(from_mod) && !crate::stdlib::is_stdlib_module(from_mod) {
                             if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
                                 if opts.verbose {
-                                    eprintln!("m2c: found definition module for {}: {}", from_mod, dep_def_path.display());
+                                    eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, from_mod, dep_def_path.display());
                                 }
                                 let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, &opts.features)?;
                                 if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
@@ -815,7 +816,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                             if !registered_defs.contains(n) && !crate::stdlib::is_stdlib_module(n) {
                                 if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
                                     if opts.verbose {
-                                        eprintln!("m2c: found definition module for {}: {}", n, dep_def_path.display());
+                                        eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, n, dep_def_path.display());
                                     }
                                     if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, &opts.features) {
                                         if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
@@ -853,7 +854,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     };
 
     if opts.verbose {
-        eprintln!("m2c: C code generated ({} bytes)", c_code.len());
+        eprintln!("{}: C code generated ({} bytes)", identity::COMPILER_NAME, c_code.len());
     }
 
     // Determine output paths
@@ -874,7 +875,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             CompileError::driver(format!("cannot write '{}': {}", out_path.display(), e))
         })?;
         if opts.verbose {
-            eprintln!("m2c: wrote {}", out_path.display());
+            eprintln!("{}: wrote {}", identity::COMPILER_NAME, out_path.display());
         }
         return Ok(());
     }
@@ -901,7 +902,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             .arg(&obj_file)
             .arg(&c_file);
 
-        add_m2c_home_includes(&mut cmd);
+        add_mx_home_includes(&mut cmd);
 
         for flag in &opts.extra_cflags {
             cmd.arg(flag);
@@ -916,7 +917,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         cmd.arg("-w"); // suppress warnings for generated code
 
         if opts.verbose {
-            eprintln!("m2c: {:?}", cmd);
+            eprintln!("{}: {:?}", identity::COMPILER_NAME, cmd);
         }
 
         let output = cmd.output().map_err(|e| {
@@ -933,7 +934,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
 
         if opts.verbose {
-            eprintln!("m2c: wrote {}", obj_file.display());
+            eprintln!("{}: wrote {}", identity::COMPILER_NAME, obj_file.display());
         }
     } else {
         // Compile and link
@@ -959,7 +960,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .args(["-g", "-O0", "-fno-omit-frame-pointer", "-fno-inline", "-gno-column-info"])
                 .args(["-ffunction-sections", "-fdata-sections"])
                 .arg("-w");
-            add_m2c_home_includes(&mut compile_cmd);
+            add_mx_home_includes(&mut compile_cmd);
             for flag in &opts.extra_cflags {
                 compile_cmd.arg(flag);
             }
@@ -971,7 +972,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 }
             }
             if opts.verbose {
-                eprintln!("m2c: {:?}", compile_cmd);
+                eprintln!("{}: {:?}", identity::COMPILER_NAME, compile_cmd);
             }
             let output = compile_cmd.output().map_err(|e| {
                 CompileError::driver(format!("failed to run C compiler: {}", e))
@@ -1020,7 +1021,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 }
             }
             if opts.verbose {
-                eprintln!("m2c: {:?}", link_cmd);
+                eprintln!("{}: {:?}", identity::COMPILER_NAME, link_cmd);
             }
             let output = link_cmd.output().map_err(|e| {
                 CompileError::driver(format!("failed to link: {}", e))
@@ -1034,13 +1035,13 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 let mut dsym_cmd = Command::new("dsymutil");
                 dsym_cmd.arg(&exe_file);
                 if opts.verbose {
-                    eprintln!("m2c: {:?}", dsym_cmd);
+                    eprintln!("{}: {:?}", identity::COMPILER_NAME, dsym_cmd);
                 }
                 let _ = dsym_cmd.output(); // best-effort, don't fail if dsymutil missing
             }
 
             if opts.verbose {
-                eprintln!("m2c: wrote {}", exe_file.display());
+                eprintln!("{}: wrote {}", identity::COMPILER_NAME, exe_file.display());
             }
         } else {
             // Release: single-step compile+link
@@ -1050,7 +1051,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .arg(&c_file)
                 .arg("-lm");
 
-            add_m2c_home_includes(&mut cmd);
+            add_mx_home_includes(&mut cmd);
 
             for extra in &opts.extra_c_files {
                 cmd.arg(extra);
@@ -1098,7 +1099,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             cmd.arg("-w");
 
             if opts.verbose {
-                eprintln!("m2c: {:?}", cmd);
+                eprintln!("{}: {:?}", identity::COMPILER_NAME, cmd);
             }
 
             let output = cmd.output().map_err(|e| {
@@ -1112,7 +1113,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             let _ = fs::remove_file(&c_file);
 
             if opts.verbose {
-                eprintln!("m2c: wrote {}", exe_file.display());
+                eprintln!("{}: wrote {}", identity::COMPILER_NAME, exe_file.display());
             }
         }
     }
@@ -1184,7 +1185,7 @@ pub fn compile_plan(plan_path: &str) -> CompileResult<()> {
             opts.link_paths.push(lp);
         }
 
-        eprintln!("m2c: plan step {}: compile {}", i, opts.input.display());
+        eprintln!("{}: plan step {}: compile {}", identity::COMPILER_NAME, i, opts.input.display());
         compile(&opts)?;
     }
 

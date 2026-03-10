@@ -1,4 +1,0 @@
-DEFINITION MODULE ExportCTest;
-  (*$EXPORTC "get_value"*)
-  PROCEDURE GetValue(): INTEGER;
-END ExportCTest.

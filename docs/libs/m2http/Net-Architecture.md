@@ -1,6 +1,6 @@
 # Net Architecture
 
-Overview of the m2c networking stack, from OS sockets up to the HTTP client.
+Overview of the mx networking stack, from OS sockets up to the HTTP client.
 
 ## Layer Diagram
 

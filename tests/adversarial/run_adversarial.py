@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Adversarial test suite for m2c (Modula-2 -> C transpiler).
+Adversarial test suite for mx (Modula-2 -> C transpiler).
 
 Tests for:
   A) Symbol namespace collisions across modules (esp. enums)
@@ -42,8 +42,6 @@ from typing import List, Optional, Dict, Tuple, Any
 SCRIPT_DIR = Path(__file__).parent.resolve()
 DEFAULT_CONFIG = SCRIPT_DIR / "config.json"
 DEFAULT_TESTS = SCRIPT_DIR / "tests.json"
-PROGRAMS_DIR = SCRIPT_DIR / "programs"
-
 WARNING_FLAGS = [
     "-Wall", "-Wextra", "-Wpedantic",
     "-Wconversion", "-Wsign-conversion",
@@ -320,9 +318,9 @@ M2_SYMBOLS = [
 class ParserCrashFuzzer:
     """Generate random token sequences to crash-test the parser."""
 
-    def __init__(self, seed: int, m2c_cmd: List[str]):
+    def __init__(self, seed: int, mx_cmd: List[str]):
         self.rng = random.Random(seed)
-        self.m2c_cmd = m2c_cmd
+        self.mx_cmd = mx_cmd
 
     def gen_tokens(self, n: int) -> str:
         tokens = []
@@ -358,7 +356,7 @@ class ParserCrashFuzzer:
         src_path.write_text(source)
         out_c = out_dir / "fuzz_output.c"
 
-        cmd = self.m2c_cmd + ["--emit-c", str(src_path), "-o", str(out_c)]
+        cmd = self.mx_cmd + ["--emit-c", str(src_path), "-o", str(out_c)]
         rc, stdout, stderr = run_cmd(cmd, timeout=10)
 
         # rc != 0 is fine (parser rejected input).
@@ -377,9 +375,9 @@ class ParserCrashFuzzer:
 class WellTypedFuzzer:
     """Generate small well-typed M2 programs and verify they compile+run."""
 
-    def __init__(self, seed: int, m2c_cmd: List[str]):
+    def __init__(self, seed: int, mx_cmd: List[str]):
         self.rng = random.Random(seed)
-        self.m2c_cmd = m2c_cmd
+        self.mx_cmd = mx_cmd
 
     def gen_program(self) -> str:
         """Generate a valid M2 program with integer arithmetic,
@@ -498,7 +496,7 @@ class WellTypedFuzzer:
         out_exe = out_dir / "wtfuzz_exe"
 
         # Transpile
-        cmd = self.m2c_cmd + ["--emit-c", str(src_path), "-o", str(out_c)]
+        cmd = self.mx_cmd + ["--emit-c", str(src_path), "-o", str(out_c)]
         rc, _, stderr = run_cmd(cmd, timeout=10)
         if rc != 0:
             return False, f"transpile rejected (ok): {stderr[:100]}", source
@@ -649,9 +647,9 @@ class AdversarialRunner:
         # Resolve project root (relative to SCRIPT_DIR)
         self.project_root = (SCRIPT_DIR / self.config.get("project_root", "../..")).resolve()
 
-        # Resolve m2c command
-        m2c_raw = self.config.get("m2c", "cargo run --quiet --")
-        self.m2c_cmd = m2c_raw.split()
+        # Resolve mx command
+        mx_raw = self.config.get("mx", "cargo run --quiet --")
+        self.mx_cmd = mx_raw.split()
 
         # Output directory
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -698,7 +696,7 @@ class AdversarialRunner:
             "multi_tu_skip_message",
             "multi-TU not supported",
         )
-        self.multi_tu_m2c_flags = self.config.get("multi_tu_m2c_flags", [])
+        self.multi_tu_mx_flags = self.config.get("multi_tu_mx_flags", [])
         self.multi_tu_manifest = self.config.get("multi_tu_manifest", "_manifest.txt")
 
         # Strict mode
@@ -722,10 +720,10 @@ class AdversarialRunner:
 
     def transpile_multi_tu(self, test_def: dict, test_dir: Path,
                           out_dir: Path) -> Tuple[bool, str, List[str]]:
-        """Run m2c --emit-per-module. Returns (success, stderr, list_of_c_files)."""
+        """Run mx --emit-per-module. Returns (success, stderr, list_of_c_files)."""
         main_file = test_dir / test_def["main"]
-        cmd = list(self.m2c_cmd)
-        cmd.extend(self.multi_tu_m2c_flags)
+        cmd = list(self.mx_cmd)
+        cmd.extend(self.multi_tu_mx_flags)
         cmd.extend(["--out-dir", str(out_dir)])
 
         if test_def.get("m2plus", False):
@@ -929,9 +927,9 @@ class AdversarialRunner:
         return r
 
     def transpile(self, test_def: dict, test_dir: Path, out_c: Path) -> Tuple[bool, str]:
-        """Run m2c --emit-c. Returns (success, stderr)."""
+        """Run mx --emit-c. Returns (success, stderr)."""
         main_file = test_dir / test_def["main"]
-        cmd = list(self.m2c_cmd)
+        cmd = list(self.mx_cmd)
         cmd.append("--emit-c")
 
         if test_def.get("m2plus", False):
@@ -1347,7 +1345,7 @@ class AdversarialRunner:
 
         # ── Parser crash fuzzer ──
         print(f"\n  Fuzzing parser ({self.fuzz_parser_count} inputs, seed={self.seed})...")
-        fuzzer = ParserCrashFuzzer(self.seed, self.m2c_cmd)
+        fuzzer = ParserCrashFuzzer(self.seed, self.mx_cmd)
         crash_count = 0
         t_start = time.time()
 
@@ -1385,7 +1383,7 @@ class AdversarialRunner:
         # ── Well-typed fuzzer ──
         cc_path = list(self.compilers.values())[0]
         print(f"  Fuzzing well-typed ({self.fuzz_typed_count} programs, seed={self.seed})...")
-        wt_fuzzer = WellTypedFuzzer(self.seed + 1000, self.m2c_cmd)
+        wt_fuzzer = WellTypedFuzzer(self.seed + 1000, self.mx_cmd)
         wt_crash_count = 0
         t_start = time.time()
 
@@ -1429,7 +1427,7 @@ class AdversarialRunner:
             return results
 
         print(f"  Replaying {len(corpus_files)} saved {kind} corpus inputs...")
-        fuzzer = ParserCrashFuzzer(0, self.m2c_cmd)
+        fuzzer = ParserCrashFuzzer(0, self.mx_cmd)
         still_crash = 0
 
         for cf in corpus_files:
@@ -1465,7 +1463,7 @@ class AdversarialRunner:
     def run(self) -> int:
         """Run the full test suite. Returns 0 on all-pass, 1 on any failure."""
         print("=" * 60)
-        print("m2c Adversarial Test Suite")
+        print("mx Adversarial Test Suite")
         print("=" * 60)
         print(f"  Mode:       {self.args.mode}")
         print(f"  Compilers:  {', '.join(self.compilers.keys())}")
@@ -1596,7 +1594,7 @@ class AdversarialRunner:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Adversarial test suite for m2c compiler",
+        description="Adversarial test suite for mx compiler",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:

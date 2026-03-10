@@ -1,6 +1,6 @@
 # VS Code integration
 
-The `tools/vscode-m2plus/` directory contains a VS Code extension that provides Modula-2/Modula-2+ language support via the `m2c --lsp` language server.
+The `tools/vscode-m2plus/` directory contains a VS Code extension that provides Modula-2/Modula-2+ language support via the `mx --lsp` language server.
 
 ## Installation
 
@@ -11,7 +11,7 @@ Build and install the compiler:
 ```bash
 cd /path/to/m2
 cargo build --release
-sudo cp target/release/m2c /usr/local/bin/m2c
+sudo cp target/release/mx /usr/local/bin/mx
 ```
 
 ### Install the extension
@@ -43,26 +43,26 @@ npm run watch
 ## Architecture
 
 ```
-VS Code  <-->  vscode-languageclient  <-->  m2c --lsp (stdio)
+VS Code  <-->  vscode-languageclient  <-->  mx --lsp (stdio)
 ```
 
-The extension is a thin client. All language intelligence (diagnostics, hover, completion, etc.) is provided by the m2c LSP server. The extension:
+The extension is a thin client. All language intelligence (diagnostics, hover, completion, etc.) is provided by the mx LSP server. The extension:
 
-1. Launches `m2c --lsp` as a child process
+1. Launches `mx --lsp` as a child process
 2. Forwards LSP messages over stdio
 3. Provides TextMate syntax grammar for basic highlighting
 4. Registers build/run/test/clean tasks
 
 ## Settings
 
-All settings are under the `m2c.*` namespace. Configure in VS Code settings (JSON or UI).
+All settings are under the `mx.*` namespace. Configure in VS Code settings (JSON or UI).
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `m2c.serverPath` | string | `"m2c"` | Path to the `m2c` binary. Set to full path if not on PATH. |
-| `m2c.m2plus` | boolean | `true` | Pass `--m2plus` flag to the LSP server |
-| `m2c.includePaths` | string[] | `[]` | Additional `-I` paths passed to the LSP server |
-| `m2c.diagnostics.debounceMs` | number | `250` | Diagnostics debounce delay in milliseconds |
+| `mx.serverPath` | string | `"mx"` | Path to the `mx` binary. Set to full path if not on PATH. |
+| `mx.m2plus` | boolean | `true` | Pass `--m2plus` flag to the LSP server |
+| `mx.includePaths` | string[] | `[]` | Additional `-I` paths passed to the LSP server |
+| `mx.diagnostics.debounceMs` | number | `250` | Diagnostics debounce delay in milliseconds |
 
 The debounce setting is passed to the server via `initializationOptions`. See [LSP configuration](lsp.md#configuration) for all server-side options.
 
@@ -72,7 +72,7 @@ Open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) and type "Modula-2+":
 
 | Command | Description |
 |---------|-------------|
-| **Modula-2+: Restart Language Server** | Stop and restart the `m2c --lsp` process |
+| **Modula-2+: Restart Language Server** | Stop and restart the `mx --lsp` process |
 | **Modula-2+: Reindex Workspace** | Force the server to rebuild its workspace index. Displays file and symbol counts on completion. |
 | **Modula-2+: Initialize Project** | Scaffold a new project (creates `m2.toml`, `src/Main.mod`, `tests/Main.mod`) |
 | **Modula-2+: Create Debug Configuration** | Create `.vscode/tasks.json` and `launch.json` for debugging. Does not overwrite existing files. |
@@ -83,23 +83,23 @@ The extension provides four tasks via a TaskProvider. Access them from Terminal 
 
 | Task | Command | Description |
 |------|---------|-------------|
-| build | `m2c build` | Compile the project (requires `m2.toml`) |
-| run | `m2c run` | Compile and run |
-| test | `m2c test` | Compile and run tests |
-| clean | `m2c clean` | Remove `.m2c/` build directory |
-| init | `m2c init` | Initialize a new project |
+| build | `mx build` | Compile the project (requires `m2.toml`) |
+| run | `mx run` | Compile and run |
+| test | `mx test` | Compile and run tests |
+| clean | `mx clean` | Remove `.mx/` build directory |
+| init | `mx init` | Initialize a new project |
 
 The **build** task is assigned to the Build group; **test** to the Test group.
 
 ### Problem matcher
 
-Tasks use the `m2c` problem matcher, which parses error output in the format:
+Tasks use the `mx` problem matcher, which parses error output in the format:
 
 ```
 file:line:col: error: message
 ```
 
-Errors and warnings from `m2c` are highlighted in the editor and appear in the Problems panel.
+Errors and warnings from `mx` are highlighted in the editor and appear in the Problems panel.
 
 ## Syntax highlighting
 
@@ -125,13 +125,7 @@ The extension provides:
 
 ## Project detection
 
-The LSP server automatically detects projects by looking for `m2.toml` manifest files. When a project is detected:
-
-- Include paths from the manifest and lockfile are used for module resolution
-- `m2plus` mode is read from the manifest (overrides the VS Code setting)
-- Saving `m2.toml` or `m2.lock` triggers automatic reindexing
-
-No manual `-I` configuration is needed for projects with an `m2.toml` manifest.
+The LSP server automatically detects projects by looking for `m2.toml` manifests. When found, include paths and `m2plus` mode are read from the manifest, and no manual `-I` configuration is needed. See [LSP configuration](lsp.md#project-detection) for details.
 
 ## Debugging
 
@@ -150,7 +144,7 @@ The command creates four files in `.vscode/`:
 
 | File | Purpose |
 |------|---------|
-| `tasks.json` | Build task that runs `m2c build -g` |
+| `tasks.json` | Build task that runs `mx build -g` |
 | `launch.json` | CodeLLDB launch config with the binary name read from `m2.toml` |
 | `extensions.json` | Recommends the CodeLLDB extension |
 | `settings.json` | Sets `debug.allowBreakpointsEverywhere: true` (required for `.mod` breakpoints) |
@@ -159,21 +153,7 @@ Existing files are not overwritten. Delete a file and re-run the command to rege
 
 ### How it works
 
-When compiled with `-g`, the compiler:
-
-1. Emits C `#line` preprocessor directives mapping generated C back to `.mod` source lines
-2. Compiles to a `.o` file (kept on disk for DWARF debug info)
-3. Links to produce the executable
-4. Runs `dsymutil` (macOS) to create a `.dSYM` bundle
-5. Sets stdout to unbuffered so I/O appears immediately when stepping
-
-The C compiler flags used in debug mode:
-
-```
--g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info
-```
-
-`-gno-column-info` suppresses C-level column positions so the debugger highlights whole `.mod` source lines rather than positions within the generated C.
+The `-g` flag emits `#line` directives mapping generated C back to `.mod` source lines, enabling source-level debugging. See [debug builds](toolchain.md#debug-builds) for the full compilation details.
 
 ### Debugging features
 
@@ -193,7 +173,7 @@ The C compiler flags used in debug mode:
 src/
   Main.c          # generated C (preserved for source mapping)
   Main.o          # object file (kept for DWARF debug info)
-.m2c/
+.mx/
   bin/
     <name>        # executable with debug info
     <name>.dSYM/  # macOS debug symbol bundle
@@ -210,47 +190,17 @@ Local variables map 1:1 to their Modula-2 names. Module-level variables appear a
 - Re-run "Create Debug Configuration" to regenerate the settings file
 
 **Breakpoints appear but program doesn't stop**:
-- Run `m2c clean && m2c build -g` to force a fresh debug build
+- Run `mx clean && mx build -g` to force a fresh debug build
 - Ensure the binary name in `launch.json` matches the `name` field in `m2.toml`
 - Check the Debug Console for error messages
 
 **Output doesn't appear when stepping**:
 - This should work automatically (stdout is unbuffered in debug mode)
-- If using a non-debug build, rebuild with `m2c build -g`
+- If using a non-debug build, rebuild with `mx build -g`
 
 **Debugger shows assembly instead of source**:
-- The `.dSYM` bundle may be missing — rebuild with `m2c clean && m2c build -g`
+- The `.dSYM` bundle may be missing -- rebuild with `mx clean && mx build -g`
 - Ensure the `.mod` source files haven't moved since the last build
-
-## Libraries
-
-Standard libraries shipped in `libs/`. Add them to your project via `m2.toml` deps or `-I` paths.
-
-### Async / Networking
-
-| Library | Path | Description |
-|---------|------|-------------|
-| m2futures | `libs/m2futures/` | Promises/Futures for single-threaded async |
-| m2stream | `libs/m2stream/` | Transport-agnostic byte streams (TCP, TLS) |
-| m2evloop | `libs/m2evloop/` | Event loop with poll/kqueue backend |
-| m2sockets | `libs/m2sockets/` | BSD socket bindings |
-| m2tls | `libs/m2tls/` | TLS via system libraries |
-| m2http | `libs/m2http/` | HTTP client over m2stream |
-
-### Graphics
-
-| Library | Path | Description |
-|---------|------|-------------|
-| m2gfx | `libs/m2gfx/` | Graphics bridge (SDL2), canvas, pixel buffers, fonts |
-
-### Helpers
-
-| Library | Path | Description |
-|---------|------|-------------|
-| m2log | `libs/m2log/` | Structured logging with pluggable sinks |
-| m2bytes | `libs/m2bytes/` | Byte buffers, binary codec (endian, varint, hex) |
-| m2cli | `libs/m2cli/` | CLI argument parser (flags, options) |
-| m2sys | `libs/m2sys/` | C shim for file I/O, exec, SHA256, paths |
 
 ## Output and logs
 
@@ -261,15 +211,15 @@ Standard libraries shipped in `libs/`. Add them to your project via `m2.toml` de
 
 ### Server not starting
 
-1. Verify `m2c` works: run `m2c --version-json` in a terminal.
-2. If `m2c` is not on PATH, set `m2c.serverPath` to the full path (e.g., `/usr/local/bin/m2c`).
+1. Verify `mx` works: run `mx --version-json` in a terminal.
+2. If `mx` is not on PATH, set `mx.serverPath` to the full path (e.g., `/usr/local/bin/mx`).
 3. Check the Output panel for error messages.
 
 ### No diagnostics
 
 - Ensure the file extension is `.mod` or `.def`.
 - Check that the file is syntactically valid enough to parse (the server reports parse errors as diagnostics).
-- Try `m2c.diagnostics.debounceMs: 0` for immediate feedback.
+- Try `mx.diagnostics.debounceMs: 0` for immediate feedback.
 
 ### Stale references or symbols
 
@@ -285,4 +235,4 @@ Standard libraries shipped in `libs/`. Add them to your project via `m2.toml` de
 ### Build tasks not appearing
 
 - Ensure an `m2.toml` manifest exists in the workspace root.
-- Verify `m2c` is accessible (the task provider uses the configured `serverPath`).
+- Verify `mx` is accessible (the task provider uses the configured `serverPath`).

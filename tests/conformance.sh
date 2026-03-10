@@ -1,9 +1,9 @@
 #!/bin/bash
-# Conformance test — validates the m2c toolchain contract.
-# Requires: jq, cargo (or pre-built m2c on PATH)
+# Conformance test — validates the mx toolchain contract.
+# Requires: jq, cargo (or pre-built mx on PATH)
 set -e
 
-M2C="${M2C:-cargo run --quiet --}"
+MX="${MX:-cargo run --quiet --}"
 PASS=0
 FAIL=0
 TMPDIR=$(mktemp -d)
@@ -12,11 +12,11 @@ trap "rm -rf $TMPDIR" EXIT
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-echo "=== m2c conformance tests ==="
+echo "=== mx conformance tests ==="
 
 # 1. --version-json: parse with jq, assert required fields
 echo "1. --version-json"
-VJ=$($M2C --version-json 2>&1)
+VJ=$($MX --version-json 2>&1)
 if echo "$VJ" | jq -e '.name' >/dev/null 2>&1; then
     pass "valid JSON"
 else
@@ -24,7 +24,7 @@ else
 fi
 
 NAME=$(echo "$VJ" | jq -r '.name')
-[ "$NAME" = "m2c" ] && pass "name=m2c" || fail "name=$NAME (expected m2c)"
+[ "$NAME" = "mx" ] && pass "name=mx" || fail "name=$NAME (expected mx)"
 
 VERSION=$(echo "$VJ" | jq -r '.version')
 [ -n "$VERSION" ] && pass "version present ($VERSION)" || fail "version missing"
@@ -51,7 +51,7 @@ STDLIB_LEN=$(echo "$VJ" | jq '.stdlib | length')
 
 # 2. --print-targets: assert exit 0, non-empty output
 echo "2. --print-targets"
-TARGETS=$($M2C --print-targets 2>&1)
+TARGETS=$($MX --print-targets 2>&1)
 if [ $? -eq 0 ] && [ -n "$TARGETS" ]; then
     pass "--print-targets"
 else
@@ -67,7 +67,7 @@ BEGIN
   WriteString("hello"); WriteLn
 END hello.
 EOF
-if $M2C "$TMPDIR/hello.mod" -o "$TMPDIR/hello" 2>/dev/null; then
+if $MX "$TMPDIR/hello.mod" -o "$TMPDIR/hello" 2>/dev/null; then
     OUT=$("$TMPDIR/hello" 2>&1)
     [ "$OUT" = "hello" ] && pass "compile + run" || fail "output mismatch: $OUT"
 else
@@ -76,7 +76,7 @@ fi
 
 # 4. --emit-c: assert .c file produced and contains main(
 echo "4. --emit-c"
-if $M2C --emit-c "$TMPDIR/hello.mod" -o "$TMPDIR/hello_emit.c" 2>/dev/null; then
+if $MX --emit-c "$TMPDIR/hello.mod" -o "$TMPDIR/hello_emit.c" 2>/dev/null; then
     if [ -f "$TMPDIR/hello_emit.c" ] && grep -q 'main(' "$TMPDIR/hello_emit.c"; then
         pass "--emit-c produces C with main("
     else
@@ -102,7 +102,7 @@ cat > "$TMPDIR/plantest/plan.json" <<EOF
   ]
 }
 EOF
-if $M2C compile --plan "$TMPDIR/plantest/plan.json" 2>/dev/null; then
+if $MX compile --plan "$TMPDIR/plantest/plan.json" 2>/dev/null; then
     if [ -f "$TMPDIR/plantest/hello_plan" ]; then
         pass "compile --plan"
     else
@@ -114,7 +114,7 @@ fi
 
 # 6. plan_version round-trip: extract from --version-json, use in plan
 echo "6. plan_version round-trip"
-PV=$($M2C --version-json 2>&1 | jq -r '.plan_version')
+PV=$($MX --version-json 2>&1 | jq -r '.plan_version')
 cat > "$TMPDIR/plantest/plan2.json" <<EOF
 {
   "version": $PV,
@@ -126,7 +126,7 @@ cat > "$TMPDIR/plantest/plan2.json" <<EOF
   ]
 }
 EOF
-if $M2C compile --plan "$TMPDIR/plantest/plan2.json" 2>/dev/null; then
+if $MX compile --plan "$TMPDIR/plantest/plan2.json" 2>/dev/null; then
     pass "plan_version round-trip"
 else
     fail "plan_version round-trip failed"
@@ -140,7 +140,7 @@ BEGIN
   x :=
 END bad.
 EOF
-DIAG=$($M2C --diagnostics-json "$TMPDIR/bad.mod" 2>&1 >/dev/null || true)
+DIAG=$($MX --diagnostics-json "$TMPDIR/bad.mod" 2>&1 >/dev/null || true)
 if [ -n "$DIAG" ]; then
     # Each line should be valid JSON with required fields
     FIRST_LINE=$(echo "$DIAG" | head -1)
@@ -163,7 +163,7 @@ fi
 
 # 8. --diagnostics-json: good input produces no diagnostic output
 echo "8. --diagnostics-json clean output"
-DIAG_GOOD=$($M2C --diagnostics-json --emit-c "$TMPDIR/hello.mod" -o "$TMPDIR/hello_diag.c" 2>&1 >/dev/null || true)
+DIAG_GOOD=$($MX --diagnostics-json --emit-c "$TMPDIR/hello.mod" -o "$TMPDIR/hello_diag.c" 2>&1 >/dev/null || true)
 if [ -z "$DIAG_GOOD" ]; then
     pass "no diagnostics for clean input"
 else
@@ -172,7 +172,7 @@ fi
 
 # 9. diagnostics_json capability is true
 echo "9. diagnostics_json capability"
-DJ_CAP=$($M2C --version-json 2>&1 | jq -r '.capabilities.diagnostics_json')
+DJ_CAP=$($MX --version-json 2>&1 | jq -r '.capabilities.diagnostics_json')
 [ "$DJ_CAP" = "true" ] && pass "diagnostics_json=true" || fail "diagnostics_json=$DJ_CAP"
 
 echo ""

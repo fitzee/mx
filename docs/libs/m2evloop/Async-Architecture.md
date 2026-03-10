@@ -1,6 +1,6 @@
 # Async Architecture
 
-Overview of the m2c single-threaded async runtime, from OS primitives up to application-level Promises.
+Overview of the mx single-threaded async runtime, from OS primitives up to application-level Promises.
 
 ## Layer Diagram
 

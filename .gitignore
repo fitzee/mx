@@ -1,0 +1,15 @@
+/target
+target/
+.DS_Store
+.idea/
+.m2c/
+.mx/
+*.o
+
+# Generated C output from mx compilation
+libs/*/src/*.c
+examples/**/*.c
+
+/.claude/
+/.github/
+/.vscode/

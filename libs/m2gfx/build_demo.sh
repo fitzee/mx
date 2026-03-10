@@ -3,14 +3,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-M2C="${M2C:-m2c}"
+MX="${MX:-mx}"
 
 BREW_FLAGS=""
 if [ "$(uname)" = "Darwin" ]; then
     BREW_FLAGS="--cflag -I/opt/homebrew/include -L /opt/homebrew/lib"
 fi
 
-"$M2C" "$SCRIPT_DIR/../../example_apps/gfx_demo.mod" \
+"$MX" "$SCRIPT_DIR/../../examples/graphics/gfx_demo.mod" \
     -I "$SCRIPT_DIR/src" \
     $BREW_FLAGS \
     -l SDL2 -l SDL2_ttf \

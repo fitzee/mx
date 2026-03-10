@@ -6,7 +6,7 @@ ROTATE(val: CARDINAL; n: INTEGER): CARDINAL
 
 Circular rotation of `val` by `n` bit positions. Positive `n` rotates left, negative `n` rotates right. Bits shifted out on one side re-enter on the other.
 
-Based on ISO Modula-2 `SYSTEM.ROTATE`. Available as a pervasive builtin in m2c (no import required).
+Based on ISO Modula-2 `SYSTEM.ROTATE`. Available as a pervasive builtin in mx (no import required).
 
 ## Example
 

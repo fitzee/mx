@@ -2,254 +2,348 @@
   {
     "name": "enum_collision",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/enum_collision",
+    "dir": "symbol_namespace/enum_collision",
     "main": "EnumCollisionMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "1\n2\n",
     "c_scan": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "stress_collision",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/stress_collision",
+    "dir": "symbol_namespace/stress_collision",
     "main": "StressMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "10\n20\n30\n40\n50\n60\n",
     "c_scan": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "unqualified_variant",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/unqualified_variant",
+    "dir": "symbol_namespace/unqualified_variant",
     "main": "UnqualifiedVariant.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "Red\nBlue\nOK\nPending\nFailed\n",
     "c_scan": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "qualified_variant",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/qualified_variant",
+    "dir": "symbol_namespace/qualified_variant",
     "main": "QualifiedMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "0\n1\n2\n",
     "c_scan": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "short_circuit",
     "category": "semantics",
-    "dir": "programs/semantics/short_circuit",
+    "dir": "semantics/short_circuit",
     "main": "ShortCircuit.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "T1:0\nT2:0\nT3:1\nT4:1\nT5:0\nT6:0\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "integer_bounds",
     "category": "semantics",
-    "dir": "programs/semantics/integer_bounds",
+    "dir": "semantics/integer_bounds",
     "main": "IntegerBounds.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "MaxInt:2147483647\nMinInt:-2147483648\nZeroCard:0\nNegOne:-1\nMaxAgain:2147483647\nDiv:3\nMod:1\nNegDiv:-4\nNegMod:1\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "var_aliasing",
     "category": "semantics",
-    "dir": "programs/semantics/var_aliasing",
+    "dir": "semantics/var_aliasing",
     "main": "VarAliasing.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "Swap:20,10\nAdd:8\nArrSwap:200,100\nGlobal:50\nAlias:14\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "module_init_order",
     "category": "semantics",
-    "dir": "programs/semantics/module_init_order",
+    "dir": "semantics/module_init_order",
     "main": "InitOrderMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "InitA\nInitB\nMain\nResult:2\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "array_bounds_safe",
     "category": "ub_sanitizer",
-    "dir": "programs/ub_sanitizer/array_bounds_safe",
+    "dir": "ub_sanitizer/array_bounds_safe",
     "main": "ArrayBoundsSafe.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "Sum:285\nFirst:0\nLast:81\nChain:9\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "signed_overflow",
     "category": "ub_sanitizer",
-    "dir": "programs/ub_sanitizer/signed_overflow",
+    "dir": "ub_sanitizer/signed_overflow",
     "main": "SignedOverflow.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "Mul:1000000\nAdd:300000\nSub:100000\nNeg:-42\nChain:-290\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "meta_baseline",
     "category": "metamorphic",
-    "dir": "programs/metamorphic/baseline",
+    "dir": "metamorphic/baseline",
     "main": "MetaBaseline.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "ambiguous_enum",
     "category": "resolution",
-    "dir": "programs/resolution/ambiguous_enum",
+    "dir": "resolution/ambiguous_enum",
     "main": "AmbiguousEnum.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "2\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "shadow_local",
     "category": "resolution",
-    "dir": "programs/resolution/shadow_local",
+    "dir": "resolution/shadow_local",
     "main": "ShadowLocal.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "42\n10\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "ambiguous_type",
     "category": "resolution",
-    "dir": "programs/resolution/ambiguous_type",
+    "dir": "resolution/ambiguous_type",
     "main": "AmbiguousType.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "2\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "reexport_chain",
     "category": "import_chain",
-    "dir": "programs/import_chain/reexport_chain",
+    "dir": "import_chain/reexport_chain",
     "main": "ReexportMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "21\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "qualified_access",
     "category": "import_chain",
-    "dir": "programs/import_chain/qualified_access",
+    "dir": "import_chain/qualified_access",
     "main": "QualifiedAccess.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "7\n12\n1\n2\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "proc_var_basic",
     "category": "proc_values",
-    "dir": "programs/proc_values/proc_var_basic",
+    "dir": "proc_values/proc_var_basic",
     "main": "ProcVarBasic.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "10\n25\n14\n49\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "proc_var_cross",
     "category": "proc_values",
-    "dir": "programs/proc_values/proc_var_cross",
+    "dir": "proc_values/proc_var_cross",
     "main": "ProcVarCross.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "11\n9\n-10\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "proc_var_collision",
     "category": "proc_values",
-    "dir": "programs/proc_values/proc_var_collision",
+    "dir": "proc_values/proc_var_collision",
     "main": "ProcVarCollision.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "105\n15\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "record_fields",
     "category": "abi_layout",
-    "dir": "programs/abi_layout/record_fields",
+    "dir": "abi_layout/record_fields",
     "main": "RecordFields.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "10\n3\n7\n42\n99\nT\nA\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "nested_compound",
     "category": "abi_layout",
-    "dir": "programs/abi_layout/nested_compound",
+    "dir": "abi_layout/nested_compound",
     "main": "NestedCompound.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "0\n1\n10\n11\n20\n21\n4\n50\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "timer_cancel",
     "category": "runtime",
-    "dir": "programs/runtime/timer_cancel",
+    "dir": "runtime/timer_cancel",
     "main": "TimerCancel.mod",
-    "include_dirs": [".", "@root/libs/m2futures/src", "@root/libs/m2evloop/src"],
+    "include_dirs": [
+      ".",
+      "@root/libs/m2futures/src",
+      "@root/libs/m2evloop/src"
+    ],
     "m2plus": true,
-    "extra_c_files": ["@root/libs/m2evloop/src/poller_bridge.c"],
+    "extra_c_files": [
+      "@root/libs/m2evloop/src/poller_bridge.c"
+    ],
     "expected_exit": 0,
-    "expected_stdout_contains": ["PASS"],
-    "tags": ["local_only"],
+    "expected_stdout_contains": [
+      "PASS"
+    ],
+    "tags": [
+      "local_only"
+    ],
     "skip_sanitizers": true
   },
   {
     "name": "stream_partial",
     "category": "runtime",
-    "dir": "programs/runtime/stream_partial",
+    "dir": "runtime/stream_partial",
     "main": "StreamPartial.mod",
     "include_dirs": [
       ".",
@@ -265,608 +359,1417 @@
       "@root/libs/m2sockets/src/sockets_bridge.c",
       "@root/libs/m2tls/src/tls_bridge.c"
     ],
-    "extra_cflags": ["-I/opt/homebrew/opt/openssl@3/include", "-L/opt/homebrew/opt/openssl@3/lib"],
-    "extra_ldflags": ["-lssl", "-lcrypto"],
+    "extra_cflags": [
+      "-I/opt/homebrew/opt/openssl@3/include",
+      "-L/opt/homebrew/opt/openssl@3/lib"
+    ],
+    "extra_ldflags": [
+      "-lssl",
+      "-lcrypto"
+    ],
     "expected_exit": 0,
-    "expected_stdout_contains": ["PASS"],
-    "tags": ["local_only"],
+    "expected_stdout_contains": [
+      "PASS"
+    ],
+    "tags": [
+      "local_only"
+    ],
     "skip_sanitizers": true
   },
   {
     "name": "ambig_type",
     "category": "strict_ambiguity",
-    "dir": "programs/strict_ambiguity/ambig_type",
+    "dir": "strict_ambiguity/ambig_type",
     "main": "AmbigType.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expect_compile_fail": true,
     "strict": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "ambig_enum",
     "category": "strict_ambiguity",
-    "dir": "programs/strict_ambiguity/ambig_enum",
+    "dir": "strict_ambiguity/ambig_enum",
     "main": "AmbigEnum.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expect_compile_fail": true,
     "strict": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "ambig_proc",
     "category": "strict_ambiguity",
-    "dir": "programs/strict_ambiguity/ambig_proc",
+    "dir": "strict_ambiguity/ambig_proc",
     "main": "AmbigProc.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expect_compile_fail": true,
     "strict": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "reexport_ambig",
     "category": "strict_ambiguity",
-    "dir": "programs/strict_ambiguity/reexport_ambig",
+    "dir": "strict_ambiguity/reexport_ambig",
     "main": "ReexportAmbig.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expect_compile_fail": true,
     "strict": true,
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "mtu_linkage_trap",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/mtu_linkage_trap",
+    "dir": "symbol_namespace/mtu_linkage_trap",
     "main": "MTLinkTrap.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "42\n99\n42\n99\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Multi-TU linkage trap: two modules with same-named exports (value, GetValue). Passes in both single-TU and multi-TU when names are properly module-prefixed. Would fail at link time in multi-TU if codegen emitted bare names."
   },
   {
     "name": "callback_dispatch",
     "category": "stream_stress",
-    "dir": "programs/stream_stress/callback_dispatch",
+    "dir": "stream_stress/callback_dispatch",
     "main": "CallbackDispatch.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "15\n-3\n49\n8\n18\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "pointer_chain",
     "category": "stream_stress",
-    "dir": "programs/stream_stress/pointer_chain",
+    "dir": "stream_stress/pointer_chain",
     "main": "PointerChain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "11\n40\n60\n",
-    "tags": ["ci"]
+    "tags": [
+      "ci"
+    ]
   },
   {
     "name": "type_cast_test",
     "category": "resolution",
-    "dir": "programs/resolution",
+    "dir": "resolution",
     "main": "type_cast_test.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "type cast OK\nall casts OK\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Tests ADDRESS/WORD/BYTE casts emit (void*) not function calls, and user-defined pointer type casts."
   },
   {
     "name": "high_fixed_array_test",
     "category": "resolution",
-    "dir": "programs/resolution",
+    "dir": "resolution",
     "main": "high_fixed_array_test.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "HIGH local array OK\nHIGH named type OK\nHIGH record char field OK\nHIGH record int field OK\nall HIGH OK\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Tests HIGH() on fixed-size arrays: local vars, named types, and record fields."
   },
   {
     "name": "c_keyword_params_test",
     "category": "resolution",
-    "dir": "programs/resolution",
+    "dir": "resolution",
     "main": "c_keyword_params_test.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "keyword params OK\nhello from default\nall keyword params OK\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Tests C keyword names (short, long, register, default) used as M2 parameter names get mangled."
   },
   {
     "name": "proc_var_call_test",
     "category": "resolution",
-    "dir": "programs/resolution",
+    "dir": "resolution",
     "main": "proc_var_call_test.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "proc var call OK\nrecord field proc call OK\nall proc var calls OK\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Tests calls through proc-typed variables with VAR params: simple vars and record field proc vars."
   },
   {
     "name": "proc_type_open_array_test",
     "category": "resolution",
-    "dir": "programs/resolution",
+    "dir": "resolution",
     "main": "proc_type_open_array_test.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "proc type open array OK\nhigh propagated correctly\nall proc type open array OK\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Tests procedure type typedefs with open array params include _high in the C typedef."
   },
   {
     "name": "open_array_cross_module",
     "category": "resolution",
-    "dir": "programs/resolution/open_array_cross_module",
+    "dir": "resolution/open_array_cross_module",
     "main": "OpenArrayCrossModule.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "fixed array high OK\nfixed array fill OK\nopen array forward OK\nall open array cross module OK\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: FROM-imported proc with open array param must resolve correct module's param info when another module exports a same-named proc without open arrays."
   },
   {
     "name": "args_getarg_high_test",
     "category": "resolution",
-    "dir": "programs/resolution",
+    "dir": "resolution",
     "main": "args_getarg_high_test.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
-    "expected_stdout_contains": ["args_getarg_high OK"],
-    "tags": ["ci"],
+    "expected_stdout_contains": [
+      "args_getarg_high OK"
+    ],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Tests Args.GetArg emits _high param for open-array buffer argument."
   },
   {
     "name": "try_except_basic",
     "category": "runtime",
-    "dir": "programs/runtime/try_except_basic",
+    "dir": "runtime/try_except_basic",
     "main": "TryExceptBasic.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": true,
     "expected_exit": 0,
     "expected_stdout": "raise\ncaught-alpha\ncaught-all\nno-raise\ncount=3\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "TRY/EXCEPT: named handler, catch-all, no-exception path, body runs once."
   },
   {
     "name": "try_except_nested",
     "category": "runtime",
-    "dir": "programs/runtime/try_except_nested",
+    "dir": "runtime/try_except_nested",
     "main": "TryExceptNested.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": true,
     "expected_exit": 0,
     "expected_stdout": "outer-body\ninner-body\ninner-caught\nouter-continues\nouter-caught\ntry-body\nfinally-normal\nfinally-exc\nouter-after-finally\ndone\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Nested TRY/EXCEPT: inner catches own, unhandled propagates to outer, FINALLY always runs."
   },
   {
     "name": "pointer_array_field_collision",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/pointer_array_field_collision",
+    "dir": "symbol_namespace/pointer_array_field_collision",
     "main": "PtrArrayMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "sum=36\nbyte0=65\nbyte2=67\nok\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: array field and pointer field with same name in different records must not collide."
   },
   {
     "name": "val_longint_cast",
     "category": "resolution",
-    "dir": "programs/resolution/val_longint_cast",
+    "dir": "resolution/val_longint_cast",
     "main": "ValLongint.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "cardinal-ok\ninteger-ok\n142\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: LONG() and VAL(LONGINT,x) must emit proper C cast, not bare LONG()."
   },
   {
     "name": "typecase_basic",
     "category": "runtime",
-    "dir": "programs/runtime/typecase_basic",
+    "dir": "runtime/typecase_basic",
     "main": "TypecaseBasic.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": true,
     "expected_exit": 0,
     "expected_stdout": "int\nreal\nchar\nother\nint=42\nreal\nelse\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "TYPECASE with REF types: basic dispatch, ELSE branch, variable binding via M2_ISA."
   },
   {
     "name": "typecase_object",
     "category": "runtime",
-    "dir": "programs/runtime/typecase_object",
+    "dir": "runtime/typecase_object",
     "main": "TypecaseObject.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": true,
     "expected_exit": 0,
     "expected_stdout": "circle\nsquare\nshape\nunknown\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "TYPECASE with OBJECT hierarchy: subtype matching via M2_ISA parent chain walk."
   },
   {
     "name": "const_char_literal",
     "category": "semantics",
-    "dir": "programs/semantics/const_char_literal",
+    "dir": "semantics/const_char_literal",
     "main": "ConstCharLiteral.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "slash-ok\nstar-ok\nhello\nexpr-ok\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: CONST x = '/'; must generate char, not const char *."
   },
   {
     "name": "ptr_anon_array_index",
     "category": "semantics",
-    "dir": "programs/semantics/ptr_anon_array_index",
+    "dir": "semantics/ptr_anon_array_index",
     "main": "PtrAnonArrayIndex.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "v0=10\nv3=40\nv7=80\nm4=999\ngt50=999\ngt50=60\ngt50=70\ngt50=80\n",
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: bp^[i] for POINTER TO ARRAY must generate bp[i], not (*bp)[i]."
   },
   {
     "name": "scalar_array_field_collision",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/scalar_array_field_collision",
+    "dir": "symbol_namespace/scalar_array_field_collision",
     "main": "ScalarArrayMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "msg=OK\ncode=200\nstatus=404\nstatus2=200\nstatus3=301\nbatch0=500\nbatch1=401\nbatch2=102\nbatch3=103\nok\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: scalar field and array field with same name in different imported records must not collide (memcpy of scalar = SIGSEGV). Covers simple var.field, array[idx].field, and loop assignment."
   },
   {
     "name": "open_array_record_scalar",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/open_array_record_scalar",
+    "dir": "symbol_namespace/open_array_record_scalar",
     "main": "OpenArrayScalarMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "count=3\ns0=1\ns1=42\ns2=99\nw0=777\nseq=1\nw1=777\nok\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: assigning CARDINAL field via VAR open array element must emit direct assignment, not memcpy. Covers open_array[idx].field := local.field, literal, variable, and nested record field paths."
   },
   {
     "name": "struct_array_field_collision",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/struct_array_field_collision",
+    "dir": "symbol_namespace/struct_array_field_collision",
     "main": "StructArrayMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "pkt=hello\nt1=10\ns1=200\nq1=1\nt2=10\ns2=200\nq2=2\nt3=99\ns3=512\nok\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: RECORD-typed field with same name as ARRAY OF CHAR field in another record must emit struct assignment, not memcpy. Covers struct-to-struct copy and local record variable assignment."
   },
   {
     "name": "enum_array_field_collision",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/enum_array_field_collision",
+    "dir": "symbol_namespace/enum_array_field_collision",
     "main": "EnumArrayMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "log=OK\ncode=200\ns1=0\nd1=100\ns2=0\ns3=2\ns4=1\ndur=999\ns5=3\nok\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: enumeration-typed field with same name as ARRAY OF CHAR field in another record must emit direct assignment, not memcpy. Covers enum literal, enum variable, field-to-field, and array-indexed patterns."
   },
   {
     "name": "c_stdlib_name_clash",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/c_stdlib_name_clash",
+    "dir": "symbol_namespace/c_stdlib_name_clash",
     "main": "CStdlibClash.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "log=10\ntime=20\nstat=30\nerrno=40\nread=50\nwrite=60\nsignal=14\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Variables and procedures named after C stdlib functions (log, time, stat, errno, read, write, signal) must be mangled to avoid C identifier clashes."
   },
   {
     "name": "var_addr_array_leak",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/var_addr_array_leak",
+    "dir": "symbol_namespace/var_addr_array_leak",
     "main": "VarAddrLeakMain.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "found=yes\nhandle=ok\nmiss=no\ndone\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Regression: local ARRAY variable named 'key' in one embedded procedure must not leak into array_vars and cause a VAR ADDRESS parameter named 'key' in another procedure to emit memcpy instead of pointer assignment."
   },
   {
     "name": "variant_else",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/variant_else",
+    "dir": "symbol_namespace/variant_else",
     "main": "VariantElse.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "x=10\ny=20\nr=42\ncode=7\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4 variant record ELSE clause for default variant fields."
   },
   {
     "name": "case_leading_pipe",
     "category": "semantics",
-    "dir": "programs/semantics/case_leading_pipe",
+    "dir": "semantics/case_leading_pipe",
     "main": "CaseLeadingPipe.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "10\n20\n30\n99\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4 CASE statement with optional leading pipe before first branch."
   },
   {
     "name": "variant_leading_pipe",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/variant_leading_pipe",
+    "dir": "symbol_namespace/variant_leading_pipe",
     "main": "VariantLeadingPipe.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "a=55\nb=77\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4 variant record with optional leading pipe before first variant."
   },
   {
     "name": "nested_variant",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/nested_variant",
+    "dir": "symbol_namespace/nested_variant",
     "main": "NestedVariant.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "x=10 y=20 w=100 h=50 fw=80 fh=40\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4 nested CASE variant records with field access through nested variants."
   },
   {
     "name": "subrange_base_type",
     "category": "semantics",
-    "dir": "programs/semantics/subrange_base_type",
+    "dir": "semantics/subrange_base_type",
     "main": "SubrangeBaseType.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "s=-5\ns=10\ni=42\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4 subrange type with base type qualifier: INTEGER [-10..10], CARDINAL [0..99]."
   },
   {
     "name": "nul_char_assign",
     "category": "semantics",
-    "dir": "programs/semantics/nul_char_assign",
+    "dir": "semantics/nul_char_assign",
     "main": "NulCharAssign.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "nul=0\nch=88\na0=0\na1=65\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4: empty string '' or \"\" assigned to CHAR yields NUL (CHR(0)); single-char string to CHAR."
   },
   {
     "name": "char_subrange_assign",
     "category": "semantics",
-    "dir": "programs/semantics/char_subrange_assign",
+    "dir": "semantics/char_subrange_assign",
     "main": "CharSubrangeAssign.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "s=65\ns=90\ns=77\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4: single-char string literals assignable to CHAR subrange types like ['A'..'Z']."
   },
   {
     "name": "proc_type_equiv",
     "category": "semantics",
-    "dir": "programs/semantics/proc_type_equiv",
+    "dir": "semantics/proc_type_equiv",
     "main": "ProcTypeEquiv.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "result=-1\nresult=0\n",
     "c_scan": true,
-    "tags": ["ci"],
-    "_comment": "PIM4: procedure type alias equivalence — aliasedType = functionType should be assignment-compatible."
+    "tags": [
+      "ci"
+    ],
+    "_comment": "PIM4: procedure type alias equivalence \u2014 aliasedType = functionType should be assignment-compatible."
   },
   {
     "name": "address_div_mod",
     "category": "semantics",
-    "dir": "programs/semantics/address_div_mod",
+    "dir": "semantics/address_div_mod",
     "main": "AddressDivMod.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "ok\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4: DIV and MOD operators accept ADDRESS operands from SYSTEM."
   },
   {
     "name": "proc_builtin_type",
     "category": "semantics",
-    "dir": "programs/semantics/proc_builtin_type",
+    "dir": "semantics/proc_builtin_type",
     "main": "ProcBuiltinType.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "hello\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4: PROC is a built-in type alias for parameterless PROCEDURE."
   },
   {
     "name": "type_alias_forward",
     "category": "semantics",
-    "dir": "programs/semantics/type_alias_forward",
+    "dir": "semantics/type_alias_forward",
     "main": "TypeAliasForward.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "hello world\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "PIM4: type alias to ARRAY type resolved correctly (not treated as opaque)."
   },
   {
     "name": "ptr_to_record",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/ptr_to_record",
+    "dir": "symbol_namespace/ptr_to_record",
     "main": "PtrToRecord.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "10\n20\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "POINTER TO anonymous RECORD with self-referential field and field access."
   },
   {
     "name": "with_ptr_record",
     "category": "semantics",
-    "dir": "programs/semantics/with_ptr_record",
+    "dir": "semantics/with_ptr_record",
     "main": "WithPtrRecord.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "42\n99\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "WITH on dereferenced POINTER TO anonymous RECORD."
   },
   {
     "name": "set_char_ops",
     "category": "semantics",
-    "dir": "programs/semantics/set_char_ops",
+    "dir": "semantics/set_char_ops",
     "main": "SetCharOps.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "yes\nno\nHi\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "INCL/EXCL/IN with enum elements on SET, and char literal array index."
   },
   {
     "name": "set_inline_enum",
     "category": "semantics",
-    "dir": "programs/semantics/set_inline_enum",
+    "dir": "semantics/set_inline_enum",
     "main": "SetInlineEnum.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "RB\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "SET OF enumeration type: enum constants emitted and set ops work."
   },
   {
     "name": "multi_ptr_field",
     "category": "symbol_namespace",
-    "dir": "programs/symbol_namespace/multi_ptr_field",
+    "dir": "symbol_namespace/multi_ptr_field",
     "main": "MultiPtrField.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "1\n2\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Multiple pointer-typed field names in one record declaration."
   },
   {
     "name": "var_forward_ref",
     "category": "semantics",
-    "dir": "programs/semantics/var_forward_ref",
+    "dir": "semantics/var_forward_ref",
     "main": "VarForwardRef.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "42\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Procedure referencing module-level VAR declared after the procedure."
   },
   {
     "name": "const_forward_ref",
     "category": "semantics",
-    "dir": "programs/semantics/const_forward_ref",
+    "dir": "semantics/const_forward_ref",
     "main": "ConstForwardRef.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "15\n10\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Constants referencing later-declared constants (forward references)."
   },
   {
     "name": "nested_module_proc",
     "category": "semantics",
-    "dir": "programs/semantics/nested_module_proc",
+    "dir": "semantics/nested_module_proc",
     "main": "NestedModuleProc.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "42\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Local module inside program with exported procedure."
   },
   {
     "name": "nested_proc_collision",
     "category": "semantics",
-    "dir": "programs/semantics/nested_proc_collision",
+    "dir": "semantics/nested_proc_collision",
     "main": "NestedProcCollision.mod",
-    "include_dirs": ["."],
+    "include_dirs": [
+      "."
+    ],
     "m2plus": false,
     "expected_exit": 0,
     "expected_stdout": "1\n2\n",
     "c_scan": true,
-    "tags": ["ci"],
+    "tags": [
+      "ci"
+    ],
     "_comment": "Same-named nested procedures in different parent procedures."
+  },
+  {
+    "name": "case_range",
+    "category": "semantics",
+    "dir": "semantics/case_range",
+    "main": "caserange.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "3: small\n7: medium\n50: large\n200: out of range\nH: uppercase\nx: lowercase\n5: digit\n!: other\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "div_mod_floor",
+    "category": "semantics",
+    "dir": "semantics/div_mod_floor",
+    "main": "divmod.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "7 DIV 3 = 2  7 MOD 3 = 1\n-7 DIV 3 = -3  -7 MOD 3 = 2\n7 DIV -3 = -3  7 MOD -3 = 1\n-7 DIV -3 = 2  -7 MOD -3 = 2\nReal: 7/3 = Done.\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "edge_case_returns",
+    "category": "semantics",
+    "dir": "semantics/edge_case_returns",
+    "main": "edgecase.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "K = 25\nMax3(3,7,5) = 7\nMultiReturn(-5) = 5\nMultiReturn(0) = 0\nMultiReturn(3) = 6\nINC/DEC: 12\nINC/DEC 2: 50\nORD(Red) = 0\nORD(Blue) = 2\nABS(-42) = 42\nABS(42) = 42\nCHR(65) = A\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "enum_case_dispatch",
+    "category": "semantics",
+    "dir": "semantics/enum_case_dispatch",
+    "main": "enumcase.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Colors: Red Green Blue Yellow Cyan Magenta White Black \nDays: Monday Tuesday Wednesday Thursday Friday Saturday* Sunday* \nORD(Red) = 0\nORD(Black) = 7\nORD(Mon) = 0\nORD(Sun) = 6\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "enum_ord_val",
+    "category": "semantics",
+    "dir": "semantics/enum_ord_val",
+    "main": "enumtest.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Red = 0\nBlue = 2\nMagenta = 5\nColors: Red Green Blue Yellow Cyan Magenta \nMon = 0\nSun = 6\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "for_by_step",
+    "category": "semantics",
+    "dir": "semantics/for_by_step",
+    "main": "forby.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "BY 1: 15\nBY 2: 30\nBY Step(3): 30\nBY -1: 55\nBY -2: 30\nBY NegStep(-2): 30\nSingle iter: 5\nEmpty range: 0\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "hex_oct_literals",
+    "category": "semantics",
+    "dir": "semantics/hex_oct_literals",
+    "main": "hexoct.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "0FFH = 255\n0AH = 10\n10B = 8\n77B = 63\n255 hex:   FF\n255 oct:  377\n101C = 65\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "float_lfloat_trunc",
+    "category": "semantics",
+    "dir": "semantics/float_lfloat_trunc",
+    "main": "lfloat.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "FLOAT(42) =      42.00\nLFLOAT(42) =      42.00\nTRUNC(3.7) = 3\nFLOAT(10)/FLOAT(3) =     3.3333\nLFLOAT(10)/LFLOAT(3) =     3.3333\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "longint_longcard",
+    "category": "semantics",
+    "dir": "semantics/longint_longcard",
+    "main": "longint.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "LONGINT 10^12: 8 bytes\nSIZE(LONGCARD) = 8 bytes\nMAX(INTEGER)+1 fits in LONGINT: YES\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "loop_exit_nested",
+    "category": "semantics",
+    "dir": "semantics/loop_exit_nested",
+    "main": "loopext.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Found 42 at index 3\nFound 100 at index -1\nSorted:    3   7   8  11  15  23  31  42  56  99\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "loop_repeat_variants",
+    "category": "semantics",
+    "dir": "semantics/loop_repeat_variants",
+    "main": "looptest.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Sum 1..10 (LOOP/EXIT) = 55\nSum 1..10 (REPEAT) = 55\nSum of odd 1..5 = 9\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "repeat_for_by",
+    "category": "semantics",
+    "dir": "semantics/repeat_for_by",
+    "main": "repeat.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "REPEAT sum 1..10 = 55\nFOR BY 2 (odd 1..10) = 25\nFOR BY -1 (10..1) = 55\nFOR BY 3 (0,3,6..18) = 63\nNested REPEAT count = 15\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "subrange_types",
+    "category": "semantics",
+    "dir": "semantics/subrange_types",
+    "main": "subrange.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Month 6: June\n  1: January\n  2: February\n  3: March\n  4: April\n  5: May\n  6: June\n  7: July\n  8: August\n  9: September\n 10: October\n 11: November\n 12: December\nSum of digits of 12345: 15\nMon ORD: 0\nFri ORD: 4\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "type_conversion_builtins",
+    "category": "semantics",
+    "dir": "semantics/type_conversion_builtins",
+    "main": "typeconv.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "VAL(CARDINAL, 42) = 42\nVAL(INTEGER, 100) = 100\nCHR(65) = 65\nORD('Z') = 90\nODD(7) = TRUE\nODD(8) = FALSE\nABS(-99) = 99\nSIZE(INTEGER) = 4\nSIZE(CHAR) = 1\nTRUNC(3.99) = 3\nMAX(INTEGER) = 2147483647\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "chr_ord_cap",
+    "category": "semantics",
+    "dir": "semantics/chr_ord_cap",
+    "main": "charops.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "IsUpper('A'): YES\nIsLower('z'): YES\nIsDigit('5'): YES\nToUpper('m') = M\nToLower('G') = g\nCAP('q') = Q\nOriginal: hello world\nLength: 11\nUpper: HELLO WORLD\nChars: HELLO\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "cardinal_bitset",
+    "category": "semantics",
+    "dir": "semantics/cardinal_bitset",
+    "main": "cardinal.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Cardinal: 42\nAfter +10: 52\nAfter *2: 104\nAfter DIV 3: 34\nAfter MOD 7: 6\nBITSET {0,1,4,7}\n4 IN b: YES\n3 IN b: NO\nAfter INCL(3): YES\nAfter EXCL(1): NO\nVAL(CARDINAL, 65) = 65\nSIZE(INTEGER) = 4\nSIZE(CARDINAL) = 4\nSIZE(CHAR) = 1\nSIZE(BOOLEAN) = 4\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "complex_iso",
+    "category": "semantics",
+    "dir": "semantics/complex_iso",
+    "main": "complexiso.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "a =    3.0 +    4.0i\nb =    1.0 +    2.0i\na+b =    4.0 +    6.0i\na-b =    2.0 +    2.0i\na*b =   -5.0 +   10.0i\na/b =    2.2 +   -0.4i\n-a =   -3.0 +   -4.0i\na = b: TRUE\na = c: FALSE\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "nested_records_with",
+    "category": "semantics",
+    "dir": "semantics/nested_records_with",
+    "main": "records2.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Date: 2024- 6-15\nAge: 30\nBorn: 1994- 3-10\nWITH age: 30\nWITH year: 1994\nDates: 2000- 1- 1, 2010- 6-15, 2020-12-25\nDays between [0] and [2]: 7654\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "with_stmt_nested",
+    "category": "semantics",
+    "dir": "semantics/with_stmt_nested",
+    "main": "withtest.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Point: (10, 20)\nRect origin: (5, 15)\nRect size: 100x50\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "with_stmt_advanced",
+    "category": "semantics",
+    "dir": "semantics/with_stmt_advanced",
+    "main": "withtest2.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Rect origin: (10, 20)\nRect size: 100x50\nArea: 5000\nCircle center: (50, 60)\nRadius: 25\nModified rect: (0,0) 200x100\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "string_bounds_safe",
+    "category": "semantics",
+    "dir": "semantics/string_bounds_safe",
+    "main": "strsafe.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "1:Hello, \n2:Hi\n3:ABCDEFG\n4:ABCDEFG\n5:ABCD\n6:ABCDXYZ\n7:1234ABC\n8:Hello, \n9:World\n10:ABFGH\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "except_handler",
+    "category": "semantics",
+    "dir": "semantics/except_handler",
+    "main": "except.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "10 / 3 = 3\nException caught in SafeDiv!\n10 / 0 = 0\nWorking with 5\nDoWork(5) = 10\nWorking with -3\nException: negative input!\nDoWork(-3) = -1\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "finally_cleanup",
+    "category": "semantics",
+    "dir": "semantics/finally_cleanup",
+    "main": "finally.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "Module init\nWorking...\nWorking...\nWorking...\nModule body done\nFINALLY: cleanup executed\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "open_array_high",
+    "category": "abi_layout",
+    "dir": "abi_layout/open_array_high",
+    "main": "openarray.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Array:    0   1   4   9  16  25  36  49  64  81 100\nSum: 385\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "ptr_chains",
+    "category": "abi_layout",
+    "dir": "abi_layout/ptr_chains",
+    "main": "ptrchains.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Inner val: 42\nOuter name: 100\nOuter->child->val: 42\nList:   1  2  3  4  5\nModified 2nd:   1 99  3  4  5\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "variant_record",
+    "category": "abi_layout",
+    "dir": "abi_layout/variant_record",
+    "main": "variant.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Circle at (10, 20) r=5\nRect at (10, 20) 30x40\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "variant_record_complex",
+    "category": "abi_layout",
+    "dir": "abi_layout/variant_record_complex",
+    "main": "variant2.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "MyCircle: Circle r=  5.00\nMyRect: Rect  10.00x 20.00\nMyTriangle: Tri   3.00   4.00   5.00\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "ffi_c_binding",
+    "category": "abi_layout",
+    "dir": "abi_layout/ffi_c_binding",
+    "main": "ffitest.mod",
+    "include_dirs": [
+      "."
+    ],
+    "extra_c_files": [
+      "CAdd.c"
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "3 + 4 = 7\n3 * 4 = 12\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "proc_type_higher_order",
+    "category": "proc_values",
+    "dir": "proc_values/proc_type_higher_order",
+    "main": "proctype.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Double(5) = 10\nSquare(5) = 25\nApply(Double, 7) = 14\nApply(Square, 7) = 49\nResult: 20\nResult: 100\nDouble:   2   4   6   8  10\nSquare:   1   4   9  16  25\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "proc_var_signatures",
+    "category": "proc_values",
+    "dir": "proc_values/proc_var_signatures",
+    "main": "procvar.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Double(5) = 10\nTriple(5) = 15\nHello from procedure variable!\nAdd(3,4) = 7\nMul(3,4) = 12\nApply(Double,7) = 14\nApply(Triple,7) = 21\nApplyBin(Add,10,20) = 30\nApplyBin(Mul,10,20) = 200\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "var_params",
+    "category": "proc_values",
+    "dir": "proc_values/var_params",
+    "main": "varparams.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Before swap: a=10 b=20\nAfter swap:  a=20 b=10\nAfter double a: a=40\nAfter add 5 to b: b=15\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "closure_capture",
+    "category": "proc_values",
+    "dir": "proc_values/closure_capture",
+    "main": "closure.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Accumulate(5) = 30\nCounter = 3\nDeepNest(3) = 33\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "nested_proc_scope",
+    "category": "symbol_namespace",
+    "dir": "symbol_namespace/nested_proc_scope",
+    "main": "nested.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Sum of squares 1..5 = 55\nSum of squares 1..10 = 385\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "import_as_alias",
+    "category": "symbol_namespace",
+    "dir": "symbol_namespace/import_as_alias",
+    "main": "import_as_main.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Hello via alias\nSum: 42\nDirect: 3\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "import_as_stdlib",
+    "category": "symbol_namespace",
+    "dir": "symbol_namespace/import_as_stdlib",
+    "main": "import_as_test.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Hello from aliased import\n42\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "import_as_var",
+    "category": "symbol_namespace",
+    "dir": "symbol_namespace/import_as_var",
+    "main": "import_as_var.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Length: 11\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "opaque_qualified",
+    "category": "symbol_namespace",
+    "dir": "symbol_namespace/opaque_qualified",
+    "main": "UseStack.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Pushed: 10\nPushed: 20\nPushed: 30\nPushed: 40\nPushed: 50\nIsEmpty: NO\nPopping:   50  40  30  20  10\nIsEmpty: YES\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "opaque_from_import",
+    "category": "symbol_namespace",
+    "dir": "symbol_namespace/opaque_from_import",
+    "main": "UseStack2.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Pushed: 10\nPushed: 20\nPushed: 30\nPushed: 40\nPushed: 50\nIsEmpty: NO\nPopping:   50  40  30  20  10\nIsEmpty: YES\nDone\n",
+    "tags": [
+      "ci"
+    ]
+  },
+  {
+    "name": "multidim_array_index",
+    "category": "semantics",
+    "dir": "semantics/multidim_array_index",
+    "main": "multidim.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Matrix:\n  11  12  13\n  21  22  23\n  31  32  33\nSum: 198\n",
+    "tags": [
+      "ci"
+    ],
+    "_comment": "Multi-dimensional array ARRAY [1..N],[1..N] with constant bounds and m[i][j] access."
+  },
+  {
+    "name": "matrix_multidim",
+    "category": "semantics",
+    "dir": "semantics/matrix_multidim",
+    "main": "matrix.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "Identity:\n    1.00    0.00    0.00\n    0.00    1.00    0.00\n    0.00    0.00    1.00\nMatrix A:\n    1.00    2.00    3.00\n    4.00    5.00    6.00\n    7.00    8.00    0.00\nDet(A) =    27.00\nTranspose(A):\n    1.00    4.00    7.00\n    2.00    5.00    8.00\n    3.00    6.00    0.00\nv =     1.00    2.00    3.00\nA*v =    14.00   32.00   23.00\nA*I:\n    1.00    2.00    3.00\n    4.00    5.00    6.00\n    7.00    8.00    0.00\nDone\n",
+    "tags": [
+      "ci"
+    ],
+    "_comment": "Matrix operations on multi-dimensional REAL arrays with constant bounds."
   }
 ]

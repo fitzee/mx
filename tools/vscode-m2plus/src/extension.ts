@@ -24,7 +24,7 @@ class DocTreeItem extends vscode.TreeItem {
     super(label, collapsibleState);
     if (docKey) {
       this.command = {
-        command: "m2c.showDoc",
+        command: "mx.showDoc",
         title: "Show Documentation",
         arguments: [docKey],
       };
@@ -195,20 +195,20 @@ class DocTreeProvider implements vscode.TreeDataProvider<DocTreeItem> {
 
 // ── Task Provider ───────────────────────────────────────────────
 
-class M2cTaskProvider implements vscode.TaskProvider {
+class MxTaskProvider implements vscode.TaskProvider {
   provideTasks(): vscode.Task[] {
-    const config = vscode.workspace.getConfiguration("m2c");
-    const m2cPath = config.get<string>("serverPath", "m2c");
+    const config = vscode.workspace.getConfiguration("mx");
+    const mxPath = config.get<string>("serverPath", "mx");
     const tasks: vscode.Task[] = [];
     for (const cmd of ["build", "run", "test", "clean", "init"]) {
-      const exec = new vscode.ShellExecution(`${m2cPath} ${cmd}`);
+      const exec = new vscode.ShellExecution(`${mxPath} ${cmd}`);
       const task = new vscode.Task(
-        { type: "m2c", command: cmd },
+        { type: "mx", command: cmd },
         vscode.TaskScope.Workspace,
         cmd,
-        "m2c",
+        "mx",
         exec,
-        "$m2c"
+        "$mx"
       );
       if (cmd === "build") {
         task.group = vscode.TaskGroup.Build;
@@ -226,8 +226,8 @@ class M2cTaskProvider implements vscode.TaskProvider {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const config = vscode.workspace.getConfiguration("m2c");
-  const serverPath = config.get<string>("serverPath", "m2c");
+  const config = vscode.workspace.getConfiguration("mx");
+  const serverPath = config.get<string>("serverPath", "mx");
   const m2plus = config.get<boolean>("m2plus", true);
   const includePaths = config.get<string[]>("includePaths", []);
   const debounceMs = config.get<number>("diagnostics.debounceMs", 250);
@@ -255,7 +255,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   client = new LanguageClient(
-    "m2c-lsp",
+    "mx-lsp",
     "Modula-2+ Language Server",
     serverOptions,
     clientOptions
@@ -265,18 +265,18 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register task provider
   context.subscriptions.push(
-    vscode.tasks.registerTaskProvider("m2c", new M2cTaskProvider())
+    vscode.tasks.registerTaskProvider("mx", new MxTaskProvider())
   );
 
   // Register docs tree view
   const docTree = new DocTreeProvider();
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider("m2cDocsBrowser", docTree)
+    vscode.window.registerTreeDataProvider("mxDocsBrowser", docTree)
   );
 
   // Command: show a single doc in webview (used by tree item click)
   context.subscriptions.push(
-    vscode.commands.registerCommand("m2c.showDoc", async (key: string) => {
+    vscode.commands.registerCommand("mx.showDoc", async (key: string) => {
       if (!client) { return; }
       const doc = await client.sendRequest("m2/getDocumentation", { key });
       const d = doc as { key?: string; markdown?: string } | null;
@@ -285,7 +285,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       const panel = vscode.window.createWebviewPanel(
-        "m2cDoc",
+        "mxDoc",
         `M2: ${d.key}`,
         vscode.ViewColumn.One,
         { enableScripts: false }
@@ -296,23 +296,23 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command: refresh docs tree
   context.subscriptions.push(
-    vscode.commands.registerCommand("m2c.refreshDocs", () => docTree.refresh())
+    vscode.commands.registerCommand("mx.refreshDocs", () => docTree.refresh())
   );
 
   // Command: restart server
   context.subscriptions.push(
-    vscode.commands.registerCommand("m2c.restartServer", async () => {
+    vscode.commands.registerCommand("mx.restartServer", async () => {
       if (client) {
         await client.stop();
         await client.start();
-        vscode.window.showInformationMessage("m2c language server restarted");
+        vscode.window.showInformationMessage("mx language server restarted");
       }
     })
   );
 
   // Command: reindex workspace
   context.subscriptions.push(
-    vscode.commands.registerCommand("m2c.reindexWorkspace", async () => {
+    vscode.commands.registerCommand("mx.reindexWorkspace", async () => {
       if (client) {
         const result = await client.sendRequest("m2/reindexWorkspace", {});
         const r = result as { files?: number; symbols?: number };
@@ -325,7 +325,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command: initialize project
   context.subscriptions.push(
-    vscode.commands.registerCommand("m2c.initProject", async () => {
+    vscode.commands.registerCommand("mx.initProject", async () => {
       const name = await vscode.window.showInputBox({
         prompt: "Project name",
         placeHolder: "myproject",
@@ -338,24 +338,24 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       const cwd = folders[0].uri.fsPath;
-      const m2cPath = config.get<string>("serverPath", "m2c");
+      const mxPath = config.get<string>("serverPath", "mx");
       const arg = name ? ` ${name}` : "";
 
       try {
         const cp = await import("child_process");
-        cp.execSync(`${m2cPath} init${arg}`, { cwd, encoding: "utf-8" });
+        cp.execSync(`${mxPath} init${arg}`, { cwd, encoding: "utf-8" });
         vscode.window.showInformationMessage(`Initialized project '${name || "current directory"}'.`);
         vscode.commands.executeCommand("workbench.files.action.refreshFilesExplorer");
       } catch (e: any) {
         const msg = e.stderr?.toString().trim() || e.message;
-        vscode.window.showErrorMessage(`m2c init failed: ${msg}`);
+        vscode.window.showErrorMessage(`mx init failed: ${msg}`);
       }
     })
   );
 
   // Command: create debug configuration
   context.subscriptions.push(
-    vscode.commands.registerCommand("m2c.createDebugConfig", async () => {
+    vscode.commands.registerCommand("mx.createDebugConfig", async () => {
       const folders = vscode.workspace.workspaceFolders;
       if (!folders || folders.length === 0) {
         vscode.window.showErrorMessage("No workspace folder open.");
@@ -367,12 +367,12 @@ export function activate(context: vscode.ExtensionContext) {
       const tasksContent = JSON.stringify({
         version: "2.0.0",
         tasks: [{
-          label: "m2c: build debug",
+          label: "mx: build debug",
           type: "shell",
-          command: "m2c",
+          command: "mx",
           args: ["build", "-g"],
           group: { kind: "build", isDefault: true },
-          problemMatcher: "$m2c",
+          problemMatcher: "$mx",
           presentation: { reveal: "silent", panel: "shared" },
         }],
       }, null, 2);
@@ -395,10 +395,10 @@ export function activate(context: vscode.ExtensionContext) {
             name: "Debug (lldb)",
             type: "lldb",
             request: "launch",
-            program: `\${workspaceFolder}/.m2c/bin/${projectName}`,
+            program: `\${workspaceFolder}/.mx/bin/${projectName}`,
             args: [],
             cwd: "${workspaceFolder}",
-            preLaunchTask: "m2c: build debug",
+            preLaunchTask: "mx: build debug",
             sourceLanguages: ["modula2"],
           },
         ],
@@ -479,7 +479,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command: open documentation
   context.subscriptions.push(
-    vscode.commands.registerCommand("m2c.openDocumentation", async () => {
+    vscode.commands.registerCommand("mx.openDocumentation", async () => {
       if (!client) { return; }
 
       // Fetch all doc entries from the server
@@ -513,7 +513,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Show in a webview panel
       const panel = vscode.window.createWebviewPanel(
-        "m2cDoc",
+        "mxDoc",
         `M2: ${d.key}`,
         vscode.ViewColumn.Beside,
         { enableScripts: false }

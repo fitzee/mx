@@ -9,7 +9,7 @@ A TCP client that connects to an echo server, sends a message, reads the respons
 ### Build
 
 ```bash
-m2c --m2plus example_apps/echo_client.mod \
+mx --m2plus examples/networking/echo_client.mod \
   -I libs/m2stream/src \
   -I libs/m2evloop/src \
   -I libs/m2futures/src \
@@ -141,7 +141,7 @@ An HTTPS GET client that creates a TLS stream, sends an HTTP request, reads the 
 ### Build
 
 ```bash
-m2c --m2plus example_apps/stream_https.mod \
+mx --m2plus examples/networking/stream_https.mod \
   -I libs/m2stream/src \
   -I libs/m2tls/src \
   -I libs/m2evloop/src \
@@ -344,7 +344,7 @@ A TCP server that accepts one connection, reads a message, echoes it back, and c
 ### Build
 
 ```bash
-m2c --m2plus example_apps/echo_server.mod \
+mx --m2plus examples/networking/echo_server.mod \
   -I libs/m2stream/src \
   -I libs/m2evloop/src \
   -I libs/m2futures/src \

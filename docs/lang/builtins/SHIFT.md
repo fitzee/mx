@@ -6,7 +6,7 @@ SHIFT(val: CARDINAL; n: INTEGER): CARDINAL
 
 Logical shift of `val` by `n` bit positions. Positive `n` shifts left, negative `n` shifts right. Vacated bits are filled with zero.
 
-Based on ISO Modula-2 `SYSTEM.SHIFT`. Available as a pervasive builtin in m2c (no import required).
+Based on ISO Modula-2 `SYSTEM.SHIFT`. Available as a pervasive builtin in mx (no import required).
 
 ## Example
 

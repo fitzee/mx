@@ -33,7 +33,7 @@ END
 ## Build
 
 ```
-m2c your_program.mod -I libs/m2bytes/src -o your_program
+mx your_program.mod -I libs/m2bytes/src -o your_program
 ```
 
 ## Design

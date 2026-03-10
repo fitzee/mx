@@ -1,4 +1,4 @@
-//! Project build engine for `m2c build`/`run`/`test`/`clean` subcommands.
+//! Project build engine for `build`/`run`/`test`/`clean` subcommands.
 //!
 //! Uses stamp-based skip: if no source file changed since the last build,
 //! the entire compilation is skipped.
@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::driver::CompileOptions;
 use crate::errors::{CompileError, CompileResult};
+use crate::identity;
 use crate::project_resolver::Manifest;
 
 // ── FileStamp ───────────────────────────────────────────────────────
@@ -55,9 +56,9 @@ pub struct BuildState {
 }
 
 impl BuildState {
-    /// Load from `.m2c/build_state.json`, or return empty state.
+    /// Load from `{BUILD_DIR}/build_state.json`, or return empty state.
     pub fn load(root: &Path) -> BuildState {
-        let state_path = root.join(".m2c/build_state.json");
+        let state_path = root.join(format!("{}/build_state.json", identity::BUILD_DIR));
         let content = match fs::read_to_string(&state_path) {
             Ok(c) => c,
             Err(_) => return BuildState { stamps: HashMap::new(), last_build_hash: 0 },
@@ -88,11 +89,11 @@ impl BuildState {
         BuildState { stamps, last_build_hash }
     }
 
-    /// Save to `.m2c/build_state.json`.
+    /// Save to `{BUILD_DIR}/build_state.json`.
     pub fn save(&self, root: &Path) -> CompileResult<()> {
-        let dir = root.join(".m2c");
+        let dir = root.join(identity::BUILD_DIR);
         fs::create_dir_all(&dir).map_err(|e| {
-            CompileError::driver(format!("cannot create .m2c/: {}", e))
+            CompileError::driver(format!("cannot create {}/: {}", identity::BUILD_DIR, e))
         })?;
 
         let mut stamp_entries = Vec::new();
@@ -192,7 +193,7 @@ pub fn build_project(
         source_files.push(lock_path);
     }
 
-    // Stamp the compiler binary itself so rebuilding m2c invalidates caches
+    // Stamp the compiler binary itself so rebuilding the compiler invalidates caches
     if let Ok(exe) = std::env::current_exe() {
         if let Ok(canonical) = exe.canonicalize() {
             source_files.push(canonical);
@@ -227,7 +228,7 @@ pub fn build_project(
     if prev_state.last_build_hash == combined && combined != 0 {
         let artifact = artifact_path(root, &manifest.name);
         if artifact.exists() {
-            eprintln!("m2c: up to date");
+            eprintln!("{}: up to date", identity::COMPILER_NAME);
             if run_after {
                 run_artifact(&artifact, run_args)?;
             }
@@ -236,13 +237,13 @@ pub fn build_project(
     }
 
     // Ensure output directories
-    let bin_dir = root.join(".m2c/bin");
-    let gen_dir = root.join(".m2c/gen");
+    let bin_dir = root.join(format!("{}/bin", identity::BUILD_DIR));
+    let gen_dir = root.join(format!("{}/gen", identity::BUILD_DIR));
     fs::create_dir_all(&bin_dir).map_err(|e| {
-        CompileError::driver(format!("cannot create .m2c/bin/: {}", e))
+        CompileError::driver(format!("cannot create {}/bin/: {}", identity::BUILD_DIR, e))
     })?;
     fs::create_dir_all(&gen_dir).map_err(|e| {
-        CompileError::driver(format!("cannot create .m2c/gen/: {}", e))
+        CompileError::driver(format!("cannot create {}/gen/: {}", identity::BUILD_DIR, e))
     })?;
 
     // Build CompileOptions
@@ -339,7 +340,7 @@ pub fn build_project(
     }
 
     if config.verbose {
-        eprintln!("m2c: building {} → {}", entry, artifact.display());
+        eprintln!("{}: building {} → {}", identity::COMPILER_NAME, entry, artifact.display());
     }
 
     crate::driver::compile(&opts)?;
@@ -352,7 +353,7 @@ pub fn build_project(
     new_state.save(root)?;
 
     if config.verbose {
-        eprintln!("m2c: built {}", artifact.display());
+        eprintln!("{}: built {}", identity::COMPILER_NAME, artifact.display());
     }
 
     if run_after {
@@ -362,12 +363,12 @@ pub fn build_project(
     Ok(BuildResult { artifact, up_to_date: false })
 }
 
-/// Remove the `.m2c/` directory.
+/// Remove the build directory.
 pub fn clean_project(root: &Path) -> CompileResult<()> {
-    let build_dir = root.join(".m2c");
+    let build_dir = root.join(identity::BUILD_DIR);
     if build_dir.exists() {
         fs::remove_dir_all(&build_dir).map_err(|e| {
-            CompileError::driver(format!("cannot remove .m2c/: {}", e))
+            CompileError::driver(format!("cannot remove {}/: {}", identity::BUILD_DIR, e))
         })?;
     }
     Ok(())
@@ -376,7 +377,7 @@ pub fn clean_project(root: &Path) -> CompileResult<()> {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn artifact_path(root: &Path, name: &str) -> PathBuf {
-    root.join(".m2c/bin").join(name)
+    root.join(format!("{}/bin", identity::BUILD_DIR)).join(name)
 }
 
 fn collect_source_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -500,7 +501,7 @@ mod tests {
     fn test_clean_project() {
         let tmp = std::env::temp_dir().join("m2_build_test_clean");
         let _ = fs::remove_dir_all(&tmp);
-        let build_dir = tmp.join(".m2c");
+        let build_dir = tmp.join(identity::BUILD_DIR);
         fs::create_dir_all(build_dir.join("bin")).unwrap();
         fs::write(build_dir.join("build_state.json"), "{}").unwrap();
 

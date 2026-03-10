@@ -1,6 +1,6 @@
 # Modula-2 Language Reference
 
-Reference documentation for PIM4 Modula-2 as implemented by m2c, including Modula-2+ extensions.
+Reference documentation for PIM4 Modula-2 as implemented by mx, including Modula-2+ extensions.
 
 ## Categories
 
@@ -33,7 +33,7 @@ Composite language constructs and patterns (planned).
 
 ## Libraries
 
-Bundled libraries that ship with m2c and can be added as dependencies via `m2.toml`.
+Bundled libraries that ship with mx and can be added as dependencies via `m2.toml`.
 
 ### [../libs/m2futures/](../libs/m2futures/) -- Async
 

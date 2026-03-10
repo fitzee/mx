@@ -54,6 +54,6 @@ Verifies SetTrans fills a Transition record's fields correctly.
 
 ```bash
 cd libs/m2fsm
-../../target/release/m2c tests/fsm_tests.mod -I src -o fsm_tests
+../../target/release/mx tests/fsm_tests.mod -I src -o fsm_tests
 ./fsm_tests
 ```

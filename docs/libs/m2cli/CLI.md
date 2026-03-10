@@ -6,7 +6,7 @@ Command-line argument parser with support for short and long flags, options with
 
 Command-line tools need to accept flags (`-v`, `--verbose`) and options (`-o file`, `--output file`) in a consistent way. CLI provides a declarative API: register your flags and options up front, call `Parse`, then query results. It handles both `-x` and `--long` forms, consumes the next argument for options, and can print formatted usage help from the registered specs.
 
-The module uses fixed-size internal arrays (max 16 specs), so it works without heap allocation and is suitable for use in bootstrapping tools like m2pkg.
+The module uses fixed-size internal arrays (max 16 specs), so it works without heap allocation and is suitable for use in bootstrapping tools like mxpkg.
 
 ## Types
 

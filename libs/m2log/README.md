@@ -29,16 +29,16 @@ WARN msg="disk space low"
 The test suite uses only the core module (no m2sys dependency):
 
 ```sh
-m2c tests/log_tests.mod -I src -o log_tests
+mx tests/log_tests.mod -I src -o log_tests
 ./log_tests
 ```
 
 Examples:
 
 ```sh
-m2c examples/basic.mod -I src -o basic
-m2c examples/structured.mod -I src -o structured
-m2c examples/file_sink.mod -I src ../m2sys/m2sys.c -o file_sink
+mx examples/basic.mod -I src -o basic
+mx examples/structured.mod -I src -o structured
+mx examples/file_sink.mod -I src ../m2sys/m2sys.c -o file_sink
 ```
 
 ## Modules

@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# mxbuild — build script for Modula-2 macOS .app bundles
+#
+# Usage:  mxbuild [run] <main.mod> [extra.c ...]
+#
+# Locates the SDK relative to itself, compiles M2 → C → .app bundle.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Locate SDK: mxbuild lives inside the SDK directory ────────────────
+SDK="$SCRIPT_DIR"
+
+# ── Locate mx: PATH first, then repo build ───────────────────────────
+if command -v mx >/dev/null 2>&1; then
+    MX="$(command -v mx)"
+elif [ -x "$SCRIPT_DIR/../../../target/release/mx" ]; then
+    MX="$SCRIPT_DIR/../../../target/release/mx"
+elif [ -x "$SCRIPT_DIR/../../../target/debug/mx" ]; then
+    MX="$SCRIPT_DIR/../../../target/debug/mx"
+else
+    echo "error: mx not found. Install mx or run 'cargo build' in the repo root." >&2
+    exit 1
+fi
+
+# ── Parse arguments ──────────────────────────────────────────────────
+RUN=0
+if [ "${1:-}" = "run" ]; then
+    RUN=1
+    shift
+fi
+
+if [ $# -lt 1 ]; then
+    echo "usage: mxbuild [run] <main.mod> [extra.c ...]" >&2
+    exit 1
+fi
+
+MAIN_MOD="$1"
+shift
+EXTRA_SOURCES=("$@")
+
+# Derive base name from main module
+MOD_BASENAME="$(basename "$MAIN_MOD" .mod)"
+SRC_DIR="$(cd "$(dirname "$MAIN_MOD")" && pwd)"
+
+# ── Build directory ──────────────────────────────────────────────────
+BUILD_DIR="$SRC_DIR/../build"
+mkdir -p "$BUILD_DIR"
+
+# ── Compile shaders (optional — metallib) ────────────────────────────
+METALLIB=""
+if command -v xcrun >/dev/null 2>&1; then
+    SHADER="$SDK/shaders/default.metal"
+    if [ -f "$SHADER" ]; then
+        AIR="$BUILD_DIR/default.air"
+        METALLIB="$BUILD_DIR/default.metallib"
+        xcrun -sdk macosx metal -c "$SHADER" -o "$AIR" 2>/dev/null || true
+        if [ -f "$AIR" ]; then
+            xcrun -sdk macosx metallib "$AIR" -o "$METALLIB" 2>/dev/null || true
+            rm -f "$AIR"
+        fi
+    fi
+fi
+
+# ── M2 → C ──────────────────────────────────────────────────────────
+# Collect .def search paths: SDK lib + source directory
+C_OUTPUT="$BUILD_DIR/${MOD_BASENAME}.c"
+
+"$MX" --emit-c -I "$SDK/lib" -I "$SRC_DIR" "$SRC_DIR/$MOD_BASENAME.mod" -o "$C_OUTPUT"
+
+# ── Compile all C/ObjC++ sources ─────────────────────────────────────
+OBJ_FILES=()
+
+# M2-generated C
+OBJ="$BUILD_DIR/${MOD_BASENAME}.o"
+clang -c -O2 -I "$SDK/runtime" -I "$SRC_DIR" "$C_OUTPUT" -o "$OBJ"
+OBJ_FILES+=("$OBJ")
+
+# SDK runtime
+for SRC in "$SDK/runtime/rt_main.mm" "$SDK/runtime/mtl_wrap.mm"; do
+    BASE="$(basename "$SRC" | sed 's/\.[^.]*$//')"
+    OBJ="$BUILD_DIR/${BASE}.o"
+    clang -ObjC++ -std=c++17 -fobjc-arc -c -O2 \
+        -I "$SDK/runtime" "$SRC" -o "$OBJ"
+    OBJ_FILES+=("$OBJ")
+done
+
+# Extra sources (game_bridge.c etc.)
+for SRC in "${EXTRA_SOURCES[@]}"; do
+    FULL_SRC="$SRC"
+    # Resolve relative to current directory
+    if [ ! -f "$FULL_SRC" ]; then
+        FULL_SRC="$SRC_DIR/$SRC"
+    fi
+    BASE="$(basename "$SRC" | sed 's/\.[^.]*$//')"
+    OBJ="$BUILD_DIR/${BASE}.o"
+    EXT="${SRC##*.}"
+    case "$EXT" in
+        mm)
+            clang -ObjC++ -std=c++17 -fobjc-arc -c -O2 \
+                -I "$SDK/runtime" -I "$SRC_DIR" "$FULL_SRC" -o "$OBJ"
+            ;;
+        *)
+            clang -c -O2 -I "$SDK/runtime" -I "$SRC_DIR" "$FULL_SRC" -o "$OBJ"
+            ;;
+    esac
+    OBJ_FILES+=("$OBJ")
+done
+
+# ── Link ─────────────────────────────────────────────────────────────
+APP_DIR="$BUILD_DIR/${MOD_BASENAME}.app"
+CONTENTS="$APP_DIR/Contents"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+mkdir -p "$MACOS" "$RESOURCES"
+
+EXECUTABLE="$MACOS/game"
+clang++ -o "$EXECUTABLE" "${OBJ_FILES[@]}" \
+    -framework Cocoa \
+    -framework Metal \
+    -framework QuartzCore \
+    -framework MetalKit
+
+# Copy Info.plist
+cp "$SDK/runtime/Info.plist" "$CONTENTS/Info.plist"
+
+# Copy metallib if compiled
+if [ -n "$METALLIB" ] && [ -f "$METALLIB" ]; then
+    cp "$METALLIB" "$RESOURCES/default.metallib"
+fi
+
+echo "Built: $APP_DIR"
+
+# ── Optionally run ───────────────────────────────────────────────────
+if [ $RUN -eq 1 ]; then
+    open "$APP_DIR"
+fi

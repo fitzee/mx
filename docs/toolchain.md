@@ -6,16 +6,16 @@
 
 ```bash
 # Compile a module to an executable
-m2c hello.mod -o hello
+mx hello.mod -o hello
 
 # Compile with Modula-2+ extensions (exceptions, REF types, objects)
-m2c --m2plus program.mod -o program
+mx --m2plus program.mod -o program
 
 # Emit C only (no compilation)
-m2c --emit-c program.mod -o program.c
+mx --emit-c program.mod -o program.c
 
 # Compile only (produce .o, no linking)
-m2c -c module.mod
+mx -c module.mod
 ```
 
 ### Include paths
@@ -23,7 +23,7 @@ m2c -c module.mod
 Use `-I` to add directories where the compiler searches for `.def` and `.mod` files:
 
 ```bash
-m2c -I src -I vendor/lib/src main.mod -o main
+mx -I src -I vendor/lib/src main.mod -o main
 ```
 
 The compiler searches include paths in order when resolving `FROM Module IMPORT ...` statements. The directory containing the input file is always searched first.
@@ -31,24 +31,24 @@ The compiler searches include paths in order when resolving `FROM Module IMPORT 
 ### Optimization
 
 ```bash
-m2c -O0 program.mod -o debug_build    # no optimization (default)
-m2c -O2 program.mod -o release_build  # optimized
+mx -O0 program.mod -o debug_build    # no optimization (default)
+mx -O2 program.mod -o release_build  # optimized
 ```
 
 ### Debug builds
 
 ```bash
 # Compile with debug info
-m2c -g program.mod -o program
+mx -g program.mod -o program
 
 # Debug build via build subcommand
-m2c build -g
+mx build -g
 ```
 
 Debug mode enables source-level debugging of Modula-2 programs. The compiler:
 
 1. Emits C `#line` directives mapping generated C back to `.mod` source lines
-2. Uses a two-step compile: `.c` → `.o` (kept on disk) → executable
+2. Uses a two-step compile: `.c` -> `.o` (kept on disk) -> executable
 3. Runs `dsymutil` on macOS to create a `.dSYM` debug symbol bundle
 4. Sets stdout to unbuffered for immediate I/O when stepping in a debugger
 
@@ -62,25 +62,25 @@ The `.c` and `.o` files are preserved next to the source for DWARF debug info. `
 
 ```bash
 # Example LLDB session
-m2c -g hello.mod -o hello
+mx -g hello.mod -o hello
 lldb ./hello
 (lldb) breakpoint set -f hello.mod -l 7
 (lldb) run
 ```
 
-For VS Code debugging with breakpoints, stepping, and variable inspection, see [VS Code integration — Debugging](vscode.md#debugging).
+For VS Code debugging with breakpoints, stepping, and variable inspection, see [VS Code integration -- Debugging](vscode.md#debugging).
 
 ### Linking
 
 ```bash
 # Link with system libraries
-m2c program.mod -lm -lpthread -o program
+mx program.mod -lm -lpthread -o program
 
 # Add library search paths
-m2c program.mod -L/usr/local/lib -lmylib -o program
+mx program.mod -L/usr/local/lib -lmylib -o program
 
 # Include extra C/object/archive files
-m2c program.mod helper.c utils.o libstuff.a -o program
+mx program.mod helper.c utils.o libstuff.a -o program
 ```
 
 ### C FFI
@@ -97,36 +97,28 @@ The compiler emits `extern` declarations with bare C names (no module prefix).
 
 ### Modula-2+ mode
 
-Modula-2+ extends PIM4 with:
-
-- **Exceptions**: `TRY`/`EXCEPT`/`FINALLY`, `RAISE`, `EXCEPTION` declarations
-- **Reference types**: `REF T`, `REFANY`, `BRANDED REF`
-- **Objects**: `OBJECT` types with vtable-based method dispatch
-- **Concurrency**: `Thread`, `Mutex`, `Condition` standard modules; `LOCK` statement
-- **Type dispatch**: `TYPECASE` on `REFANY` values
-- **Module safety**: `SAFE`/`UNSAFE` annotations (parsed, not enforced)
-
-Enable via CLI flag or manifest:
+Enable Modula-2+ extensions (exceptions, REF types, objects, concurrency) via CLI flag or manifest:
 
 ```bash
-# CLI flag
-m2c --m2plus program.mod -o program
+mx --m2plus program.mod -o program
 ```
 
 ```ini
 # In m2.toml manifest
-m2plus=true
+edition=m2plus
 ```
+
+See [language support](language-support.md#modula-2-extensions---m2plus) for the full feature matrix.
 
 ### Diagnostics
 
 ```bash
 # Standard error format (file:line:col: error: message)
-m2c bad.mod
+mx bad.mod
 # => src/bad.mod:10:5: error: undefined identifier 'x'
 
 # JSON diagnostics (JSONL to stderr)
-m2c --diagnostics-json bad.mod
+mx --diagnostics-json bad.mod
 # => {"file":"src/bad.mod","line":10,"col":5,"severity":"error","kind":"semantic","message":"undefined identifier 'x'"}
 ```
 
@@ -135,7 +127,7 @@ m2c --diagnostics-json bad.mod
 Keywords (`MODULE`, `BEGIN`, `IF`, etc.) are always case-insensitive. Identifiers are case-sensitive by default (PIM4 behavior). Use `--case-insensitive` for full case insensitivity:
 
 ```bash
-m2c --case-insensitive program.mod -o program
+mx --case-insensitive program.mod -o program
 ```
 
 ### Feature gates
@@ -153,15 +145,34 @@ FROM Thread IMPORT Fork, Join;
 Enable features from the CLI:
 
 ```bash
-m2c --feature threading --feature gc program.mod -o program
+mx --feature threading --feature gc program.mod -o program
 ```
+
+### Cross-compilation
+
+Since mx transpiles to C, cross-compile by pointing `--cc` at a cross compiler:
+
+```bash
+mx --cc aarch64-linux-gnu-gcc program.mod -o program-arm64
+```
+
+The generated C is portable; the cross compiler handles platform-specific codegen and linking.
+
+### Batch builds
+
+The `compile --plan` command accepts a JSON file describing multiple compilation steps:
+
+```bash
+mx compile --plan build.json
+```
+
+See [build plan schema](mxpkg-build-plan.md) for the JSON format.
 
 ### Other flags
 
 ```bash
-m2c --version-json          # machine-readable version info
-m2c --print-targets         # supported target triples
-m2c compile --plan build.json  # batch build from JSON plan
+mx --version-json          # machine-readable version info
+mx --print-targets         # supported target triples
 ```
 
 ---
@@ -173,11 +184,11 @@ Projects with an `m2.toml` manifest can use the built-in build subcommands.
 ### Subcommands
 
 ```bash
-m2c build [--release] [-g] [-v] [--cc <cmd>] [--feature <name>]...
-m2c run [--release] [-g] [-v] [-- <args>...]
-m2c test [-v] [--feature <name>]...
-m2c clean
-m2c init [name]
+mx build [--release] [-g] [-v] [--cc <cmd>] [--feature <name>]...
+mx run [--release] [-g] [-v] [-- <args>...]
+mx test [-v] [--feature <name>]...
+mx clean
+mx init [name]
 ```
 
 **build** compiles the project. With `--release`, uses `-O2`. With `-g`/`--debug`, enables debug info and `#line` directives. Prints "up to date" if nothing changed.
@@ -188,12 +199,12 @@ m2c init [name]
 
 **test** compiles and runs the test entry point (default: `tests/Main.mod`).
 
-**clean** removes the `.m2c/` build directory.
+**clean** removes the `.mx/` build directory.
 
 ### Build artifacts
 
 ```
-.m2c/
+.mx/
   build_state.json    # stamp cache (mtime, size, hash per file)
   bin/
     <name>            # compiled binary
@@ -205,219 +216,28 @@ The build system stamps all source files and skips compilation if nothing change
 
 ---
 
-## Package manager (m2pkg)
+## Package manager (mxpkg)
 
-### Creating a project
+The `mx build`/`run`/`test` subcommands handle single-project compilation. For dependency management, registry publishing, and multi-package workflows, use `mxpkg`. See the [mxpkg documentation](mxpkg.md) for commands, manifest schema, lockfile format, and dependency resolution.
 
-```bash
-m2pkg init
-```
+---
 
-This creates an `m2.toml` manifest:
+## Environment variables
 
-```ini
-# m2.toml - package manifest
-manifest_version=1
-name=myproject
-version=0.1.0
-edition=pim4
-entry=src/Main.mod
-includes=src
-
-[deps]
-
-[cc]
-# cflags=
-# ldflags=
-# libs=
-# extra-c=
-# frameworks=
-```
-
-### Manifest schema (`m2.toml`)
-
-#### Core fields
-
-| Key | Description | Default |
-|-----|-------------|---------|
-| `name` | Package name (required) | — |
-| `version` | Semantic version X.Y.Z (required) | — |
-| `entry` | Main module path | `src/Main.mod` |
-| `m2plus` | Enable Modula-2+ extensions | `false` |
-| `edition` | Set to `m2plus` to enable extensions | `pim4` |
-| `includes` | Space-separated include directories | — |
-| `manifest_version` | Manifest format version | `1` |
-
-#### `[deps]` section
-
-```ini
-[deps]
-mylib=path:../mylib         # local dependency
-otherlib=0.2.0              # registry dependency
-```
-
-Each dependency must have its own `m2.toml`. The dependency's include directories are added to the compiler's search path.
-
-#### `[cc]` section
-
-C compiler integration (all values are space-separated):
-
-| Key | Description | Example |
-|-----|-------------|---------|
-| `cflags` | Extra C compiler flags | `-Wall -Wextra` |
-| `ldflags` | Linker flags | `-L/usr/local/lib` |
-| `libs` | Libraries to link | `m pthread` |
-| `extra-c` | Extra C source files | `libs/helper.c` |
-| `frameworks` | macOS frameworks | `CoreFoundation IOKit` |
-
-#### `[test]` section
-
-| Key | Description | Default |
-|-----|-------------|---------|
-| `entry` | Test entry point | `tests/Main.mod` |
-| `includes` | Test-only include directories | — |
-
-#### `[features]` section
-
-```ini
-[features]
-threading=false
-gc=false
-```
-
-Features are enabled via `--feature` flags and control `(*$IF name*)` pragmas.
-
-### Lockfile (`m2.lock`)
-
-Generated by `m2pkg resolve`. Records resolved dependency versions, sources, and integrity hashes:
-
-```ini
-[package]
-name=myproject
-version=0.1.0
-
-[dep.mylib]
-version=0.1.0
-source=local
-sha256=abc123...
-path=../mylib
-```
-
-Do not edit manually. Regenerate with `m2pkg resolve`.
-
-### Registry and cache
-
-| Path | Contents |
-|------|----------|
-| `~/.m2pkg/registry/` | Package index and published packages |
-| `~/.m2pkg/cache/` | Downloaded package cache |
-
-### Dependency resolution
-
-1. Parse `m2.toml` manifest
-2. For each dependency:
-   - **Local** (`path:../lib`): resolve relative to project root
-   - **Registry** (`0.2.0`): look up in `~/.m2pkg/registry/`, download if needed
-3. Read each dependency's own `m2.toml` for transitive includes
-4. Write resolved state to `m2.lock`
-5. Compute include paths from all resolved dependencies
-
-### Common workflows
-
-**Create a new project:**
-```bash
-mkdir myproject && cd myproject
-m2pkg init
-mkdir -p src
-cat > src/Main.mod << 'EOF'
-MODULE Main;
-FROM InOut IMPORT WriteString, WriteLn;
-BEGIN
-  WriteString("Hello from m2pkg!");
-  WriteLn;
-END Main.
-EOF
-m2c run
-```
-
-**Add a local dependency:**
-```bash
-# Edit m2.toml:
-# [deps]
-# mylib=path:../mylib
-
-m2pkg resolve          # regenerate m2.lock
-m2c build              # rebuild with new dependency
-```
-
-**Build and run:**
-```bash
-m2c build              # compile
-m2c run                # compile and execute
-m2c run -- arg1 arg2   # pass arguments to program
-m2c build --release    # optimized build
-```
-
-**Update dependencies:**
-```bash
-m2pkg resolve          # re-resolve all dependencies
-m2c build              # rebuild
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MX_HOME` | `~/.mx` | Install prefix for the toolchain |
+| `MX_SHOW_C_ERRORS` | unset | Set to `1` to display raw C compiler errors |
+| `MX` | auto-detected | Path to `mx` binary (used by mxpkg0 bootstrapper) |
+| `MX_DOCS_PATH` | `$MX_HOME/docs` | Path to language documentation |
+| `MX_LSP_DEBOUNCE_MS` | `250` | LSP diagnostics debounce delay (ms) |
+| `MX_LSP_INDEX_DEBOUNCE_MS` | `250` | LSP workspace index update delay (ms) |
+| `MX_LSP_TICK_MS` | `50` | LSP timer thread interval (ms) |
+| `MXPKG_TOKEN` | unset | Registry authentication token |
+| `MXPKG_INSECURE` | unset | Set to skip TLS certificate verification |
 
 ---
 
 ## Standard library modules
 
-| Module | Description |
-|--------|-------------|
-| InOut | Character and string I/O (Read, Write, WriteString, WriteLn, ReadChar, WriteChar, etc.) |
-| RealInOut | Real number I/O (ReadReal, WriteReal, WriteFixPt) |
-| MathLib0 | Math functions (sqrt, sin, cos, exp, ln, arctan) |
-| Strings | String operations (Assign, Concat, Length, Compare, Copy, Pos, Delete, Insert) |
-| Terminal | Direct terminal I/O (Read, Write, WriteLn, WriteString) |
-| FileSystem | File operations (Lookup, Close, ReadChar, WriteChar, ReadWord, WriteWord) |
-| Storage | Heap allocation (ALLOCATE, DEALLOCATE) |
-| SYSTEM | Low-level operations (WORD, BYTE, ADDRESS, ADR, TSIZE) |
-| Conversions | Number/string conversions (IntToStr, StrToInt, CardToStr, StrToCard) |
-| STextIO | ISO-style text I/O |
-| SWholeIO | ISO-style whole number I/O |
-| SRealIO | ISO-style real number I/O |
-| Thread | Thread creation and joining (M2+ only) |
-| Mutex | Mutual exclusion locks (M2+ only) |
-| Condition | Condition variables (M2+ only) |
-
----
-
-## Extension libraries
-
-Libraries shipped in `libs/` that provide higher-level functionality via C bridges.
-Add them to your project via the `includes=` and `[cc] extra-c=` fields in `m2.toml`.
-
-### [m2gfx](libs/m2gfx/) — Graphics
-
-SDL2-based graphics library: windowing, 2D drawing, textures, TrueType fonts,
-indexed pixel buffers, event handling, and animation.
-
-| Module | Description |
-|--------|-------------|
-| Gfx | Window management, renderer lifecycle, screen info, clipboard, timer, cursor |
-| Canvas | 2D drawing primitives on the SDL renderer (rect, circle, ellipse, line, arc, bezier) |
-| Events | Event polling, keyboard/mouse input, text input, scancodes |
-| Font | TrueType font loading and text rendering via SDL2_ttf |
-| Texture | Hardware-accelerated texture loading, drawing, and render targets |
-| PixBuf | 8-bit indexed pixel buffer with drawing, layers, animation frames, file I/O |
-| Color | Pure M2 RGBA8888 pack/unpack utilities |
-| DrawAlgo | Shared drawing algorithms parameterized by output callbacks |
-
-Requires SDL2 and SDL2_ttf. See [m2gfx documentation](libs/m2gfx/).
-
-### [m2sockets](libs/m2sockets/) — Networking
-
-Minimal POSIX/BSD sockets wrapper for TCP/UDP networking on Linux and macOS.
-Thin C bridge (13 syscall wrappers); all logic in Modula-2.
-
-| Module | Description |
-|--------|-------------|
-| Sockets | TCP/UDP socket lifecycle, server (bind/listen/accept), client (connect), I/O, non-blocking |
-
-See [m2sockets documentation](libs/m2sockets/).
+See [language support](language-support.md#standard-library-modules) for the full module reference. See the [library index](README.md#libraries) for extension libraries (networking, graphics, async, crypto, etc.).

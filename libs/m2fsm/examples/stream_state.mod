@@ -38,7 +38,10 @@ FROM InOut IMPORT WriteString, WriteLn, WriteCard;
 FROM Fsm IMPORT Fsm, Transition, StepStatus,
                 ActionProc, GuardProc, HookProc, TraceProc,
                 StateId, EventId, ActionId,
-                NoState, NoAction, NoGuard;
+                NoState, NoAction, NoGuard,
+                Init, SetActions, SetGuards, SetHooks,
+                SetTrace, Step, StepCount, RejectCount,
+                SetTrans, ClearTable;
 FROM FsmTrace IMPORT ConsoleTrace;
 
 CONST
@@ -123,30 +126,30 @@ END OnExit;
 
 BEGIN
   (* Build transition table *)
-  Fsm.ClearTable(ADR(table), NumStates * NumEvents);
+  ClearTable(ADR(table), NumStates * NumEvents);
 
   (* Idle transitions *)
-  Fsm.SetTrans(table[StIdle*NumEvents + EvStartRead],
+  SetTrans(table[StIdle*NumEvents + EvStartRead],
                StReading, ActStartRead, 1);
-  Fsm.SetTrans(table[StIdle*NumEvents + EvStartWrite],
+  SetTrans(table[StIdle*NumEvents + EvStartWrite],
                StWriting, ActStartWrite, 1);
-  Fsm.SetTrans(table[StIdle*NumEvents + EvClose],
+  SetTrans(table[StIdle*NumEvents + EvClose],
                StClosed, ActClose, NoGuard);
 
   (* Reading -> Idle on Done *)
-  Fsm.SetTrans(table[StReading*NumEvents + EvDone],
+  SetTrans(table[StReading*NumEvents + EvDone],
                StIdle, NoAction, NoGuard);
-  Fsm.SetTrans(table[StReading*NumEvents + EvClose],
+  SetTrans(table[StReading*NumEvents + EvClose],
                StClosed, ActClose, NoGuard);
 
   (* Writing -> Idle on Done *)
-  Fsm.SetTrans(table[StWriting*NumEvents + EvDone],
+  SetTrans(table[StWriting*NumEvents + EvDone],
                StIdle, NoAction, NoGuard);
-  Fsm.SetTrans(table[StWriting*NumEvents + EvClose],
+  SetTrans(table[StWriting*NumEvents + EvClose],
                StClosed, ActClose, NoGuard);
 
   (* Closed: StartRead guarded -> rejected *)
-  Fsm.SetTrans(table[StClosed*NumEvents + EvStartRead],
+  SetTrans(table[StClosed*NumEvents + EvStartRead],
                StReading, ActStartRead, 1);
 
   (* Action table *)
@@ -170,24 +173,24 @@ BEGIN
   exitH[3] := OnExit;
 
   (* Init FSM with ctx = ADR(f) so guard can read state *)
-  Fsm.Init(f, StIdle, ADR(f), NumStates, NumEvents, ADR(table));
-  Fsm.SetActions(f, ADR(acts), NumActions);
-  Fsm.SetGuards(f, ADR(guards), 2);
-  Fsm.SetHooks(f, ADR(enter), ADR(exitH));
-  Fsm.SetTrace(f, ConsoleTrace, NIL);
+  Init(f, StIdle, ADR(f), NumStates, NumEvents, ADR(table));
+  SetActions(f, ADR(acts), NumActions);
+  SetGuards(f, ADR(guards), 2);
+  SetHooks(f, ADR(enter), ADR(exitH));
+  SetTrace(f, ConsoleTrace, NIL);
 
   (* Start read, finish, start write, close *)
-  Fsm.Step(f, EvStartRead, NIL, status);
-  Fsm.Step(f, EvDone, NIL, status);
-  Fsm.Step(f, EvStartWrite, NIL, status);
-  Fsm.Step(f, EvClose, NIL, status);
+  Step(f, EvStartRead, NIL, status);
+  Step(f, EvDone, NIL, status);
+  Step(f, EvStartWrite, NIL, status);
+  Step(f, EvClose, NIL, status);
 
   (* Try to read on closed stream *)
-  Fsm.Step(f, EvStartRead, NIL, status);
+  Step(f, EvStartRead, NIL, status);
 
   WriteString("stream closed after ");
-  WriteCard(Fsm.StepCount(f), 0);
+  WriteCard(StepCount(f), 0);
   WriteString(" steps, ");
-  WriteCard(Fsm.RejectCount(f), 0);
+  WriteCard(RejectCount(f), 0);
   WriteString(" rejected"); WriteLn
 END StreamState.

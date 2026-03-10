@@ -18,32 +18,32 @@ mod stdlib;
 mod symtab;
 mod token;
 mod types;
+mod identity;
 
 use std::path::PathBuf;
 use std::process;
 
 use driver::CompileOptions;
-
-const M2C_VERSION: &str = env!("CARGO_PKG_VERSION");
+use identity::{COMPILER_NAME, COMPILER_ID, VERSION, BUILD_DIR};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Handle zero-arg and help cases
     if args.len() < 2 || args.iter().any(|a| a == "--help" || a == "-h") {
-        eprintln!("m2c - Modula-2 to C Compiler (PIM4)");
-        eprintln!("Usage: m2c [options] file.mod");
-        eprintln!("       m2c build [--release] [-g] [-v] [--cc <cmd>] [--feature <name>]...");
-        eprintln!("       m2c run [--release] [-v] [-- <args>...]");
-        eprintln!("       m2c test [-v] [--feature <name>]...");
-        eprintln!("       m2c clean");
-        eprintln!("       m2c init [<name>]");
+        eprintln!("{} - Modula-2 compiler (PIM4)", COMPILER_NAME);
+        eprintln!("Usage: {} [options] file.mod", COMPILER_NAME);
+        eprintln!("       {} build [--release] [-g] [-v] [--cc <cmd>] [--feature <name>]...", COMPILER_NAME);
+        eprintln!("       {} run [--release] [-v] [-- <args>...]", COMPILER_NAME);
+        eprintln!("       {} test [-v] [--feature <name>]...", COMPILER_NAME);
+        eprintln!("       {} clean", COMPILER_NAME);
+        eprintln!("       {} init [<name>]", COMPILER_NAME);
         eprintln!();
         eprintln!("Subcommands:");
         eprintln!("  build          Build the project (reads m2.toml manifest)");
         eprintln!("  run            Build and run the project");
         eprintln!("  test           Build and run tests");
-        eprintln!("  clean          Remove build artifacts (.m2c/)");
+        eprintln!("  clean          Remove build artifacts (.{}/)", BUILD_DIR);
         eprintln!("  init [<name>]  Create a new project (default: current directory name)");
         eprintln!();
         eprintln!("Options:");
@@ -77,8 +77,8 @@ fn main() {
     if args.iter().any(|a| a == "--version-json") {
         let target = current_target();
         let version_json = json::Json::obj(vec![
-            ("name", json::Json::str_val("m2c")),
-            ("version", json::Json::str_val(M2C_VERSION)),
+            ("name", json::Json::str_val(COMPILER_ID)),
+            ("version", json::Json::str_val(VERSION)),
             ("target", json::Json::str_val(&target)),
             ("plan_version", json::Json::int_val(1)),
             ("capabilities", json::Json::obj(vec![
@@ -106,7 +106,7 @@ fn main() {
         // We report the host as the default and note the cross-compile capability.
         let target = current_target();
         println!("{} (host, default)", target);
-        println!("# m2c emits portable C; cross-compile by setting --cc to a cross compiler.");
+        println!("# {} emits portable C; cross-compile by setting --cc to a cross compiler.", COMPILER_NAME);
         process::exit(0);
     }
 
@@ -130,7 +130,7 @@ fn main() {
     // compile --plan <file>: build-plan mode
     if args.len() >= 3 && args[1] == "compile" && args[2] == "--plan" {
         if args.len() < 4 {
-            eprintln!("m2c: compile --plan requires a JSON file argument");
+            eprintln!("{}: compile --plan requires a JSON file argument", COMPILER_NAME);
             process::exit(1);
         }
         match driver::compile_plan(&args[3]) {
@@ -161,7 +161,7 @@ fn main() {
             "-o" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: -o requires an argument");
+                    eprintln!("{}: -o requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.output = Some(PathBuf::from(&args[i]));
@@ -171,7 +171,7 @@ fn main() {
             "-I" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: -I requires an argument");
+                    eprintln!("{}: -I requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.include_paths.push(PathBuf::from(&args[i]));
@@ -184,7 +184,7 @@ fn main() {
             "--feature" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: --feature requires an argument");
+                    eprintln!("{}: --feature requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.features.push(args[i].clone());
@@ -192,7 +192,7 @@ fn main() {
             "--cc" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: --cc requires an argument");
+                    eprintln!("{}: --cc requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.cc = args[i].clone();
@@ -203,7 +203,7 @@ fn main() {
             "-l" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: -l requires an argument");
+                    eprintln!("{}: -l requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.link_libs.push(args[i].clone());
@@ -214,7 +214,7 @@ fn main() {
             "-L" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: -L requires an argument");
+                    eprintln!("{}: -L requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.link_paths.push(args[i].clone());
@@ -225,7 +225,7 @@ fn main() {
             "--cflag" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: --cflag requires an argument");
+                    eprintln!("{}: --cflag requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.extra_cflags.push(args[i].clone());
@@ -237,13 +237,13 @@ fn main() {
             "--out-dir" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: --out-dir requires an argument");
+                    eprintln!("{}: --out-dir requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 opts.out_dir = Some(PathBuf::from(&args[i]));
             }
             arg if arg.starts_with('-') => {
-                eprintln!("m2c: unknown option '{}'", arg);
+                eprintln!("{}: unknown option '{}'", COMPILER_NAME, arg);
                 process::exit(1);
             }
             arg if arg.ends_with(".c") || arg.ends_with(".o") || arg.ends_with(".a") => {
@@ -257,7 +257,7 @@ fn main() {
     }
 
     if opts.input.as_os_str().is_empty() {
-        eprintln!("m2c: no input file");
+        eprintln!("{}: no input file", COMPILER_NAME);
         process::exit(1);
     }
 
@@ -281,7 +281,7 @@ fn current_target() -> String {
 
 fn run_init(args: &[String]) {
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        eprintln!("m2c: cannot determine working directory: {}", e);
+        eprintln!("{}: cannot determine working directory: {}", COMPILER_NAME, e);
         process::exit(1);
     });
 
@@ -306,7 +306,7 @@ fn run_init(args: &[String]) {
 
     let manifest_path = cwd.join("m2.toml");
     if manifest_path.exists() {
-        eprintln!("m2c: m2.toml already exists in this directory");
+        eprintln!("{}: m2.toml already exists in this directory", COMPILER_NAME);
         process::exit(1);
     }
 
@@ -333,14 +333,14 @@ entry=tests/Main.mod
 includes=tests
 ");
     std::fs::write(&manifest_path, &manifest).unwrap_or_else(|e| {
-        eprintln!("m2c: failed to write m2.toml: {}", e);
+        eprintln!("{}: failed to write m2.toml: {}", COMPILER_NAME, e);
         process::exit(1);
     });
 
     // Create src/Main.mod
     let src_dir = cwd.join("src");
     std::fs::create_dir_all(&src_dir).unwrap_or_else(|e| {
-        eprintln!("m2c: failed to create src/: {}", e);
+        eprintln!("{}: failed to create src/: {}", COMPILER_NAME, e);
         process::exit(1);
     });
     let src_main = format!("\
@@ -354,14 +354,14 @@ BEGIN
 END {mod_name}.
 ");
     std::fs::write(src_dir.join("Main.mod"), &src_main).unwrap_or_else(|e| {
-        eprintln!("m2c: failed to write src/Main.mod: {}", e);
+        eprintln!("{}: failed to write src/Main.mod: {}", COMPILER_NAME, e);
         process::exit(1);
     });
 
     // Create tests/Main.mod
     let tests_dir = cwd.join("tests");
     std::fs::create_dir_all(&tests_dir).unwrap_or_else(|e| {
-        eprintln!("m2c: failed to create tests/: {}", e);
+        eprintln!("{}: failed to create tests/: {}", COMPILER_NAME, e);
         process::exit(1);
     });
     let test_main = format!("\
@@ -375,11 +375,11 @@ BEGIN
 END {mod_name}Test.
 ");
     std::fs::write(tests_dir.join("Main.mod"), &test_main).unwrap_or_else(|e| {
-        eprintln!("m2c: failed to write tests/Main.mod: {}", e);
+        eprintln!("{}: failed to write tests/Main.mod: {}", COMPILER_NAME, e);
         process::exit(1);
     });
 
-    eprintln!("m2c: initialized project '{}'", name);
+    eprintln!("{}: initialized project '{}'", COMPILER_NAME, name);
     eprintln!("  created m2.toml");
     eprintln!("  created src/Main.mod");
     eprintln!("  created tests/Main.mod");
@@ -388,7 +388,7 @@ END {mod_name}Test.
 fn run_subcommand(args: &[String]) {
     let subcmd = &args[1];
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        eprintln!("m2c: cannot determine working directory: {}", e);
+        eprintln!("{}: cannot determine working directory: {}", COMPILER_NAME, e);
         process::exit(1);
     });
 
@@ -403,12 +403,12 @@ fn run_subcommand(args: &[String]) {
         let root = match project_resolver::find_project_root(&cwd) {
             Some(r) => r,
             None => {
-                eprintln!("m2c: no m2.toml found in current or parent directories");
+                eprintln!("{}: no m2.toml found in current or parent directories", COMPILER_NAME);
                 process::exit(1);
             }
         };
         match build::clean_project(&root) {
-            Ok(()) => eprintln!("m2c: cleaned"),
+            Ok(()) => eprintln!("{}: cleaned", COMPILER_NAME),
             Err(e) => {
                 eprintln!("{}", e);
                 process::exit(1);
@@ -441,7 +441,7 @@ fn run_subcommand(args: &[String]) {
             "--cc" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: --cc requires an argument");
+                    eprintln!("{}: --cc requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 cc = args[i].clone();
@@ -449,17 +449,17 @@ fn run_subcommand(args: &[String]) {
             "--feature" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("m2c: --feature requires an argument");
+                    eprintln!("{}: --feature requires an argument", COMPILER_NAME);
                     process::exit(1);
                 }
                 features.push(args[i].clone());
             }
             arg if arg.starts_with('-') => {
-                eprintln!("m2c {}: unknown option '{}'", subcmd, arg);
+                eprintln!("{} {}: unknown option '{}'", COMPILER_NAME, subcmd, arg);
                 process::exit(1);
             }
             _ => {
-                eprintln!("m2c {}: unexpected argument '{}'", subcmd, args[i]);
+                eprintln!("{} {}: unexpected argument '{}'", COMPILER_NAME, subcmd, args[i]);
                 process::exit(1);
             }
         }
@@ -470,7 +470,7 @@ fn run_subcommand(args: &[String]) {
     let root = match project_resolver::find_project_root(&cwd) {
         Some(r) => r,
         None => {
-            eprintln!("m2c: no m2.toml found in current or parent directories");
+            eprintln!("{}: no m2.toml found in current or parent directories", COMPILER_NAME);
             process::exit(1);
         }
     };
@@ -478,7 +478,7 @@ fn run_subcommand(args: &[String]) {
     let ctx = match project_resolver::ProjectContext::load(&root, &[]) {
         Some(c) => c,
         None => {
-            eprintln!("m2c: failed to load project from {}", root.display());
+            eprintln!("{}: failed to load project from {}", COMPILER_NAME, root.display());
             process::exit(1);
         }
     };
@@ -564,7 +564,7 @@ fn run_subcommand(args: &[String]) {
     match build::build_project(&config, is_run, &run_args) {
         Ok(result) => {
             if !is_run && !result.up_to_date {
-                eprintln!("m2c: built {}", result.artifact.display());
+                eprintln!("{}: built {}", COMPILER_NAME, result.artifact.display());
             }
         }
         Err(e) => {

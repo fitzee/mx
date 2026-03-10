@@ -1,11 +1,11 @@
 # LSP capabilities
 
-The m2c compiler includes a built-in LSP server, activated with `m2c --lsp`. It communicates via JSON-RPC over stdio with no external dependencies.
+The mx compiler includes a built-in LSP server, activated with `mx --lsp`. It communicates via JSON-RPC over stdio with no external dependencies.
 
 ## Starting the server
 
 ```bash
-m2c --lsp [--m2plus] [-I path]...
+mx --lsp [--m2plus] [-I path]...
 ```
 
 Typically launched by a client (VS Code, Neovim, etc.) rather than manually.
@@ -50,7 +50,7 @@ The LSP server provides structured language documentation for built-in types, pr
 - **Completion resolve**: built-in symbols include documentation in the completion detail panel.
 - **Signature help**: built-in procedures (INC, DEC, etc.) include documentation in the signature help popup.
 
-Documentation is centralized in `src/lsp/lang_docs.rs` and is never duplicated across handlers. User-defined symbols with real source locations always take precedence — language docs only appear for builtins (symbols with no source file) and keywords.
+Documentation is centralized in `src/lsp/lang_docs.rs` and is never duplicated across handlers. User-defined symbols with real source locations always take precedence -- language docs only appear for builtins (symbols with no source file) and keywords.
 
 Coverage includes:
 - Built-in types: INTEGER, CARDINAL, REAL, LONGREAL, BOOLEAN, CHAR, BITSET, etc.
@@ -66,9 +66,9 @@ Coverage includes:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `M2C_LSP_DEBOUNCE_MS` | `250` | Delay (ms) before publishing diagnostics after a change |
-| `M2C_LSP_INDEX_DEBOUNCE_MS` | `250` | Delay (ms) before updating workspace index after a change |
-| `M2C_LSP_TICK_MS` | `50` | Timer thread interval (ms) for debounce flush |
+| `MX_LSP_DEBOUNCE_MS` | `250` | Delay (ms) before publishing diagnostics after a change |
+| `MX_LSP_INDEX_DEBOUNCE_MS` | `250` | Delay (ms) before updating workspace index after a change |
+| `MX_LSP_TICK_MS` | `50` | Timer thread interval (ms) for debounce flush |
 
 ### initializationOptions
 
@@ -97,7 +97,7 @@ The server auto-detects projects by walking up from the file's directory to find
 
 ### Multi-root workspaces
 
-The server supports `workspaceFolders` from the initialize request. Each folder is checked for an `m2.toml` manifest. Cross-file features are scoped to the workspace root containing the file — results from other roots are excluded.
+The server supports `workspaceFolders` from the initialize request. Each folder is checked for an `m2.toml` manifest. Cross-file features are scoped to the workspace root containing the file -- results from other roots are excluded.
 
 If no workspace folders are provided, the server falls back to `rootUri`.
 
@@ -161,10 +161,10 @@ In VS Code: Command Palette > "Modula-2+: Reindex Workspace".
 
 ### Server not starting
 
-Verify `m2c` is accessible:
+Verify `mx` is accessible:
 
 ```bash
-m2c --version-json
+mx --version-json
 ```
 
 If not on PATH, set the full path in your editor's configuration.
@@ -173,7 +173,7 @@ If not on PATH, set the full path in your editor's configuration.
 
 - Ensure the file has a `.mod` or `.def` extension.
 - Check the editor's output panel for LSP errors (in VS Code: Output > "Modula-2+ Language Server").
-- Try setting `M2C_LSP_DEBOUNCE_MS=0` in your environment for immediate diagnostics.
+- Try setting `MX_LSP_DEBOUNCE_MS=0` in your environment for immediate diagnostics.
 
 ### Stale cross-file references
 
@@ -186,7 +186,7 @@ Cross-file features use the workspace index, which updates on save. If results s
 
 The server resolves dependencies from the `m2.lock` lockfile. If definitions from a dependency are not found:
 
-1. Ensure `m2.lock` exists and is current: run `m2pkg resolve`.
+1. Ensure `m2.lock` exists and is current: run `mxpkg resolve`.
 2. Save `m2.lock` to trigger the LSP to reload project context.
 3. Run "Reindex Workspace".
 
@@ -198,4 +198,4 @@ Each workspace root is treated as a separate project. Cross-file features do not
 
 - Default debounce (250ms) provides good responsiveness. Lower values increase CPU usage.
 - Initial indexing of large workspaces may take a few seconds. The server sends `workDoneProgress` notifications if the client supports them.
-- The tick timer (default 50ms) controls how frequently debounced items are flushed. Increasing `M2C_LSP_TICK_MS` reduces CPU usage at the cost of latency.
+- The tick timer (default 50ms) controls how frequently debounced items are flushed. Increasing `MX_LSP_TICK_MS` reduces CPU usage at the cost of latency.

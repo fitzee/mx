@@ -83,12 +83,12 @@ pub struct LspServer {
 
 impl LspServer {
     pub fn new(m2plus: bool, include_paths: Vec<PathBuf>) -> Self {
-        let debounce = std::env::var("M2C_LSP_DEBOUNCE_MS")
+        let debounce = std::env::var(crate::identity::ENV_LSP_DEBOUNCE)
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_DEBOUNCE_MS);
 
-        let index_debounce = std::env::var("M2C_LSP_INDEX_DEBOUNCE_MS")
+        let index_debounce = std::env::var(crate::identity::ENV_LSP_INDEX_DEBOUNCE)
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_DEBOUNCE_MS);
@@ -302,7 +302,7 @@ impl LspServer {
             return String::new();
         }
 
-        let token = format!("m2c-{}", self.next_request_id);
+        let token = format!("{}-{}", crate::identity::COMPILER_ID, self.next_request_id);
         let create_id = self.next_request_id;
         self.next_request_id += 1;
 
@@ -450,8 +450,8 @@ impl LspServer {
             }
         });
 
-        // Timer thread: ticks every 50ms (configurable via M2C_LSP_TICK_MS).
-        let tick_ms: u64 = std::env::var("M2C_LSP_TICK_MS")
+        // Timer thread: ticks every 50ms (configurable via MX_LSP_TICK_MS).
+        let tick_ms: u64 = std::env::var(crate::identity::ENV_LSP_TICK)
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(50);
@@ -793,7 +793,7 @@ impl LspServer {
         let result = Json::obj(vec![
             ("capabilities", capabilities),
             ("serverInfo", Json::obj(vec![
-                ("name", Json::str_val("m2c-lsp")),
+                ("name", Json::str_val("mx-lsp")),
                 ("version", Json::str_val(env!("CARGO_PKG_VERSION"))),
             ])),
         ]);
@@ -821,7 +821,7 @@ impl LspServer {
                 // If client sends incremental (with range), log and use last entry.
                 if let Some(first) = changes.first() {
                     if first.get("range").is_some() {
-                        eprintln!("m2c-lsp: incremental change received but server uses full sync; using last entry");
+                        eprintln!("mx-lsp: incremental change received but server uses full sync; using last entry");
                     }
                 }
 
@@ -1038,7 +1038,7 @@ impl LspServer {
                         let file_path = uri_to_path(&cr.file_uri);
                         let root_str = root.to_string_lossy();
                         if !file_path.starts_with(root_str.as_ref()) {
-                            eprintln!("m2c-lsp: rename skipping {} (outside workspace root {})",
+                            eprintln!("mx-lsp: rename skipping {} (outside workspace root {})",
                                 cr.file_uri, root_str);
                             continue;
                         }
