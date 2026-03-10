@@ -126,6 +126,9 @@ install: build
 		echo "Install VS Code extension:"; \
 		echo "  code --install-extension $$VSIX"; \
 		echo ""; \
+		echo "If VS Code can't find mx, set the full path in VS Code settings:"; \
+		echo '  "mx.serverPath": "$(PREFIX)/bin/mx"'; \
+		echo ""; \
 	fi
 	@echo "Verify:"
 	@echo "  mx --version"
