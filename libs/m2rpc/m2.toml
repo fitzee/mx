@@ -5,7 +5,7 @@
 # Includes in-memory PipeStream for deterministic testing.
 manifest_version=1
 name=m2rpc
-version=0.1.0
+version=0.1.1
 edition=pim4
 entry=src/RpcClient.mod
 includes=src

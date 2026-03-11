@@ -1,21 +1,34 @@
 IMPLEMENTATION MODULE ByteBuf;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
+
+TYPE
+  CharPtr = POINTER TO CHAR;
 
 (* ── Internal helpers ────────────────────────────────── *)
 
-PROCEDURE MinCap(a, b: CARDINAL): CARDINAL;
+PROCEDURE PeekChar(base: ADDRESS; idx: CARDINAL): CHAR;
+VAR p: CharPtr;
 BEGIN
-  IF a < b THEN RETURN a ELSE RETURN b END
-END MinCap;
+  p := CharPtr(LONGCARD(base) + LONGCARD(idx));
+  RETURN p^
+END PeekChar;
 
-PROCEDURE CopyBytes(src, dst: BBufPtr; srcOff, dstOff, n: CARDINAL);
+PROCEDURE PokeChar(base: ADDRESS; idx: CARDINAL; ch: CHAR);
+VAR p: CharPtr;
+BEGIN
+  p := CharPtr(LONGCARD(base) + LONGCARD(idx));
+  p^ := ch
+END PokeChar;
+
+PROCEDURE CopyBytes(src, dst: ADDRESS; srcOff, dstOff, n: CARDINAL);
 VAR i: CARDINAL;
 BEGIN
+  (* 1 byte stride — 64 chars per cache line *)
   i := 0;
   WHILE i < n DO
-    dst^[dstOff + i] := src^[srcOff + i];
+    PokeChar(dst, dstOff + i, PeekChar(src, srcOff + i));
     INC(i)
   END
 END CopyBytes;
@@ -23,23 +36,20 @@ END CopyBytes;
 (* ── Buffer lifecycle ────────────────────────────────── *)
 
 PROCEDURE Init(VAR b: Buf; initialCap: CARDINAL);
-VAR c: CARDINAL; p: ADDRESS;
+VAR c: CARDINAL;
 BEGIN
   c := initialCap;
   IF c > MaxBufCap THEN c := MaxBufCap END;
   IF c = 0 THEN c := 64 END;
-  ALLOCATE(p, c);
-  b.data := p;
+  ALLOCATE(b.data, c);
   b.len := 0;
   b.cap := c
 END Init;
 
 PROCEDURE Free(VAR b: Buf);
-VAR p: ADDRESS;
 BEGIN
   IF b.data # NIL THEN
-    p := b.data;
-    DEALLOCATE(p, b.cap);
+    DEALLOCATE(b.data, b.cap);
     b.data := NIL
   END;
   b.len := 0;
@@ -56,8 +66,7 @@ END Clear;
 PROCEDURE Reserve(VAR b: Buf; extra: CARDINAL): BOOLEAN;
 VAR
   needed, newCap: CARDINAL;
-  p: ADDRESS;
-  newData: BBufPtr;
+  newData: ADDRESS;
 BEGIN
   needed := b.len + extra;
   IF needed <= b.cap THEN RETURN TRUE END;
@@ -68,8 +77,7 @@ BEGIN
   IF newCap < needed THEN newCap := needed END;
   IF newCap > MaxBufCap THEN newCap := MaxBufCap END;
 
-  ALLOCATE(p, newCap);
-  newData := p;
+  ALLOCATE(newData, newCap);
   IF newData = NIL THEN RETURN FALSE END;
 
   (* copy existing data *)
@@ -78,8 +86,7 @@ BEGIN
   END;
 
   (* free old buffer *)
-  p := b.data;
-  DEALLOCATE(p, b.cap);
+  DEALLOCATE(b.data, b.cap);
 
   b.data := newData;
   b.cap := newCap;
@@ -91,7 +98,7 @@ END Reserve;
 PROCEDURE AppendByte(VAR b: Buf; x: CARDINAL);
 BEGIN
   IF Reserve(b, 1) THEN
-    b.data^[b.len] := CHR(x MOD 256);
+    PokeChar(b.data, b.len, CHR(x MOD 256));
     INC(b.len)
   END
 END AppendByte;
@@ -105,7 +112,7 @@ BEGIN
   IF Reserve(b, count) THEN
     i := 0;
     WHILE i < count DO
-      b.data^[b.len + i] := a[i];
+      PokeChar(b.data, b.len + i, a[i]);
       INC(i)
     END;
     b.len := b.len + count
@@ -113,16 +120,10 @@ BEGIN
 END AppendChars;
 
 PROCEDURE AppendView(VAR b: Buf; v: BytesView);
-VAR i: CARDINAL; vp: BBufPtr;
 BEGIN
   IF v.len = 0 THEN RETURN END;
   IF Reserve(b, v.len) THEN
-    vp := v.base;
-    i := 0;
-    WHILE i < v.len DO
-      b.data^[b.len + i] := vp^[i];
-      INC(i)
-    END;
+    CopyBytes(v.base, b.data, 0, b.len, v.len);
     b.len := b.len + v.len
   END
 END AppendView;
@@ -132,13 +133,13 @@ END AppendView;
 PROCEDURE GetByte(VAR b: Buf; idx: CARDINAL): CARDINAL;
 BEGIN
   IF idx >= b.len THEN RETURN 0 END;
-  RETURN ORD(b.data^[idx]) MOD 256
+  RETURN ORD(PeekChar(b.data, idx)) MOD 256
 END GetByte;
 
 PROCEDURE SetByte(VAR b: Buf; idx: CARDINAL; val: CARDINAL);
 BEGIN
   IF idx >= b.len THEN RETURN END;
-  b.data^[idx] := CHR(val MOD 256)
+  PokeChar(b.data, idx, CHR(val MOD 256))
 END SetByte;
 
 PROCEDURE AsView(VAR b: Buf): BytesView;
@@ -162,11 +163,9 @@ END DataPtr;
 (* ── View helpers ───────────────────────────────────── *)
 
 PROCEDURE ViewGetByte(v: BytesView; idx: CARDINAL): CARDINAL;
-VAR vp: BBufPtr;
 BEGIN
   IF idx >= v.len THEN RETURN 0 END;
-  vp := v.base;
-  RETURN ORD(vp^[idx]) MOD 256
+  RETURN ORD(PeekChar(v.base, idx)) MOD 256
 END ViewGetByte;
 
 END ByteBuf.

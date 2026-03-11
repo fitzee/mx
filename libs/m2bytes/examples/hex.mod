@@ -23,7 +23,7 @@ VAR
   hexLen: CARDINAL;
   ok: BOOLEAN;
   i: CARDINAL;
-  inp: ARRAY [0..7] OF CHAR;
+  inp: ARRAY [0..8] OF CHAR;
 
 BEGIN
   Init(src, 16);

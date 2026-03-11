@@ -1,7 +1,7 @@
 IMPLEMENTATION MODULE RpcFrame;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
-FROM ByteBuf IMPORT Buf, BytesView, BBufPtr, Init, Free, Clear,
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
+FROM ByteBuf IMPORT Buf, BytesView, Init, Free, Clear,
                      AppendByte, AppendChars, AppendView,
                      Reserve, AsView;
 
@@ -198,7 +198,6 @@ VAR
   hdr: ARRAY [0..3] OF CHAR;
   view: BytesView;
   pos, sent, ts: CARDINAL;
-  bp: BBufPtr;
 BEGIN
   ok := FALSE;
 
@@ -211,10 +210,9 @@ BEGIN
   END;
 
   view := AsView(frameBuf);
-  bp := view.base;
   pos := 0;
   WHILE pos < view.len DO
-    ts := CallWrite(fn, ctx, ADR(bp^[pos]), view.len - pos, sent);
+    ts := CallWrite(fn, ctx, VAL(ADDRESS, LONGCARD(view.base) + LONGCARD(pos)), view.len - pos, sent);
     IF (ts = TsError) OR (ts = TsClosed) THEN
       Free(frameBuf);
       RETURN

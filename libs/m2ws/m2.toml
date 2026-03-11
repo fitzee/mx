@@ -5,7 +5,7 @@
 # Runs on the m2evloop event loop.
 manifest_version=1
 name=m2ws
-version=0.1.0
+version=0.1.1
 edition=pim4
 entry=src/WebSocket.mod
 includes=src

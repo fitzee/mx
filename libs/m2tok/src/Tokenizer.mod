@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE Tokenizer;
 
-FROM SYSTEM IMPORT ADDRESS;
+FROM SYSTEM IMPORT ADDRESS, LONGCARD;
 
 (* ── Byte access helpers (same pattern as Text.mod) ─── *)
 
@@ -9,7 +9,7 @@ TYPE
 
 PROCEDURE PtrAt(base: ADDRESS; idx: CARDINAL): CharPtr;
 BEGIN
-  RETURN VAL(ADDRESS, VAL(LONGINT, base) + VAL(LONGINT, idx))
+  RETURN CharPtr(LONGCARD(base) + LONGCARD(idx))
 END PtrAt;
 
 PROCEDURE GetCh(base: ADDRESS; i: CARDINAL): CHAR;

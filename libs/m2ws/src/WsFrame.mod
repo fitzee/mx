@@ -1,24 +1,37 @@
 IMPLEMENTATION MODULE WsFrame;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM WsBridge IMPORT m2_ws_apply_mask, m2_ws_random_mask;
 
 (* ── Internal types ────────────────────────────────────── *)
 
 TYPE
-  ByteArr = ARRAY [0..65535] OF CHAR;
-  BytePtr = POINTER TO ByteArr;
+  CharPtr = POINTER TO CHAR;
 
 (* ── Helpers ───────────────────────────────────────────── *)
 
-PROCEDURE GetByte(p: BytePtr; idx: CARDINAL): CARDINAL;
+PROCEDURE PeekChar(base: ADDRESS; idx: CARDINAL): CHAR;
+VAR p: CharPtr;
 BEGIN
-  RETURN ORD(p^[idx]) MOD 256
+  p := CharPtr(LONGCARD(base) + LONGCARD(idx));
+  RETURN p^
+END PeekChar;
+
+PROCEDURE PokeChar(base: ADDRESS; idx: CARDINAL; ch: CHAR);
+VAR p: CharPtr;
+BEGIN
+  p := CharPtr(LONGCARD(base) + LONGCARD(idx));
+  p^ := ch
+END PokeChar;
+
+PROCEDURE GetByte(base: ADDRESS; idx: CARDINAL): CARDINAL;
+BEGIN
+  RETURN ORD(PeekChar(base, idx)) MOD 256
 END GetByte;
 
-PROCEDURE SetByte(p: BytePtr; idx: CARDINAL; val: CARDINAL);
+PROCEDURE SetByte(base: ADDRESS; idx: CARDINAL; val: CARDINAL);
 BEGIN
-  p^[idx] := CHR(val MOD 256)
+  PokeChar(base, idx, CHR(val MOD 256))
 END SetByte;
 
 (* ── IntToOpcode / OpcodeToInt ─────────────────────────── *)
@@ -66,7 +79,6 @@ END OpcodeToInt;
 PROCEDURE DecodeHeader(buf: ADDRESS; bufLen: CARDINAL;
                        VAR hdr: FrameHeader): Status;
 VAR
-  p: BytePtr;
   b0, b1, opcodeVal: CARDINAL;
   pos: CARDINAL;
   len7: CARDINAL;
@@ -75,9 +87,8 @@ VAR
 BEGIN
   IF bufLen < 2 THEN RETURN Incomplete END;
 
-  p := buf;
-  b0 := GetByte(p, 0);
-  b1 := GetByte(p, 1);
+  b0 := GetByte(buf, 0);
+  b1 := GetByte(buf, 1);
 
   (* FIN bit *)
   hdr.fin := (b0 DIV 128) = 1;
@@ -107,18 +118,18 @@ BEGIN
   ELSIF len7 = 126 THEN
     (* 16-bit extended length *)
     IF bufLen < 4 THEN RETURN Incomplete END;
-    len16 := GetByte(p, 2) * 256 + GetByte(p, 3);
+    len16 := GetByte(buf,2) * 256 + GetByte(buf,3);
     hdr.payloadLen := len16;
     pos := 4
   ELSIF len7 = 127 THEN
     (* 64-bit extended length *)
     IF bufLen < 10 THEN RETURN Incomplete END;
     (* Check high 4 bytes are zero -- we only support 32-bit lengths *)
-    len64hi := GetByte(p, 2) * 16777216 + GetByte(p, 3) * 65536
-             + GetByte(p, 4) * 256 + GetByte(p, 5);
+    len64hi := GetByte(buf,2) * 16777216 + GetByte(buf,3) * 65536
+             + GetByte(buf,4) * 256 + GetByte(buf,5);
     IF len64hi # 0 THEN RETURN Invalid END;
-    len64lo := GetByte(p, 6) * 16777216 + GetByte(p, 7) * 65536
-             + GetByte(p, 8) * 256 + GetByte(p, 9);
+    len64lo := GetByte(buf,6) * 16777216 + GetByte(buf,7) * 65536
+             + GetByte(buf,8) * 256 + GetByte(buf,9);
     hdr.payloadLen := len64lo;
     pos := 10
   END;
@@ -132,7 +143,7 @@ BEGIN
   IF hdr.masked THEN
     IF bufLen < pos + 4 THEN RETURN Incomplete END;
     FOR i := 0 TO 3 DO
-      hdr.maskKey[i] := CHR(GetByte(p, pos + i))
+      hdr.maskKey[i] := CHR(GetByte(buf,pos + i))
     END;
     pos := pos + 4
   ELSE
@@ -160,12 +171,10 @@ END ApplyMask;
 PROCEDURE EncodeHeader(VAR hdr: FrameHeader;
                        buf: ADDRESS; maxLen: CARDINAL): CARDINAL;
 VAR
-  p: BytePtr;
   b0, b1: CARDINAL;
   pos: CARDINAL;
   i: CARDINAL;
 BEGIN
-  p := buf;
   pos := 0;
 
   (* First byte: FIN + opcode *)
@@ -193,43 +202,43 @@ BEGIN
     END
   END;
 
-  SetByte(p, 0, b0);
+  SetByte(buf,0, b0);
   pos := 1;
 
   (* Second byte: MASK + payload length *)
   IF hdr.payloadLen <= 125 THEN
     b1 := hdr.payloadLen;
     IF hdr.masked THEN b1 := b1 + 128 END;
-    SetByte(p, 1, b1);
+    SetByte(buf,1, b1);
     pos := 2
   ELSIF hdr.payloadLen <= 65535 THEN
     b1 := 126;
     IF hdr.masked THEN b1 := b1 + 128 END;
-    SetByte(p, 1, b1);
+    SetByte(buf,1, b1);
     (* 16-bit big-endian length *)
-    SetByte(p, 2, hdr.payloadLen DIV 256);
-    SetByte(p, 3, hdr.payloadLen MOD 256);
+    SetByte(buf,2, hdr.payloadLen DIV 256);
+    SetByte(buf,3, hdr.payloadLen MOD 256);
     pos := 4
   ELSE
     b1 := 127;
     IF hdr.masked THEN b1 := b1 + 128 END;
-    SetByte(p, 1, b1);
+    SetByte(buf,1, b1);
     (* 64-bit big-endian length; high 4 bytes = 0 *)
-    SetByte(p, 2, 0);
-    SetByte(p, 3, 0);
-    SetByte(p, 4, 0);
-    SetByte(p, 5, 0);
-    SetByte(p, 6, (hdr.payloadLen DIV 16777216) MOD 256);
-    SetByte(p, 7, (hdr.payloadLen DIV 65536) MOD 256);
-    SetByte(p, 8, (hdr.payloadLen DIV 256) MOD 256);
-    SetByte(p, 9, hdr.payloadLen MOD 256);
+    SetByte(buf,2, 0);
+    SetByte(buf,3, 0);
+    SetByte(buf,4, 0);
+    SetByte(buf,5, 0);
+    SetByte(buf,6, (hdr.payloadLen DIV 16777216) MOD 256);
+    SetByte(buf,7, (hdr.payloadLen DIV 65536) MOD 256);
+    SetByte(buf,8, (hdr.payloadLen DIV 256) MOD 256);
+    SetByte(buf,9, hdr.payloadLen MOD 256);
     pos := 10
   END;
 
   (* Mask key *)
   IF hdr.masked THEN
     FOR i := 0 TO 3 DO
-      SetByte(p, pos, ORD(hdr.maskKey[i]) MOD 256);
+      SetByte(buf,pos, ORD(hdr.maskKey[i]) MOD 256);
       INC(pos)
     END
   END;

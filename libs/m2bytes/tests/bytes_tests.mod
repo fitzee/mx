@@ -443,7 +443,7 @@ END TestHexEncode;
 
 PROCEDURE TestHexDecode;
 VAR b: Buf; ok: BOOLEAN;
-    inp: ARRAY [0..7] OF CHAR;
+    inp: ARRAY [0..8] OF CHAR;
 BEGIN
   Init(b, 16);
   inp := "deadbeef";
@@ -458,6 +458,7 @@ BEGIN
   (* uppercase input *)
   Clear(b);
   inp := "DEADBEEF";
+
   Decode(inp, 8, b, ok);
   Check("hexdec: upper ok", ok);
   Check("hexdec: upper val", GetByte(b, 0) = 222);
@@ -468,7 +469,7 @@ END TestHexDecode;
 
 PROCEDURE TestHexDecodeInvalid;
 VAR b: Buf; ok: BOOLEAN;
-    inp: ARRAY [0..7] OF CHAR;
+    inp: ARRAY [0..8] OF CHAR;
 BEGIN
   Init(b, 16);
 

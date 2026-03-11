@@ -1,13 +1,23 @@
 IMPLEMENTATION MODULE Json;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 
 (* ── Internal helpers ────────────────────────────────── *)
+
+TYPE
+  CharPtr = POINTER TO CHAR;
+
+PROCEDURE PeekChar(base: ADDRESS; idx: CARDINAL): CHAR;
+VAR p: CharPtr;
+BEGIN
+  p := CharPtr(LONGCARD(base) + LONGCARD(idx));
+  RETURN p^
+END PeekChar;
 
 PROCEDURE CharAt(VAR p: Parser; idx: CARDINAL): CHAR;
 BEGIN
   IF idx >= p.srcLen THEN RETURN 0C END;
-  RETURN p.src^[idx]
+  RETURN PeekChar(p.src, idx)
 END CharAt;
 
 PROCEDURE IsWhitespace(ch: CHAR): BOOLEAN;
@@ -298,7 +308,7 @@ BEGIN
   i := tok.start;
 
   WHILE i < tok.start + tok.len DO
-    ch := p.src^[i];
+    ch := PeekChar(p.src, i);
     IF ch = CHR(92) THEN (* backslash *)
       INC(i);
       IF i >= tok.start + tok.len THEN
@@ -306,7 +316,7 @@ BEGIN
         IF out <= limit THEN buf[out] := 0C END;
         RETURN FALSE
       END;
-      esc := p.src^[i];
+      esc := PeekChar(p.src, i);
       IF esc = 'n' THEN
         IF out <= limit THEN buf[out] := CHR(10); INC(out) END
       ELSIF esc = 't' THEN
@@ -328,7 +338,7 @@ BEGIN
         cp := 0;
         h := 0;
         WHILE (h < 4) AND (i + 1 + h < tok.start + tok.len) DO
-          IF HexVal(p.src^[i + 1 + h], hv) THEN
+          IF HexVal(PeekChar(p.src, i + 1 + h), hv) THEN
             cp := cp * 16 + hv
           ELSE
             IF out <= limit THEN buf[out] := 0C END;
@@ -392,7 +402,7 @@ BEGIN
   neg := FALSE;
   result := 0;
 
-  IF (i < endPos) AND (p.src^[i] = '-') THEN
+  IF (i < endPos) AND (PeekChar(p.src, i) = '-') THEN
     neg := TRUE;
     INC(i)
   END;
@@ -400,7 +410,7 @@ BEGIN
   (* reject if it contains a decimal point or exponent *)
   j := i;
   WHILE j < endPos DO
-    ch := p.src^[j];
+    ch := PeekChar(p.src, j);
     IF (ch = '.') OR (ch = 'e') OR (ch = 'E') THEN
       RETURN FALSE
     END;
@@ -408,7 +418,7 @@ BEGIN
   END;
 
   WHILE i < endPos DO
-    ch := p.src^[i];
+    ch := PeekChar(p.src, i);
     IF NOT IsDigit(ch) THEN RETURN FALSE END;
     result := result * 10 + VAL(INTEGER, ORD(ch) - ORD('0'));
     INC(i)
@@ -433,7 +443,7 @@ BEGIN
   neg := FALSE;
   result := 0;
 
-  IF (i < endPos) AND (p.src^[i] = '-') THEN
+  IF (i < endPos) AND (PeekChar(p.src, i) = '-') THEN
     neg := TRUE;
     INC(i)
   END;
@@ -441,7 +451,7 @@ BEGIN
   (* reject if it contains a decimal point or exponent *)
   j := i;
   WHILE j < endPos DO
-    ch := p.src^[j];
+    ch := PeekChar(p.src, j);
     IF (ch = '.') OR (ch = 'e') OR (ch = 'E') THEN
       RETURN FALSE
     END;
@@ -449,7 +459,7 @@ BEGIN
   END;
 
   WHILE i < endPos DO
-    ch := p.src^[i];
+    ch := PeekChar(p.src, i);
     IF NOT IsDigit(ch) THEN RETURN FALSE END;
     result := result * 10 + VAL(LONGINT, ORD(ch) - ORD('0'));
     INC(i)
@@ -475,23 +485,23 @@ BEGIN
   neg := FALSE;
   result := 0.0;
 
-  IF (i < endPos) AND (p.src^[i] = '-') THEN
+  IF (i < endPos) AND (PeekChar(p.src, i) = '-') THEN
     neg := TRUE;
     INC(i)
   END;
 
   (* integer part *)
-  WHILE (i < endPos) AND IsDigit(p.src^[i]) DO
-    result := result * 10.0 + FLOAT(ORD(p.src^[i]) - ORD('0'));
+  WHILE (i < endPos) AND IsDigit(PeekChar(p.src, i)) DO
+    result := result * 10.0 + FLOAT(ORD(PeekChar(p.src, i)) - ORD('0'));
     INC(i)
   END;
 
   (* fractional part *)
-  IF (i < endPos) AND (p.src^[i] = '.') THEN
+  IF (i < endPos) AND (PeekChar(p.src, i) = '.') THEN
     INC(i);
     divisor := 10.0;
-    WHILE (i < endPos) AND IsDigit(p.src^[i]) DO
-      frac := FLOAT(ORD(p.src^[i]) - ORD('0'));
+    WHILE (i < endPos) AND IsDigit(PeekChar(p.src, i)) DO
+      frac := FLOAT(ORD(PeekChar(p.src, i)) - ORD('0'));
       result := result + frac / divisor;
       divisor := divisor * 10.0;
       INC(i)
@@ -499,17 +509,17 @@ BEGIN
   END;
 
   (* exponent part *)
-  IF (i < endPos) AND ((p.src^[i] = 'e') OR (p.src^[i] = 'E')) THEN
+  IF (i < endPos) AND ((PeekChar(p.src, i) = 'e') OR (PeekChar(p.src, i) = 'E')) THEN
     INC(i);
     negExp := FALSE;
-    IF (i < endPos) AND (p.src^[i] = '-') THEN
+    IF (i < endPos) AND (PeekChar(p.src, i) = '-') THEN
       negExp := TRUE; INC(i)
-    ELSIF (i < endPos) AND (p.src^[i] = '+') THEN
+    ELSIF (i < endPos) AND (PeekChar(p.src, i) = '+') THEN
       INC(i)
     END;
     exp := 0;
-    WHILE (i < endPos) AND IsDigit(p.src^[i]) DO
-      exp := exp * 10 + VAL(INTEGER, ORD(p.src^[i]) - ORD('0'));
+    WHILE (i < endPos) AND IsDigit(PeekChar(p.src, i)) DO
+      exp := exp * 10 + VAL(INTEGER, ORD(PeekChar(p.src, i)) - ORD('0'));
       INC(i)
     END;
     (* apply exponent *)

@@ -5,7 +5,7 @@
 # Operates on ADDRESS+len buffers. No heap allocation.
 manifest_version=1
 name=m2tok
-version=0.1.0
+version=0.1.1
 edition=pim4
 entry=src/Tokenizer.mod
 includes=src

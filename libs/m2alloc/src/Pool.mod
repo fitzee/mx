@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE Pool;
 
-FROM SYSTEM IMPORT ADDRESS, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, LONGCARD, TSIZE;
 FROM AllocUtil IMPORT AlignUp, PtrAdd, PtrDiff, FillBytes,
                       ReadAddr, WriteAddr;
 
@@ -8,7 +8,8 @@ FROM AllocUtil IMPORT AlignUp, PtrAdd, PtrDiff, FillBytes,
 
 PROCEDURE Init(VAR p: Pool; base: ADDRESS; size: CARDINAL;
                blockSize: CARDINAL; VAR ok: BOOLEAN);
-VAR addrSize, bs, count, i, offset: CARDINAL;
+VAR addrSize, bs, count, i: CARDINAL;
+    offset: LONGCARD;
     cur, nxt: ADDRESS;
 BEGIN
   addrSize := TSIZE(ADDRESS);
@@ -35,7 +36,7 @@ BEGIN
   i := count;
   WHILE i > 0 DO
     DEC(i);
-    offset := i * bs;
+    offset := LONGCARD(i) * LONGCARD(bs);
     cur := PtrAdd(base, offset);
     WriteAddr(cur, p.freeHead);
     p.freeHead := cur
@@ -67,7 +68,8 @@ BEGIN
 END Alloc;
 
 PROCEDURE Free(VAR p: Pool; addr: ADDRESS; VAR ok: BOOLEAN);
-VAR diff, usedSize: CARDINAL;
+VAR diff: LONGCARD;
+    usedSize: CARDINAL;
 BEGIN
   IF addr = NIL THEN
     ok := FALSE;
@@ -77,13 +79,13 @@ BEGIN
   usedSize := p.blockCount * p.blockSize;
   diff := PtrDiff(addr, p.base);
   (* Check: addr must be >= base (diff > 0 or addr = base) and < base+usedSize *)
-  IF (VAL(LONGINT, addr) < VAL(LONGINT, p.base)) OR (diff >= usedSize) THEN
+  IF (LONGCARD(addr) < LONGCARD(p.base)) OR (diff >= LONGCARD(usedSize)) THEN
     ok := FALSE;
     INC(p.invalidFree);
     RETURN
   END;
   (* Check alignment *)
-  IF (diff MOD p.blockSize) # 0 THEN
+  IF (diff MOD LONGCARD(p.blockSize)) # 0 THEN
     ok := FALSE;
     INC(p.invalidFree);
     RETURN

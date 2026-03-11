@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE WebSocket;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE, BYTE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE, BYTE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler;
 FROM Promise IMPORT Future, Promise, Value, Error, Result,
@@ -51,8 +51,7 @@ CONST
 (* ── Internal types ──────────────────────────────────────── *)
 
 TYPE
-  ByteArr = ARRAY [0..65535] OF CHAR;
-  BytePtr = POINTER TO ByteArr;
+  CharPtr = POINTER TO CHAR;
 
   WsRec = RECORD
     state       : INTEGER;
@@ -153,16 +152,16 @@ END StrEqCI;
 
 PROCEDURE OffsetPtr(base: ADDRESS; n: INTEGER): ADDRESS;
 BEGIN
-  RETURN VAL(ADDRESS, VAL(LONGINT, base) + VAL(LONGINT, n))
+  RETURN VAL(ADDRESS, LONGCARD(base) + LONGCARD(n))
 END OffsetPtr;
 
 PROCEDURE CopyBytes(src, dst: ADDRESS; len: INTEGER);
-VAR sp, dp: BytePtr; i: INTEGER;
+VAR sp, dp: CharPtr; i: INTEGER;
 BEGIN
-  sp := src;
-  dp := dst;
   FOR i := 0 TO len - 1 DO
-    dp^[i] := sp^[i]
+    sp := CharPtr(LONGCARD(src) + LONGCARD(i));
+    dp := CharPtr(LONGCARD(dst) + LONGCARD(i));
+    dp^ := sp^
   END
 END CopyBytes;
 
@@ -334,7 +333,6 @@ END FailWs;
 
 PROCEDURE EnsureMsgCap(w: WsPtr; needed: CARDINAL): BOOLEAN;
 VAR newCap: CARDINAL; newBuf, oldBuf: ADDRESS;
-    sp, dp: BytePtr; i: CARDINAL;
 BEGIN
   IF needed <= w^.msgCap THEN RETURN TRUE END;
   IF needed > MaxMsgSize THEN RETURN FALSE END;
@@ -370,7 +368,6 @@ VAR
   hdrBuf: ARRAY [0..MaxFrameHeader-1] OF CHAR;
   hdrLen: CARDINAL;
   sent, n: INTEGER;
-  sp: BytePtr;
   sendBuf: ADDRESS;
   sendLen: CARDINAL;
   mask: ARRAY [0..3] OF CHAR;
@@ -440,7 +437,6 @@ VAR
   e: Error;
   dummy: Promise.Status;
   closeCode: CARDINAL;
-  bp: BytePtr;
 BEGIN
   CASE OpcodeToInt(hdr.opcode) OF
 

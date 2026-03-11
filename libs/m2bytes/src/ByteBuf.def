@@ -22,13 +22,9 @@ TYPE
     len:  CARDINAL;
   END;
 
-  (* Internal backing array type. *)
-  BBufArr = ARRAY [0..MaxBufCap] OF CHAR;
-  BBufPtr = POINTER TO BBufArr;
-
   (* Growable byte buffer. *)
   Buf = RECORD
-    data: BBufPtr;
+    data: ADDRESS;
     len:  CARDINAL;
     cap:  CARDINAL;
   END;

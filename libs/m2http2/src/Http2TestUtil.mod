@@ -83,7 +83,7 @@ BEGIN
   raw32 := ReadU32BE(r, ok); IF NOT ok THEN RETURN END;
   hdr.streamId := raw32 MOD 2147483648;
   (* Advance the view past the header *)
-  v.base := VAL(ADDRESS, VAL(LONGINT, v.base) + VAL(LONGINT, FrameHeaderSize));
+  v.base := VAL(ADDRESS, LONGCARD(v.base) + LONGCARD(FrameHeaderSize));
   v.len := v.len - FrameHeaderSize
 END ReadFrameHeader;
 
@@ -95,7 +95,7 @@ BEGIN
   IF v.len < hdr.length THEN ok := FALSE; RETURN END;
   payload.base := v.base;
   payload.len := hdr.length;
-  v.base := VAL(ADDRESS, VAL(LONGINT, v.base) + VAL(LONGINT, hdr.length));
+  v.base := VAL(ADDRESS, LONGCARD(v.base) + LONGCARD(hdr.length));
   v.len := v.len - hdr.length
 END ReadFramePayload;
 

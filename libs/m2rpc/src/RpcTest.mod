@@ -1,9 +1,12 @@
 IMPLEMENTATION MODULE RpcTest;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
-FROM ByteBuf IMPORT Buf, BBufPtr, Init, Free, Clear, AppendByte,
+FROM ByteBuf IMPORT Buf, Init, Free, Clear, AppendByte,
                      GetByte;
+
+TYPE
+  CharPtr = POINTER TO CHAR;
 
 CONST
   TsOk        = 0;
@@ -77,7 +80,7 @@ PROCEDURE DoRead(VAR src: Buf; VAR srcPos: CARDINAL;
                  VAR got: CARDINAL): CARDINAL;
 VAR
   avail, n, i: CARDINAL;
-  dst: BBufPtr;
+  p: CharPtr;
 BEGIN
   got := 0;
   avail := src.len - srcPos;
@@ -88,10 +91,10 @@ BEGIN
   n := max;
   IF n > avail THEN n := avail END;
   IF (limit > 0) AND (n > limit) THEN n := limit END;
-  dst := buf;
   i := 0;
   WHILE i < n DO
-    dst^[i] := CHR(GetByte(src, srcPos + i));
+    p := CharPtr(LONGCARD(buf) + LONGCARD(i));
+    p^ := CHR(GetByte(src, srcPos + i));
     INC(i)
   END;
   srcPos := srcPos + n;
@@ -114,16 +117,16 @@ PROCEDURE DoWrite(VAR dst: Buf; closed: BOOLEAN;
                   VAR sent: CARDINAL): CARDINAL;
 VAR
   n, i: CARDINAL;
-  src: BBufPtr;
+  p: CharPtr;
 BEGIN
   sent := 0;
   IF closed THEN RETURN TsClosed END;
   n := len;
   IF (limit > 0) AND (n > limit) THEN n := limit END;
-  src := buf;
   i := 0;
   WHILE i < n DO
-    AppendByte(dst, ORD(src^[i]));
+    p := CharPtr(LONGCARD(buf) + LONGCARD(i));
+    AppendByte(dst, ORD(p^));
     INC(i)
   END;
   sent := n;

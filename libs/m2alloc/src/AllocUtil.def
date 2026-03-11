@@ -4,16 +4,11 @@ DEFINITION MODULE AllocUtil;
    No state, no side effects.  All procedures are pure functions or
    simple memory read/write operations.
 
-   BytePtr enables indexed byte access on arbitrary ADDRESS values.
    AddrPtr enables reading/writing ADDRESS-sized values at any location. *)
 
-FROM SYSTEM IMPORT ADDRESS;
+FROM SYSTEM IMPORT ADDRESS, LONGCARD;
 
 TYPE
-  (* Overlay for indexed byte access on any ADDRESS. *)
-  ByteArray = ARRAY [0..65535] OF CHAR;
-  BytePtr = POINTER TO ByteArray;
-
   (* Overlay for reading/writing an ADDRESS at any location. *)
   AddrPtr = POINTER TO ADDRESS;
 
@@ -29,10 +24,10 @@ PROCEDURE AlignUp(x, align: CARDINAL): CARDINAL;
 (* ── Pointer arithmetic ──────────────────────────────── *)
 
 (* Return base + offset as an ADDRESS. *)
-PROCEDURE PtrAdd(base: ADDRESS; offset: CARDINAL): ADDRESS;
+PROCEDURE PtrAdd(base: ADDRESS; offset: LONGCARD): ADDRESS;
 
-(* Return a - b as a CARDINAL.  Returns 0 if b >= a. *)
-PROCEDURE PtrDiff(a, b: ADDRESS): CARDINAL;
+(* Return a - b as a LONGCARD.  Returns 0 if b >= a. *)
+PROCEDURE PtrDiff(a, b: ADDRESS): LONGCARD;
 
 (* ── Byte access ─────────────────────────────────────── *)
 

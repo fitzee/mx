@@ -1,6 +1,9 @@
 IMPLEMENTATION MODULE AllocUtil;
 
-FROM SYSTEM IMPORT ADDRESS;
+FROM SYSTEM IMPORT ADDRESS, LONGCARD;
+
+TYPE
+  CharPtr = POINTER TO CHAR;
 
 (* ── Alignment ───────────────────────────────────────── *)
 
@@ -24,31 +27,28 @@ END AlignUp;
 
 (* ── Pointer arithmetic ──────────────────────────────── *)
 
-PROCEDURE PtrAdd(base: ADDRESS; offset: CARDINAL): ADDRESS;
+PROCEDURE PtrAdd(base: ADDRESS; offset: LONGCARD): ADDRESS;
 BEGIN
-  RETURN VAL(ADDRESS, VAL(LONGINT, base) + VAL(LONGINT, offset))
+  RETURN VAL(ADDRESS, LONGCARD(base) + offset)
 END PtrAdd;
 
-PROCEDURE PtrDiff(a, b: ADDRESS): CARDINAL;
-VAR va, vb: LONGINT;
+PROCEDURE PtrDiff(a, b: ADDRESS): LONGCARD;
 BEGIN
-  va := VAL(LONGINT, a);
-  vb := VAL(LONGINT, b);
-  IF vb >= va THEN RETURN 0 END;
-  RETURN VAL(CARDINAL, va - vb)
+  IF LONGCARD(b) >= LONGCARD(a) THEN RETURN 0 END;
+  RETURN LONGCARD(a) - LONGCARD(b)
 END PtrDiff;
 
 (* ── Byte access ─────────────────────────────────────── *)
 
 PROCEDURE FillBytes(base: ADDRESS; count: CARDINAL; val: CARDINAL);
-VAR bp: BytePtr; i: CARDINAL; ch: CHAR;
+VAR i: CARDINAL; ch: CHAR; p: CharPtr;
 BEGIN
   IF count = 0 THEN RETURN END;
-  bp := base;
   ch := CHR(val MOD 256);
   i := 0;
   WHILE i < count DO
-    bp^[i] := ch;
+    p := CharPtr(LONGCARD(base) + LONGCARD(i));
+    p^ := ch;
     INC(i)
   END
 END FillBytes;

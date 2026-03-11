@@ -32,12 +32,8 @@ TYPE
     len:   CARDINAL;   (* byte length of raw token text *)
   END;
 
-  (* Internal view of the source buffer. *)
-  SrcArray = ARRAY [0..1048575] OF CHAR;
-  SrcPtr   = POINTER TO SrcArray;
-
   Parser = RECORD
-    src:      SrcPtr;
+    src:      ADDRESS;
     srcLen:   CARDINAL;
     pos:      CARDINAL;
     err:      ARRAY [0..127] OF CHAR;

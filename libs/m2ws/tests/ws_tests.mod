@@ -19,7 +19,7 @@ MODULE WsTests;
     15. Base64 known vector
     16. WebSocket accept key computation *)
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM InOut IMPORT WriteString, WriteLn, WriteInt;
 FROM WsFrame IMPORT Opcode, FrameHeader, MaxFrameHeader,
                     DecodeHeader, EncodeHeader, ApplyMask,
@@ -33,8 +33,7 @@ VAR
   passed, failed, total: INTEGER;
 
 TYPE
-  ByteArr = ARRAY [0..1023] OF CHAR;
-  BytePtr = POINTER TO ByteArr;
+  CharPtr = POINTER TO CHAR;
 
 PROCEDURE Check(name: ARRAY OF CHAR; cond: BOOLEAN);
 BEGIN
@@ -48,17 +47,17 @@ BEGIN
 END Check;
 
 PROCEDURE GetByte(p: ADDRESS; idx: CARDINAL): CARDINAL;
-VAR bp: BytePtr;
+VAR cp: CharPtr;
 BEGIN
-  bp := p;
-  RETURN ORD(bp^[idx]) MOD 256
+  cp := CharPtr(LONGCARD(p) + LONGCARD(idx));
+  RETURN ORD(cp^) MOD 256
 END GetByte;
 
 PROCEDURE SetByte(p: ADDRESS; idx: CARDINAL; val: CARDINAL);
-VAR bp: BytePtr;
+VAR cp: CharPtr;
 BEGIN
-  bp := p;
-  bp^[idx] := CHR(val MOD 256)
+  cp := CharPtr(LONGCARD(p) + LONGCARD(idx));
+  cp^ := CHR(val MOD 256)
 END SetByte;
 
 (* ── Test 1: Small frame roundtrip ──────────────── *)

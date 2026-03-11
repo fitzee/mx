@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE Http2Hpack;
 
-FROM SYSTEM IMPORT ADDRESS;
+FROM SYSTEM IMPORT ADDRESS, LONGCARD;
 FROM Http2Types IMPORT HeaderEntry, HeaderName, HeaderValue,
                        HpackStaticTableSize, HpackMaxDynEntries,
                        HpackMaxNameLen, HpackMaxValueLen;
@@ -1087,9 +1087,8 @@ END InitHuffEnc;
 
 (* ── Public Huffman API ──────────────────────────────── *)
 
-(* Byte pointer type for ADDRESS-based buffer access *)
 TYPE
-  BytePtr = POINTER TO ARRAY [0..65535] OF CHAR;
+  CharPtr = POINTER TO CHAR;
 
 PROCEDURE HuffmanDecode(src: ADDRESS; srcLen: CARDINAL;
                         dst: ADDRESS; dstMax: CARDINAL;
@@ -1100,19 +1099,17 @@ VAR
   rem, i: CARDINAL;
   a: HuffAccelEntry;
   sym: INTEGER;
-  sp: BytePtr;
-  dp: BytePtr;
+  cp: CharPtr;
 BEGIN
   InitHuffTree;
-  sp := src;
-  dp := dst;
   dstLen := 0;
   node := 0;
   bIdx := 0;
   endIdx := srcLen;
 
   WHILE bIdx < endIdx DO
-    byt := ORD(sp^[bIdx]);
+    cp := CharPtr(LONGCARD(src) + LONGCARD(bIdx));
+    byt := ORD(cp^);
     INC(bIdx);
 
     IF node = 0 THEN
@@ -1121,7 +1118,8 @@ BEGIN
       IF a.sym >= 0 THEN
         IF CARDINAL(a.sym) = HuffEOS THEN RETURN FALSE END;
         IF dstLen >= dstMax THEN RETURN FALSE END;
-        dp^[dstLen] := CHR(CARDINAL(a.sym) MOD 256);
+        cp := CharPtr(LONGCARD(dst) + LONGCARD(dstLen));
+        cp^ := CHR(CARDINAL(a.sym) MOD 256);
         INC(dstLen);
         node := 0;
         (* Process remaining bits *)
@@ -1150,7 +1148,8 @@ BEGIN
           IF sym >= 0 THEN
             IF CARDINAL(sym) = HuffEOS THEN RETURN FALSE END;
             IF dstLen >= dstMax THEN RETURN FALSE END;
-            dp^[dstLen] := CHR(CARDINAL(sym) MOD 256);
+            cp := CharPtr(LONGCARD(dst) + LONGCARD(dstLen));
+            cp^ := CHR(CARDINAL(sym) MOD 256);
             INC(dstLen);
             node := 0
           END;
@@ -1175,7 +1174,8 @@ BEGIN
         IF sym >= 0 THEN
           IF CARDINAL(sym) = HuffEOS THEN RETURN FALSE END;
           IF dstLen >= dstMax THEN RETURN FALSE END;
-          dp^[dstLen] := CHR(CARDINAL(sym) MOD 256);
+          cp := CharPtr(LONGCARD(dst) + LONGCARD(dstLen));
+          cp^ := CHR(CARDINAL(sym) MOD 256);
           INC(dstLen);
           node := 0
         END;
@@ -1192,8 +1192,7 @@ PROCEDURE HuffmanEncode(src: ADDRESS; srcLen: CARDINAL;
                         dst: ADDRESS; dstMax: CARDINAL;
                         VAR dstLen: CARDINAL): BOOLEAN;
 VAR
-  sp: BytePtr;
-  dp: BytePtr;
+  cp: CharPtr;
   i, sym: CARDINAL;
   code: LONGCARD;
   bits, bitPos: CARDINAL;
@@ -1203,8 +1202,6 @@ VAR
   codeBit: CARDINAL;
 BEGIN
   InitHuffEnc;
-  sp := src;
-  dp := dst;
   dstLen := 0;
   curByte := 0;
   bitPos := 0;  (* bits written into curByte, 0..7 *)
@@ -1212,7 +1209,8 @@ BEGIN
 
   i := 0;
   WHILE i < srcLen DO
-    sym := ORD(sp^[i]);
+    cp := CharPtr(LONGCARD(src) + LONGCARD(i));
+    sym := ORD(cp^);
     code := huffEnc[sym].code;
     bits := huffEnc[sym].bits;
 
@@ -1225,7 +1223,8 @@ BEGIN
       INC(bitPos);
       IF bitPos = 8 THEN
         IF outIdx >= dstMax THEN RETURN FALSE END;
-        dp^[outIdx] := CHR(curByte);
+        cp := CharPtr(LONGCARD(dst) + LONGCARD(outIdx));
+        cp^ := CHR(curByte);
         INC(outIdx);
         curByte := 0;
         bitPos := 0
@@ -1242,7 +1241,8 @@ BEGIN
       INC(bitPos)
     END;
     IF outIdx >= dstMax THEN RETURN FALSE END;
-    dp^[outIdx] := CHR(curByte);
+    cp := CharPtr(LONGCARD(dst) + LONGCARD(outIdx));
+    cp^ := CHR(curByte);
     INC(outIdx)
   END;
 
@@ -1269,18 +1269,18 @@ VAR
   rem, i: CARDINAL;
   a: HuffAccelEntry;
   sym: INTEGER;
-  sp: BytePtr;
+  cp: CharPtr;
   count: CARDINAL;
 BEGIN
   InitHuffTree;
-  sp := src;
   count := 0;
   node := 0;
   bIdx := 0;
   endIdx := srcLen;
 
   WHILE bIdx < endIdx DO
-    byt := ORD(sp^[bIdx]);
+    cp := CharPtr(LONGCARD(src) + LONGCARD(bIdx));
+    byt := ORD(cp^);
     INC(bIdx);
 
     IF node = 0 THEN

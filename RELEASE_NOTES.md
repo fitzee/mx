@@ -1,5 +1,14 @@
 # Release Notes
 
+## Library releases (2026-03-11)
+
+### Libraries
+
+- **PIM4 pointer arithmetic conformance** — Eliminated hardcoded array overlay types (`POINTER TO ARRAY [0..N] OF CHAR`) and standardized all pointer arithmetic on `LONGCARD` across 9 libraries. Overlay patterns replaced with `CharPtr = POINTER TO CHAR` plus `LONGCARD`-based address computation. Affected libraries: m2alloc, m2bytes, m2http, m2http2, m2json, m2oidc, m2rpc, m2tok, m2ws.
+- **m2alloc 1.1.0** — Removed `ByteArray`/`BytePtr` exports from `AllocUtil.def`. `PtrAdd` offset parameter and `PtrDiff` return type changed from `CARDINAL` to `LONGCARD`. `FillBytes` rewritten with `CharPtr` arithmetic.
+- **m2bytes 1.1.0** — Removed `BBufPtr` overlay from `ByteBuf.def`. Internal byte access uses `CharPtr` + `LONGCARD` arithmetic.
+- **m2json 0.2.0** — Removed `SrcArray`/`SrcPtr` exports from `Json.def`. `Parser.src` field changed from `SrcPtr` to `ADDRESS`. All direct array indexing replaced with `PeekChar` helper.
+
 ## 1.0.2 (2026-03-10)
 
 ### Bug fixes

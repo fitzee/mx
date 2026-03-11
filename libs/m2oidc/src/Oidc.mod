@@ -6,7 +6,7 @@ IMPLEMENTATION MODULE Oidc;
    base64url decoding and Unix time, Jwks for key management and
    RS256 verification. *)
 
-FROM SYSTEM IMPORT ADR, ADDRESS, TSIZE;
+FROM SYSTEM IMPORT ADR, ADDRESS, LONGCARD, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Strings IMPORT Assign;
 IMPORT Json;
@@ -51,16 +51,17 @@ END StrLen;
 
 PROCEDURE CopyN(src: ADDRESS; srcLen: CARDINAL;
                  VAR dst: ARRAY OF CHAR);
+TYPE CharPtr = POINTER TO CHAR;
 VAR
   i, max: CARDINAL;
-  sp: POINTER TO ARRAY [0..65535] OF CHAR;
+  p: CharPtr;
 BEGIN
-  sp := src;
   max := HIGH(dst);
   IF srcLen < max THEN max := srcLen END;
   i := 0;
   WHILE i < max DO
-    dst[i] := sp^[i];
+    p := CharPtr(LONGCARD(src) + LONGCARD(i));
+    dst[i] := p^;
     INC(i)
   END;
   IF i <= HIGH(dst) THEN dst[i] := 0C END

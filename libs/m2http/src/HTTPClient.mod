@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE HTTPClient;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE, LONGINT;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler;
 FROM Promise IMPORT Future, Promise, Value, Error,
@@ -708,7 +708,7 @@ BEGIN
         IF (c^.reqSent >= c^.reqLen) AND
            (c^.reqBodyLen > 0) AND (c^.reqBodySent < c^.reqBodyLen) THEN
           n := DoSend(c,
-                 VAL(ADDRESS, VAL(LONGINT, c^.reqBody) + VAL(LONGINT, c^.reqBodySent)),
+                 VAL(ADDRESS, LONGCARD(c^.reqBody) + LONGCARD(c^.reqBodySent)),
                  c^.reqBodyLen - c^.reqBodySent);
           IF n > 0 THEN
             c^.reqBodySent := c^.reqBodySent + n
@@ -747,7 +747,7 @@ BEGIN
          (c^.reqBodyLen > 0) AND (c^.reqBodySent < c^.reqBodyLen) THEN
         (* Send body bytes *)
         n := DoSend(c,
-               VAL(ADDRESS, VAL(LONGINT, c^.reqBody) + VAL(LONGINT, c^.reqBodySent)),
+               VAL(ADDRESS, LONGCARD(c^.reqBody) + LONGCARD(c^.reqBodySent)),
                c^.reqBodyLen - c^.reqBodySent);
         IF n > 0 THEN
           c^.reqBodySent := c^.reqBodySent + n

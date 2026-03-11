@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE H2Client;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE, LONGINT;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler;
 FROM Promise IMPORT Future, Promise, Value, Error,
@@ -437,7 +437,7 @@ BEGIN
         WriteFrameHeader(c^.outBuf, chunk, FrameData,
                          flags, c^.streamId);
         bodyView.base := VAL(ADDRESS,
-          VAL(LONGINT, c^.reqBody) + VAL(LONGINT, offset));
+          LONGCARD(c^.reqBody) + LONGCARD(offset));
         bodyView.len := chunk;
         ByteBuf.AppendView(c^.outBuf, bodyView);
         offset := offset + VAL(INTEGER, chunk);
@@ -657,7 +657,7 @@ BEGIN
   remaining := c^.sendTotal - c^.sendPos;
   IF remaining <= 0 THEN RETURN TRUE END;
   n := DoSend(c,
-    VAL(ADDRESS, VAL(LONGINT, c^.sendPtr) + VAL(LONGINT, c^.sendPos)),
+    VAL(ADDRESS, LONGCARD(c^.sendPtr) + LONGCARD(c^.sendPos)),
     remaining);
   IF n > 0 THEN
     c^.sendPos := c^.sendPos + n;

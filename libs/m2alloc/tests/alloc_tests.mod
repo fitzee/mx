@@ -24,16 +24,26 @@ MODULE AllocTests;
     20.  pool.poison        Poison alloc/free patterns
     21.  pool.stress        Deterministic alloc/free mix *)
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM InOut IMPORT WriteString, WriteLn, WriteInt, WriteCard;
-FROM AllocUtil IMPORT ByteArray, BytePtr, IsPowerOfTwo, AlignUp,
+FROM AllocUtil IMPORT IsPowerOfTwo, AlignUp,
                       PtrAdd, PtrDiff, FillBytes,
                       ReadAddr, WriteAddr;
 IMPORT Arena;
 IMPORT Pool;
 
+TYPE
+  CharPtr = POINTER TO CHAR;
+
 VAR
   passed, failed, total: INTEGER;
+
+PROCEDURE PeekByte(base: ADDRESS; idx: CARDINAL): CHAR;
+VAR p: CharPtr;
+BEGIN
+  p := CharPtr(LONGCARD(base) + LONGCARD(idx));
+  RETURN p^
+END PeekByte;
 
 PROCEDURE Byte(ch: CHAR): CARDINAL;
 (* Read a byte as 0..255, masking sign extension. *)
@@ -98,37 +108,35 @@ VAR buf: ARRAY [0..255] OF CHAR;
     base, p: ADDRESS;
 BEGIN
   base := ADR(buf);
-  p := PtrAdd(base, 10);
-  Check("ptradd: diff=10", PtrDiff(p, base) = 10);
-  p := PtrAdd(base, 0);
-  Check("ptradd: diff=0", PtrDiff(p, base) = 0);
-  p := PtrAdd(base, 100);
-  Check("ptradd: diff=100", PtrDiff(p, base) = 100);
+  p := PtrAdd(base, LONGCARD(10));
+  Check("ptradd: diff=10", PtrDiff(p, base) = LONGCARD(10));
+  p := PtrAdd(base, LONGCARD(0));
+  Check("ptradd: diff=0", PtrDiff(p, base) = LONGCARD(0));
+  p := PtrAdd(base, LONGCARD(100));
+  Check("ptradd: diff=100", PtrDiff(p, base) = LONGCARD(100));
   (* PtrDiff returns 0 when b >= a *)
-  Check("ptrdiff: b>=a -> 0", PtrDiff(base, p) = 0)
+  Check("ptrdiff: b>=a -> 0", PtrDiff(base, p) = LONGCARD(0))
 END TestPtrAddDiff;
 
 (* ── Test 4: FillBytes ───────────────────────────── *)
 
 PROCEDURE TestFillBytes;
 VAR buf: ARRAY [0..15] OF CHAR;
-    bp: BytePtr;
 BEGIN
   (* Clear buffer *)
   FillBytes(ADR(buf), 16, 0);
-  bp := ADR(buf);
-  Check("fill: initial 0", Byte(bp^[0]) = 0);
-  Check("fill: initial 15", Byte(bp^[15]) = 0);
+  Check("fill: initial 0", Byte(PeekByte(ADR(buf), 0)) = 0);
+  Check("fill: initial 15", Byte(PeekByte(ADR(buf), 15)) = 0);
   (* Fill with 0xAB *)
   FillBytes(ADR(buf), 16, 0ABH);
-  Check("fill: 0xAB at 0", Byte(bp^[0]) = 0ABH);
-  Check("fill: 0xAB at 7", Byte(bp^[7]) = 0ABH);
-  Check("fill: 0xAB at 15", Byte(bp^[15]) = 0ABH);
+  Check("fill: 0xAB at 0", Byte(PeekByte(ADR(buf), 0)) = 0ABH);
+  Check("fill: 0xAB at 7", Byte(PeekByte(ADR(buf), 7)) = 0ABH);
+  Check("fill: 0xAB at 15", Byte(PeekByte(ADR(buf), 15)) = 0ABH);
   (* Partial fill *)
   FillBytes(ADR(buf), 4, 0FFH);
-  Check("fill: partial 0xFF at 0", Byte(bp^[0]) = 0FFH);
-  Check("fill: partial 0xFF at 3", Byte(bp^[3]) = 0FFH);
-  Check("fill: untouched at 4", Byte(bp^[4]) = 0ABH)
+  Check("fill: partial 0xFF at 0", Byte(PeekByte(ADR(buf), 0)) = 0FFH);
+  Check("fill: partial 0xFF at 3", Byte(PeekByte(ADR(buf), 3)) = 0FFH);
+  Check("fill: untouched at 4", Byte(PeekByte(ADR(buf), 4)) = 0ABH)
 END TestFillBytes;
 
 (* ── Test 5: ReadAddr / WriteAddr ────────────────── *)
@@ -245,7 +253,7 @@ BEGIN
 
   (* Alloc again should reuse same address *)
   Arena.Alloc(a, 64, 1, p2, ok);
-  Check("arena.mr: reuses addr", p2 = PtrAdd(ADR(buf), 32))
+  Check("arena.mr: reuses addr", p2 = PtrAdd(ADR(buf), LONGCARD(32)))
 END TestArenaMarkReset;
 
 (* ── Test 10: Arena reset invalid ────────────────── *)
@@ -293,7 +301,7 @@ BEGIN
   (* Alloc with align=4 *)
   Arena.Alloc(a, 8, 4, p, ok);
   Check("arena.av: align4 ok", ok);
-  Check("arena.av: align4 mod", (PtrDiff(p, ADR(buf)) MOD 4) = 0);
+  Check("arena.av: align4 mod", (PtrDiff(p, ADR(buf)) MOD LONGCARD(4)) = LONGCARD(0));
 
   (* Alloc 1 byte to push off again *)
   Arena.Alloc(a, 1, 1, p, ok);
@@ -301,12 +309,12 @@ BEGIN
   (* Alloc with align=8 *)
   Arena.Alloc(a, 16, 8, p, ok);
   Check("arena.av: align8 ok", ok);
-  Check("arena.av: align8 mod", (PtrDiff(p, ADR(buf)) MOD 8) = 0);
+  Check("arena.av: align8 mod", (PtrDiff(p, ADR(buf)) MOD LONGCARD(8)) = LONGCARD(0));
 
   (* Alloc with align=16 *)
   Arena.Alloc(a, 32, 16, p, ok);
   Check("arena.av: align16 ok", ok);
-  Check("arena.av: align16 mod", (PtrDiff(p, ADR(buf)) MOD 16) = 0)
+  Check("arena.av: align16 mod", (PtrDiff(p, ADR(buf)) MOD LONGCARD(16)) = LONGCARD(0))
 END TestArenaAlignVaried;
 
 (* ── Test 13: Arena poison ───────────────────────── *)
@@ -314,9 +322,8 @@ END TestArenaAlignVaried;
 PROCEDURE TestArenaPoison;
 VAR buf: ARRAY [0..255] OF CHAR;
     a: Arena.Arena;
-    p: ADDRESS;
+    p, base: ADDRESS;
     ok: BOOLEAN;
-    bp: BytePtr;
     m: CARDINAL;
 BEGIN
   Arena.Init(a, ADR(buf), 256);
@@ -324,16 +331,15 @@ BEGIN
 
   Arena.Alloc(a, 8, 1, p, ok);
   Check("arena.poison: alloc ok", ok);
-  bp := p;
-  Check("arena.poison: 0xCD at 0", Byte(bp^[0]) = 0CDH);
-  Check("arena.poison: 0xCD at 7", Byte(bp^[7]) = 0CDH);
+  Check("arena.poison: 0xCD at 0", Byte(PeekByte(p, 0)) = 0CDH);
+  Check("arena.poison: 0xCD at 7", Byte(PeekByte(p, 7)) = 0CDH);
 
   m := Arena.Mark(a);
   Arena.Alloc(a, 4, 1, p, ok);
   Arena.ResetTo(a, m);
-  bp := PtrAdd(ADR(buf), m);
-  Check("arena.poison: reset 0 at 0", Byte(bp^[0]) = 0);
-  Check("arena.poison: reset 0 at 3", Byte(bp^[3]) = 0)
+  base := PtrAdd(ADR(buf), LONGCARD(m));
+  Check("arena.poison: reset 0 at 0", Byte(PeekByte(base, 0)) = 0);
+  Check("arena.poison: reset 0 at 3", Byte(PeekByte(base, 3)) = 0)
 END TestArenaPoison;
 
 (* ── Test 14: Pool basic ─────────────────────────── *)
@@ -449,7 +455,7 @@ VAR buf: ARRAY [0..127] OF CHAR;
 BEGIN
   Pool.Init(pl, ADR(buf), 128, 16, ok);
   (* Create an unaligned address within the pool *)
-  unaligned := PtrAdd(ADR(buf), 3);
+  unaligned := PtrAdd(ADR(buf), LONGCARD(3));
   Pool.Free(pl, unaligned, ok);
   Check("pool.align: ok=FALSE", NOT ok);
   Check("pool.align: invalidFree=1", Pool.InvalidFrees(pl) = 1)
@@ -462,23 +468,20 @@ VAR buf: ARRAY [0..255] OF CHAR;
     pl: Pool.Pool;
     ok: BOOLEAN;
     blk: ADDRESS;
-    bp: BytePtr;
 BEGIN
   Pool.Init(pl, ADR(buf), 256, 32, ok);
   Pool.PoisonOn(pl);
 
   Pool.Alloc(pl, blk, ok);
   Check("pool.poison: alloc ok", ok);
-  bp := blk;
-  Check("pool.poison: 0xCD at 0", Byte(bp^[0]) = 0CDH);
-  Check("pool.poison: 0xCD at 31", Byte(bp^[31]) = 0CDH);
+  Check("pool.poison: 0xCD at 0", Byte(PeekByte(blk, 0)) = 0CDH);
+  Check("pool.poison: 0xCD at 31", Byte(PeekByte(blk, 31)) = 0CDH);
 
   Pool.Free(pl, blk, ok);
   Check("pool.poison: free ok", ok);
-  bp := blk;
   (* First 8 bytes hold next pointer on 64-bit, check beyond that *)
-  Check("pool.poison: 0xDD at 8", Byte(bp^[8]) = 0DDH);
-  Check("pool.poison: 0xDD at 31", Byte(bp^[31]) = 0DDH)
+  Check("pool.poison: 0xDD at 8", Byte(PeekByte(blk, 8)) = 0DDH);
+  Check("pool.poison: 0xDD at 31", Byte(PeekByte(blk, 31)) = 0DDH)
 END TestPoolPoison;
 
 (* ── Test 21: Pool stress ────────────────────────── *)

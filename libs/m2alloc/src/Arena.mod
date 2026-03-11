@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE Arena;
 
-FROM SYSTEM IMPORT ADDRESS;
+FROM SYSTEM IMPORT ADDRESS, LONGCARD;
 FROM AllocUtil IMPORT AlignUp, IsPowerOfTwo, PtrAdd, FillBytes;
 
 (* ── Lifecycle ───────────────────────────────────────── *)
@@ -47,7 +47,7 @@ BEGIN
       RETURN
     END
   END;
-  p := PtrAdd(a.base, aligned);
+  p := PtrAdd(a.base, LONGCARD(aligned));
   IF a.poison THEN
     FillBytes(p, n, 0CDH)
   END;
@@ -69,7 +69,7 @@ PROCEDURE ResetTo(VAR a: Arena; mark: CARDINAL);
 BEGIN
   IF mark > a.pos THEN RETURN END;
   IF a.poison AND (mark < a.pos) THEN
-    FillBytes(PtrAdd(a.base, mark), a.pos - mark, 0)
+    FillBytes(PtrAdd(a.base, LONGCARD(mark)), a.pos - mark, 0)
   END;
   a.pos := mark
 END ResetTo;
