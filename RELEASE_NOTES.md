@@ -8,6 +8,9 @@
 - **m2alloc 1.1.0** — Removed `ByteArray`/`BytePtr` exports from `AllocUtil.def`. `PtrAdd` offset parameter and `PtrDiff` return type changed from `CARDINAL` to `LONGCARD`. `FillBytes` rewritten with `CharPtr` arithmetic.
 - **m2bytes 1.1.0** — Removed `BBufPtr` overlay from `ByteBuf.def`. Internal byte access uses `CharPtr` + `LONGCARD` arithmetic.
 - **m2json 0.2.0** — Removed `SrcArray`/`SrcPtr` exports from `Json.def`. `Parser.src` field changed from `SrcPtr` to `ADDRESS`. All direct array indexing replaced with `PeekChar` helper.
+- **m2http2server 0.2.0** — Increased `MaxReqValueLen` from 1023 to 8191 (8 KB) in `Http2ServerTypes.def` to accommodate full-size OIDC JWTs in HTTP/2 request headers.
+- **m2oidc 0.1.2** — Restored PIM4-conformant `CopyN` using `CharPtr` + `LONGCARD` arithmetic. Fixed `ParseDiscovery` to drain nested JSON objects/arrays inline instead of calling `Json.Skip`, which could lose tokens.
+- **m2pthreads 0.1.1** — Set explicit 2 MB stack size for spawned threads in `threads_shim.c` to avoid platform-dependent defaults.
 
 ## 1.0.2 (2026-03-10)
 
@@ -28,7 +31,7 @@
 - 150 cargo unit tests
 - 883 adversarial tests across 8 compiler configurations (up from 558), including 40 new tests migrated from standalone examples covering: CASE range labels, DIV/MOD floor semantics, FOR..BY variants, subrange types, variant records, procedure types, open arrays, opaque types, import aliases, FFI bindings, closures, exceptions, and multi-dimensional arrays.
 
-## 1.0.1
+## 1.0.1 (2026-03-09)
 
 ### Bug fixes
 

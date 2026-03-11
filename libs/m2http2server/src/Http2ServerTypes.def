@@ -19,7 +19,8 @@ DEFINITION MODULE Http2ServerTypes;
     MaxAuthorityLen = 127;
     MaxRemoteLen    = 63;
     MaxReqNameLen   = 63;     (* header name max *)
-    MaxReqValueLen  = 1023;   (* header value max — must fit RS256 JWTs *)
+    MaxReqValueLen  = 2047;   (* header value max — 2 KB, fits OIDC JWTs *)
+    MaxRespValueLen = 255;    (* response header value max — 256 bytes *)
     ConnBufSize     = 16384;  (* 16 KB read/write buffers *)
     MaxBodyLen      = 524288;  (* 512 KB max request body *)
 
@@ -43,6 +44,14 @@ DEFINITION MODULE Http2ServerTypes;
       name:    ARRAY [0..MaxReqNameLen] OF CHAR;
       nameLen: CARDINAL;
       value:   ARRAY [0..MaxReqValueLen] OF CHAR;
+      valLen:  CARDINAL;
+    END;
+
+    (* Response header — compact 328-byte version for outgoing responses *)
+    RespHeader = RECORD
+      name:    ARRAY [0..MaxReqNameLen] OF CHAR;
+      nameLen: CARDINAL;
+      value:   ARRAY [0..MaxRespValueLen] OF CHAR;
       valLen:  CARDINAL;
     END;
 
@@ -78,7 +87,7 @@ DEFINITION MODULE Http2ServerTypes;
     (* Outgoing response *)
     Response = RECORD
       status:     CARDINAL;
-      headers:    ARRAY [0..MaxRespHeaders-1] OF ReqHeader;
+      headers:    ARRAY [0..MaxRespHeaders-1] OF RespHeader;
       numHeaders: CARDINAL;
       body:       Buf;
       bodyLen:    CARDINAL;

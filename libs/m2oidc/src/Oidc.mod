@@ -144,6 +144,7 @@ VAR
   tok: Json.Token;
   key: ARRAY [0..63] OF CHAR;
   hasIssuer, hasJwksUri: BOOLEAN;
+  depth: INTEGER;
   dummy: BOOLEAN;
 BEGIN
   issuerOut[0] := 0C;
@@ -178,8 +179,23 @@ BEGIN
           hasJwksUri := TRUE
         END
       ELSE
-        IF (tok.kind = Json.JObjectStart) OR (tok.kind = Json.JArrayStart) THEN
-          Json.Skip(p)
+        (* Value already consumed by Next above.  For nested
+           objects/arrays we must drain them inline because
+           Json.Skip would call Next again, losing a token. *)
+        IF tok.kind = Json.JObjectStart THEN
+          depth := 1;
+          WHILE (depth > 0) AND Json.Next(p, tok) DO
+            IF tok.kind = Json.JObjectStart THEN INC(depth)
+            ELSIF tok.kind = Json.JObjectEnd THEN DEC(depth)
+            END
+          END
+        ELSIF tok.kind = Json.JArrayStart THEN
+          depth := 1;
+          WHILE (depth > 0) AND Json.Next(p, tok) DO
+            IF tok.kind = Json.JArrayStart THEN INC(depth)
+            ELSIF tok.kind = Json.JArrayEnd THEN DEC(depth)
+            END
+          END
         END
       END
     END

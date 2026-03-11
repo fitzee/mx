@@ -1,6 +1,6 @@
 manifest_version=1
 name=m2pthreads
-version=0.1.0
+version=0.1.1
 edition=m2plus
 entry=src/Threads.mod
 includes=src
