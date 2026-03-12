@@ -1,94 +1,96 @@
 DEFINITION MODULE Promise;
-(* Composable Futures/Promises for single-threaded Modula-2+.
+(* Composable Futures/Promises for single-threaded Modula-2.
    Promise is the write handle (resolve/reject).
    Future is the read handle (inspect/chain/combine).
    Both share internal state; created together via PromiseCreate.
-   All continuations dispatch through a Scheduler -- never inline. *)
+   All continuations dispatch through a Scheduler -- never inline.
+
+   Ownership:
+   PromiseCreate returns a handle pair sharing one reference.
+   Promise and Future are aliases — both point to the same
+   internal state. They are NOT independent handles. The caller
+   must call exactly one of PromiseRelease or FutureRelease to
+   drop the creation reference. Calling both is a double-release
+   bug; calling neither is a leak.
+
+   Continuations attached via Map/OnReject/OnSettle/All/Race
+   hold their own internal references and release them when
+   they execute. The output future returned by each chaining
+   operation carries its own independent reference that the
+   caller must release via FutureRelease.
+
+   Cancel tokens must be destroyed via CancelTokenDestroy.
+   MapCancellable retains the token internally and releases it
+   when the continuation executes; the caller's external ref
+   is independent. *)
 
 FROM SYSTEM IMPORT ADDRESS;
 FROM Scheduler IMPORT Scheduler, Status;
 
 TYPE
-  (* Settlement state of a shared promise/future. *)
   Fate = (Pending, Fulfilled, Rejected);
 
-  (* Success payload: user-defined tag + pointer. *)
   Value = RECORD
     tag: INTEGER;
     ptr: ADDRESS;
   END;
 
-  (* Failure payload: user-defined error code + optional pointer. *)
   Error = RECORD
     code: INTEGER;
     ptr:  ADDRESS;
   END;
 
-  (* Discriminated result: success or failure. *)
   Result = RECORD
     isOk: BOOLEAN;
     v:    Value;
     e:    Error;
   END;
 
-  (* Callback: transform a result into a new result.
-     First Result is the input (by value).
-     Second VAR Result is the output to fill. *)
   ThenFn  = PROCEDURE(Result, ADDRESS, VAR Result);
-
-  (* Callback: handle an error, producing a recovery result.
-     Error is the input error (by value).
-     VAR Result is the output to fill. *)
   CatchFn = PROCEDURE(Error, ADDRESS, VAR Result);
-
-  (* Callback: observe a result without affecting the chain.
-     Result is the input (by value). *)
   VoidFn  = PROCEDURE(Result, ADDRESS);
 
-  (* Opaque handles. *)
   Promise = ADDRESS;
   Future  = ADDRESS;
 
 CONST
-  (* Maximum number of futures in an All() group. *)
   MAX_ALL_SIZE = 32;
 
 TYPE
-  (* Array of Results returned by a successful All().
-     Value.ptr from All's output can be cast to AllResultPtr.
-     Value.tag holds the element count. *)
   AllResultArray = ARRAY [0..MAX_ALL_SIZE-1] OF Result;
   AllResultPtr   = POINTER TO AllResultArray;
 
 (* ---- Creation ---- *)
 
 (* Create a linked promise/future pair on scheduler s.
-   Pre:  s is a valid Scheduler
-   Post: p is the write handle, f is the read handle, both Pending *)
+   Post: p and f alias the same state; refCount = 1.
+   Caller must call exactly one of PromiseRelease or
+   FutureRelease — not both (they share one reference). *)
 PROCEDURE PromiseCreate(s: Scheduler;
                         VAR p: Promise;
                         VAR f: Future): Status;
 
+(* ---- Lifetime ---- *)
+
+(* Release the promise handle. Sets p to NIL.
+   The underlying state is freed when all references
+   (external handles + continuations) are released. *)
+PROCEDURE PromiseRelease(VAR p: Promise);
+
+(* Release the future handle. Sets f to NIL.
+   Same operation as PromiseRelease; both names exist
+   for API clarity since Promise and Future share state. *)
+PROCEDURE FutureRelease(VAR f: Future);
+
 (* ---- Settlement ---- *)
 
-(* Fulfill the promise with value v.
-   Pre:  p is Pending
-   Post: fate = Fulfilled; all attached continuations enqueued
-   Returns AlreadySettled if already resolved or rejected. *)
 PROCEDURE Resolve(p: Promise; v: Value): Status;
-
-(* Reject the promise with error e.
-   Pre:  p is Pending
-   Post: fate = Rejected; all attached continuations enqueued
-   Returns AlreadySettled if already resolved or rejected. *)
 PROCEDURE Reject(p: Promise; e: Error): Status;
 
 (* ---- Inspection ---- *)
 
-(* Query the current fate of a future. *)
 PROCEDURE GetFate(f: Future; VAR fate: Fate): Status;
 
-(* Query the result if settled. settled=FALSE if still Pending. *)
 PROCEDURE GetResultIfSettled(f: Future;
                              VAR settled: BOOLEAN;
                              VAR res: Result): Status;
@@ -97,7 +99,9 @@ PROCEDURE GetResultIfSettled(f: Future;
 
 (* Attach a transformation. fn receives the result when f settles;
    fn's output becomes the settlement of the returned future.
-   If f is already settled the continuation is enqueued immediately. *)
+   If f is already settled the continuation is enqueued immediately.
+   The returned out future has its own reference; caller must
+   release it via FutureRelease when done. *)
 PROCEDURE Map(s: Scheduler; f: Future;
               fn: ThenFn; user: ADDRESS;
               VAR out: Future): Status;
@@ -118,37 +122,68 @@ PROCEDURE OnSettle(s: Scheduler; f: Future;
 
 (* Join: fulfills when every future in fs fulfills.
    Rejects immediately on the first rejection.
-   On success Value.tag = element count, Value.ptr = AllResultPtr
-   pointing to a heap array of Results (caller should eventually
-   DEALLOCATE the AllResultPtr). *)
+   On success Value.tag = element count, Value.ptr = AllResultPtr.
+
+   Result pointer lifetime: the AllResultPtr in Value.ptr points
+   to an array owned by the output future's internal state. It
+   remains valid as long as the output future has not been released
+   via FutureRelease. Copy any results you need before releasing.
+
+   Best-effort construction: continuations are pre-allocated up
+   front. If pre-allocation fails, full cleanup occurs and the
+   caller receives OutOfMemory with out = NIL. If scheduler
+   enqueue fails partway through attachment, already-attached
+   continuations remain live (they hold refs and will execute
+   normally when their input settles). Remaining unattached
+   continuations are freed, and the caller receives OutOfMemory
+   with out = NIL. The output state is reclaimed automatically
+   once all live continuations have executed and released. *)
 PROCEDURE All(s: Scheduler; fs: ARRAY OF Future;
               VAR out: Future): Status;
 
 (* Race: settles as soon as the first future in fs settles.
-   The winning result (fulfill or reject) becomes the output. *)
+   The winning result (fulfill or reject) becomes the output.
+   Same best-effort construction and failure semantics as All. *)
 PROCEDURE Race(s: Scheduler; fs: ARRAY OF Future;
                VAR out: Future): Status;
 
 (* ---- Cancellation ---- *)
 
 TYPE
-  CancelToken = ADDRESS;  (* opaque *)
+  CancelToken = ADDRESS;
 
-(* Create a new cancellation token on scheduler s. *)
 PROCEDURE CancelTokenCreate(s: Scheduler; VAR ct: CancelToken): Status;
 
-(* Signal cancellation on the token. *)
+(* Release the external reference to a cancel token.
+   Safe to call immediately after Cancel — dispatched callbacks
+   hold their own internal reference and will not outlive the
+   token. The pool slot is freed when all references (external +
+   internal from MapCancellable + dispatch) are released.
+   Sets ct to NIL. *)
+PROCEDURE CancelTokenDestroy(VAR ct: CancelToken);
+
+(* Signal cancellation on the token. Callbacks are dispatched
+   through the scheduler, not inline. The dispatch holds its
+   own reference to the token, so CancelTokenDestroy is safe
+   immediately after Cancel. If the scheduler queue is full,
+   the token is marked cancelled but pending callbacks may
+   not fire. *)
 PROCEDURE Cancel(ct: CancelToken);
 
-(* Check if a token has been cancelled. *)
 PROCEDURE IsCancelled(ct: CancelToken): BOOLEAN;
 
 (* Register a callback to be called when the token is cancelled.
-   If already cancelled, fn is enqueued immediately. *)
+   If already cancelled, fn is enqueued via the scheduler.
+   At most 8 callbacks may be registered per token. Calls beyond
+   that limit are silently dropped. If the scheduler queue is full
+   when dispatch is attempted, the token remains marked cancelled
+   but the affected callback will not fire. *)
 PROCEDURE OnCancel(ct: CancelToken; fn: VoidFn; ctx: ADDRESS);
 
 (* Like Map, but checks the cancel token before invoking fn.
-   If cancelled, rejects with error code -1 ("cancelled"). *)
+   If cancelled, rejects with error code -1.
+   Internally retains the cancel token; released when the
+   continuation executes or construction fails. *)
 PROCEDURE MapCancellable(s: Scheduler; f: Future;
                          fn: ThenFn; user: ADDRESS;
                          ct: CancelToken;

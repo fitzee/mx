@@ -1,7 +1,31 @@
 IMPLEMENTATION MODULE Promise;
+(* Single-threaded scheduler confinement assumed throughout.
+   All pools, globals, and state are unsynchronized.
+
+   Ownership model:
+   - SharedRec.refCount counts ALL references: the external handle
+     (from PromiseCreate) and continuation references (from
+     Map/OnReject/OnSettle/All/Race).
+   - PromiseCreate sets refCount := 1. Promise and Future alias the
+     same SharedRec; they share one reference. The caller must call
+     exactly one of PromiseRelease or FutureRelease — not both.
+   - Each continuation Retains outSh when attached. ExecuteCont
+     Releases outSh when the continuation runs.
+   - PromiseRelease / FutureRelease Release the external handle ref.
+   - TryReclaim frees the pool slot when refCount = 0 AND no
+     queued continuations remain.
+   - Combiner state (AllStateRec/RaceStateRec) is heap-allocated,
+     owned by the output SharedRec via combSt/combKind, freed
+     when the output SharedRec is reclaimed.
+   - CancMapRec is heap-allocated per MapCancellable call,
+     freed inside CancellableThen.
+   - CancelRec.refCount counts external handle + internal refs
+     from MapCancellable + dispatch ref from Cancel/OnCancel.
+     Freed when refCount reaches 0. The dispatching flag prevents
+     duplicate scheduling; the dispatch ref keeps the token alive
+     until all enqueued ExecCancelCB steps complete. *)
 
 FROM SYSTEM IMPORT ADDRESS, ADR;
-FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler, Status, TaskProc,
                       SchedulerEnqueue;
 
@@ -10,11 +34,12 @@ FROM Scheduler IMPORT Scheduler, Status, TaskProc,
    ================================================================ *)
 
 CONST
-  POOL_SH = 256;   (* shared-state pool capacity *)
-  POOL_CN = 512;   (* continuation-node pool capacity *)
+  POOL_SH = 256;
+  POOL_CN = 512;
 
 TYPE
   ContKind = (CKThen, CKCatch, CKFinally, CKAll, CKRace);
+  CombKind = (CombNone, CombAll, CombRace);
 
   SharedPtr = POINTER TO SharedRec;
   ContPtr   = POINTER TO ContRec;
@@ -25,6 +50,9 @@ TYPE
     res:      Result;
     contHead: ContPtr;
     contTail: ContPtr;
+    refCount: CARDINAL;   (* external handles + continuation refs *)
+    combSt:   ADDRESS;    (* owned AllStatePtr or RaceStatePtr *)
+    combKind: CombKind;
     poolIdx:  CARDINAL;
   END;
 
@@ -36,8 +64,8 @@ TYPE
     user:    ADDRESS;
     inSh:    SharedPtr;
     outSh:   SharedPtr;
-    combSt:  ADDRESS;    (* AllStatePtr or RaceStatePtr *)
-    idx:     CARDINAL;   (* element index for All *)
+    combSt:  ADDRESS;     (* borrowed from outSh *)
+    idx:     CARDINAL;
     next:    ContPtr;
     poolIdx: CARDINAL;
   END;
@@ -81,6 +109,9 @@ BEGIN
     shPool[i].fate     := Pending;
     shPool[i].contHead := NIL;
     shPool[i].contTail := NIL;
+    shPool[i].refCount := 0;
+    shPool[i].combSt   := NIL;
+    shPool[i].combKind := CombNone;
     shFree[i] := i;
   END;
   shTop := POOL_SH - 1;
@@ -105,8 +136,17 @@ BEGIN
   RETURN TRUE
 END AllocShared;
 
+(* Return a shared-state slot to the pool. Only called from
+   TryReclaim after all refs are gone. Never call directly
+   from API code. *)
 PROCEDURE FreeShared(p: SharedPtr);
 BEGIN
+  p^.fate     := Pending;
+  p^.contHead := NIL;
+  p^.contTail := NIL;
+  p^.refCount := 0;
+  p^.combSt   := NIL;
+  p^.combKind := CombNone;
   shTop := shTop + 1;
   shFree[shTop] := p^.poolIdx
 END FreeShared;
@@ -123,13 +163,67 @@ END AllocCont;
 
 PROCEDURE FreeCont(c: ContPtr);
 BEGIN
+  c^.inSh   := NIL;
+  c^.outSh  := NIL;
+  c^.combSt := NIL;
+  c^.user   := NIL;
+  c^.next   := NIL;
   cnTop := cnTop + 1;
   cnFree[cnTop] := c^.poolIdx
 END FreeCont;
 
 (* ================================================================
+   Reference counting and reclamation
+   ================================================================ *)
+
+PROCEDURE Retain(sh: SharedPtr);
+BEGIN
+  sh^.refCount := sh^.refCount + 1
+END Retain;
+
+(* Try to reclaim a shared state. Reclaims when no references
+   remain and no continuations are queued. An abandoned pending
+   future (caller error) is also reclaimable if unreferenced. *)
+PROCEDURE TryReclaim(sh: SharedPtr);
+VAR asp: AllStatePtr; rsp: RaceStatePtr;
+BEGIN
+  IF sh^.refCount > 0 THEN RETURN END;
+  IF sh^.contHead # NIL THEN RETURN END;
+  (* Free owned combiner state *)
+  IF sh^.combSt # NIL THEN
+    IF sh^.combKind = CombAll THEN
+      asp := sh^.combSt;
+      DISPOSE(asp)
+    ELSIF sh^.combKind = CombRace THEN
+      rsp := sh^.combSt;
+      DISPOSE(rsp)
+    END;
+    sh^.combSt   := NIL;
+    sh^.combKind := CombNone
+  END;
+  FreeShared(sh)
+END TryReclaim;
+
+(* Decrement refcount. If it reaches zero, try to reclaim. *)
+PROCEDURE Release(sh: SharedPtr);
+BEGIN
+  IF sh^.refCount = 0 THEN RETURN END;
+  sh^.refCount := sh^.refCount - 1;
+  TryReclaim(sh)
+END Release;
+
+(* ================================================================
    Internal helpers
    ================================================================ *)
+
+PROCEDURE InitResult(VAR r: Result);
+BEGIN
+  r.isOk  := FALSE;
+  r.v.tag := 0;
+  r.v.ptr := NIL;
+  r.e.code := 0;
+  r.e.ptr  := NIL
+END InitResult;
 
 PROCEDURE AppendCont(sh: SharedPtr; c: ContPtr);
 BEGIN
@@ -143,30 +237,54 @@ BEGIN
   END
 END AppendCont;
 
-PROCEDURE DrainConts(sh: SharedPtr);
+(* Detach the entire continuation chain. Returns the old head. *)
+PROCEDURE DetachConts(sh: SharedPtr): ContPtr;
+VAR head: ContPtr;
+BEGIN
+  head := sh^.contHead;
+  sh^.contHead := NIL;
+  sh^.contTail := NIL;
+  RETURN head
+END DetachConts;
+
+(* Drain continuations: detach chain, enqueue in order.
+   Captures next pointer before each enqueue to avoid
+   use-after-free if the scheduler were ever to pump inline.
+   On partial enqueue failure, restores remaining unqueued
+   continuations back onto the shared state. *)
+PROCEDURE DrainConts(sh: SharedPtr): Status;
 VAR
-  c:  ContPtr;
+  c, next: ContPtr;
   st: Status;
 BEGIN
-  c := sh^.contHead;
+  c := DetachConts(sh);
   WHILE c # NIL DO
+    next := c^.next;
     st := SchedulerEnqueue(sh^.sched, execContProc, c);
-    c := c^.next
+    IF st # OK THEN
+      (* Restore c and everything after it *)
+      sh^.contHead := c;
+      WHILE c^.next # NIL DO
+        c := c^.next
+      END;
+      sh^.contTail := c;
+      RETURN OutOfMemory
+    END;
+    c := next
   END;
-  sh^.contHead := NIL;
-  sh^.contTail := NIL
+  RETURN OK
 END DrainConts;
 
-PROCEDURE SettleWith(sh: SharedPtr; VAR res: Result);
+PROCEDURE SettleWith(sh: SharedPtr; VAR res: Result): Status;
 BEGIN
-  IF sh^.fate # Pending THEN RETURN END;
+  IF sh^.fate # Pending THEN RETURN AlreadySettled END;
   IF res.isOk THEN
     sh^.fate := Fulfilled
   ELSE
     sh^.fate := Rejected
   END;
   sh^.res := res;
-  DrainConts(sh)
+  RETURN DrainConts(sh)
 END SettleWith;
 
 PROCEDURE HandleAll(c: ContPtr);
@@ -174,11 +292,9 @@ VAR
   asp: AllStatePtr;
   inRes, outRes: Result;
   v: Value;
-  sh: SharedPtr;
 BEGIN
   asp := c^.combSt;
-  sh  := c^.inSh;
-  inRes := sh^.res;
+  inRes := c^.inSh^.res;
 
   IF asp^.failed THEN RETURN END;
 
@@ -201,14 +317,12 @@ END HandleAll;
 PROCEDURE HandleRace(c: ContPtr);
 VAR
   rsp: RaceStatePtr;
-  sh:  SharedPtr;
   inRes: Result;
 BEGIN
   rsp := c^.combSt;
   IF rsp^.settled THEN RETURN END;
   rsp^.settled := TRUE;
-  sh := c^.inSh;
-  inRes := sh^.res;
+  inRes := c^.inSh^.res;
   SettleWith(rsp^.outSh, inRes)
 END HandleRace;
 
@@ -216,35 +330,53 @@ END HandleRace;
 
 PROCEDURE ExecuteCont(data: ADDRESS);
 VAR
-  c:  ContPtr;
-  sh: SharedPtr;
+  c:    ContPtr;
+  inSh: SharedPtr;
+  outSh: SharedPtr;
   inRes, outRes: Result;
   tf: ThenFn;
   cf: CatchFn;
   vf: VoidFn;
 BEGIN
   c  := data;
-  sh := c^.inSh;
-  inRes := sh^.res;
+  inSh  := c^.inSh;   (* save before FreeCont clears fields *)
+  outSh := c^.outSh;
+  inRes := inSh^.res;
+
+  (* Defensive init so buggy callbacks cannot leave
+     uninitialized memory being settled. *)
+  InitResult(outRes);
 
   IF c^.kind = CKThen THEN
     tf := c^.thenFn;
-    tf(inRes, c^.user, outRes);
-    SettleWith(c^.outSh, outRes)
+    IF tf # NIL THEN
+      tf(inRes, c^.user, outRes)
+    END;
+    IF outSh # NIL THEN
+      SettleWith(outSh, outRes)
+    END
 
   ELSIF c^.kind = CKCatch THEN
     IF inRes.isOk THEN
       outRes := inRes
     ELSE
       cf := c^.catchFn;
-      cf(inRes.e, c^.user, outRes)
+      IF cf # NIL THEN
+        cf(inRes.e, c^.user, outRes)
+      END
     END;
-    SettleWith(c^.outSh, outRes)
+    IF outSh # NIL THEN
+      SettleWith(outSh, outRes)
+    END
 
   ELSIF c^.kind = CKFinally THEN
     vf := c^.voidFn;
-    vf(inRes, c^.user);
-    SettleWith(c^.outSh, inRes)
+    IF vf # NIL THEN
+      vf(inRes, c^.user)
+    END;
+    IF outSh # NIL THEN
+      SettleWith(outSh, inRes)
+    END
 
   ELSIF c^.kind = CKAll THEN
     HandleAll(c)
@@ -253,7 +385,21 @@ BEGIN
     HandleRace(c)
   END;
 
-  FreeCont(c)
+  (* Free the continuation first (returns pool slot),
+     then release the outSh ref the continuation held.
+     Release may trigger TryReclaim which is safe because
+     FreeCont already cleared c's fields. *)
+  FreeCont(c);
+  IF outSh # NIL THEN
+    Release(outSh)
+  END;
+  (* Try reclaim the input shared state. It may now be
+     reclaimable if caller already released their handle
+     and this was the last continuation referencing it
+     indirectly (via being queued on it). inSh is not
+     refcounted by conts (conts only refcount outSh),
+     so this just checks the existing conditions. *)
+  TryReclaim(inSh)
 END ExecuteCont;
 
 (* ================================================================
@@ -276,13 +422,38 @@ BEGIN
   END;
   sh^.sched    := s;
   sh^.fate     := Pending;
-  sh^.res.isOk := FALSE;
+  InitResult(sh^.res);
   sh^.contHead := NIL;
   sh^.contTail := NIL;
-  p := sh;
-  f := sh;
+  sh^.refCount := 1;  (* one ref shared by the p/f alias pair *)
+  sh^.combSt   := NIL;
+  sh^.combKind := CombNone;
+  p := sh;  (* alias — same SharedRec *)
+  f := sh;  (* caller must release exactly one, not both *)
   RETURN OK
 END PromiseCreate;
+
+(* ================================================================
+   Public API -- Lifetime
+   ================================================================ *)
+
+PROCEDURE PromiseRelease(VAR p: Promise);
+VAR sh: SharedPtr;
+BEGIN
+  IF p = NIL THEN RETURN END;
+  sh := p;
+  p := NIL;
+  Release(sh)
+END PromiseRelease;
+
+PROCEDURE FutureRelease(VAR f: Future);
+VAR sh: SharedPtr;
+BEGIN
+  IF f = NIL THEN RETURN END;
+  sh := f;
+  f := NIL;
+  Release(sh)
+END FutureRelease;
 
 (* ================================================================
    Public API -- Settlement
@@ -298,10 +469,9 @@ BEGIN
   IF sh^.fate # Pending THEN RETURN AlreadySettled END;
   res.isOk := TRUE;
   res.v    := v;
-  sh^.fate := Fulfilled;
-  sh^.res  := res;
-  DrainConts(sh);
-  RETURN OK
+  RETURN SettleWith(sh, res)
+  (* Caller still holds external handle ref. They must call
+     PromiseRelease when done with the handle. *)
 END Resolve;
 
 PROCEDURE Reject(p: Promise; e: Error): Status;
@@ -314,10 +484,7 @@ BEGIN
   IF sh^.fate # Pending THEN RETURN AlreadySettled END;
   res.isOk := FALSE;
   res.e    := e;
-  sh^.fate := Rejected;
-  sh^.res  := res;
-  DrainConts(sh);
-  RETURN OK
+  RETURN SettleWith(sh, res)
 END Reject;
 
 (* ================================================================
@@ -354,6 +521,18 @@ END GetResultIfSettled;
 
 (* ================================================================
    Public API -- Chaining
+
+   Each chaining operation:
+   1. Creates a new SharedRec for the output (refCount = 1)
+   2. Allocates a continuation
+   3. The continuation Retains outSh (+1, now refCount = 2)
+   4. Returns out (the external handle holds ref #1)
+   5. When the cont executes, it Releases outSh (back to 1)
+   6. When the caller FutureReleases out, it drops to 0 → reclaim
+
+   On failure after step 1, we Release the creation ref.
+   On failure after step 3, we Release the cont ref, free the
+   cont, then Release the creation ref.
    ================================================================ *)
 
 PROCEDURE Map(s: Scheduler; f: Future;
@@ -373,8 +552,10 @@ BEGIN
   st := PromiseCreate(s, p, out);
   IF st # OK THEN RETURN st END;
   outSh := out;
+  (* outSh refCount = 1 (creation ref, will be returned as out) *)
 
   IF NOT AllocCont(c) THEN
+    Release(outSh);  (* drop creation ref → reclaim *)
     out := NIL;
     RETURN OutOfMemory
   END;
@@ -383,10 +564,20 @@ BEGIN
   c^.user   := user;
   c^.inSh   := inSh;
   c^.outSh  := outSh;
+  c^.combSt := NIL;
   c^.next   := NIL;
+  Retain(outSh);  (* cont ref: refCount = 2 *)
 
   IF inSh^.fate # Pending THEN
-    st := SchedulerEnqueue(s, ExecuteCont, c)
+    st := SchedulerEnqueue(s, execContProc, c);
+    IF st # OK THEN
+      (* Undo cont ref, free cont, drop creation ref *)
+      Release(outSh);  (* cont ref: 2 → 1 *)
+      FreeCont(c);
+      Release(outSh);  (* creation ref: 1 → 0 → reclaim *)
+      out := NIL;
+      RETURN OutOfMemory
+    END
   ELSE
     AppendCont(inSh, c)
   END;
@@ -412,6 +603,7 @@ BEGIN
   outSh := out;
 
   IF NOT AllocCont(c) THEN
+    Release(outSh);
     out := NIL;
     RETURN OutOfMemory
   END;
@@ -420,10 +612,19 @@ BEGIN
   c^.user    := user;
   c^.inSh    := inSh;
   c^.outSh   := outSh;
+  c^.combSt  := NIL;
   c^.next    := NIL;
+  Retain(outSh);
 
   IF inSh^.fate # Pending THEN
-    st := SchedulerEnqueue(s, ExecuteCont, c)
+    st := SchedulerEnqueue(s, execContProc, c);
+    IF st # OK THEN
+      Release(outSh);
+      FreeCont(c);
+      Release(outSh);
+      out := NIL;
+      RETURN OutOfMemory
+    END
   ELSE
     AppendCont(inSh, c)
   END;
@@ -449,6 +650,7 @@ BEGIN
   outSh := out;
 
   IF NOT AllocCont(c) THEN
+    Release(outSh);
     out := NIL;
     RETURN OutOfMemory
   END;
@@ -457,10 +659,19 @@ BEGIN
   c^.user   := user;
   c^.inSh   := inSh;
   c^.outSh  := outSh;
+  c^.combSt := NIL;
   c^.next   := NIL;
+  Retain(outSh);
 
   IF inSh^.fate # Pending THEN
-    st := SchedulerEnqueue(s, ExecuteCont, c)
+    st := SchedulerEnqueue(s, execContProc, c);
+    IF st # OK THEN
+      Release(outSh);
+      FreeCont(c);
+      Release(outSh);
+      out := NIL;
+      RETURN OutOfMemory
+    END
   ELSE
     AppendCont(inSh, c)
   END;
@@ -469,30 +680,49 @@ END OnSettle;
 
 (* ================================================================
    Public API -- Combinators
+
+   Construction is best-effort. All continuations are pre-allocated
+   before any are attached. If pre-allocation fails, full cleanup
+   occurs. If enqueue fails partway during attachment, already-
+   attached conts remain live (they hold refs to outSh and will
+   release them when they execute). Remaining unattached conts
+   are freed. The caller receives OutOfMemory and out = NIL.
+   The creation ref on outSh is released on failure; outSh will
+   be reclaimed when all live conts have executed and released.
    ================================================================ *)
 
 PROCEDURE All(s: Scheduler; fs: ARRAY OF Future;
               VAR out: Future): Status;
 VAR
-  n, i: CARDINAL;
+  n, i, j, allocated: CARDINAL;
   inSh: SharedPtr;
   p:    Promise;
   outSh: SharedPtr;
   st:   Status;
   asp:  AllStatePtr;
   c:    ContPtr;
+  conts: ARRAY [0..MAX_ALL_SIZE-1] OF ContPtr;
 BEGIN
   n := HIGH(fs) + 1;
   IF (s = NIL) OR (n = 0) OR (n > MAX_ALL_SIZE) THEN
     out := NIL;
     RETURN Invalid
   END;
+  FOR i := 0 TO n - 1 DO
+    IF fs[i] = NIL THEN
+      out := NIL;
+      RETURN Invalid
+    END
+  END;
+
   st := PromiseCreate(s, p, out);
   IF st # OK THEN RETURN st END;
   outSh := out;
+  (* outSh refCount = 1 (creation ref) *)
 
   NEW(asp);
   IF asp = NIL THEN
+    Release(outSh);
     out := NIL;
     RETURN OutOfMemory
   END;
@@ -501,11 +731,32 @@ BEGIN
   asp^.done   := 0;
   asp^.failed := FALSE;
 
+  outSh^.combSt   := asp;
+  outSh^.combKind := CombAll;
+
+  (* Pre-allocate all continuations.
+     If any allocation fails, free all allocated conts,
+     detach combiner state, dispose it, release outSh. *)
+  allocated := 0;
   FOR i := 0 TO n - 1 DO
     IF NOT AllocCont(c) THEN
+      FOR j := 0 TO allocated - 1 DO
+        FreeCont(conts[j])
+      END;
+      outSh^.combSt   := NIL;
+      outSh^.combKind := CombNone;
+      DISPOSE(asp);
+      Release(outSh);
       out := NIL;
       RETURN OutOfMemory
     END;
+    conts[i] := c;
+    allocated := allocated + 1
+  END;
+
+  (* Attach/enqueue. Each cont Retains outSh. *)
+  FOR i := 0 TO n - 1 DO
+    c := conts[i];
     inSh := fs[i];
     c^.kind   := CKAll;
     c^.inSh   := inSh;
@@ -514,9 +765,22 @@ BEGIN
     c^.idx    := i;
     c^.next   := NIL;
     c^.user   := NIL;
+    Retain(outSh);  (* cont ref *)
 
     IF inSh^.fate # Pending THEN
-      st := SchedulerEnqueue(s, ExecuteCont, c)
+      st := SchedulerEnqueue(s, execContProc, c);
+      IF st # OK THEN
+        Release(outSh);  (* undo this cont's Retain *)
+        FreeCont(c);
+        FOR j := i + 1 TO n - 1 DO
+          FreeCont(conts[j])
+        END;
+        (* Release creation ref. Already-attached conts (0..i-1)
+           still hold refs; outSh lives until they all execute. *)
+        Release(outSh);
+        out := NIL;
+        RETURN OutOfMemory
+      END
     ELSE
       AppendCont(inSh, c)
     END
@@ -527,36 +791,62 @@ END All;
 PROCEDURE Race(s: Scheduler; fs: ARRAY OF Future;
                VAR out: Future): Status;
 VAR
-  n, i: CARDINAL;
+  n, i, j, allocated: CARDINAL;
   inSh: SharedPtr;
   p:    Promise;
   outSh: SharedPtr;
   st:   Status;
   rsp:  RaceStatePtr;
   c:    ContPtr;
+  conts: ARRAY [0..MAX_ALL_SIZE-1] OF ContPtr;
 BEGIN
   n := HIGH(fs) + 1;
-  IF (s = NIL) OR (n = 0) THEN
+  IF (s = NIL) OR (n = 0) OR (n > MAX_ALL_SIZE) THEN
     out := NIL;
     RETURN Invalid
   END;
+  FOR i := 0 TO n - 1 DO
+    IF fs[i] = NIL THEN
+      out := NIL;
+      RETURN Invalid
+    END
+  END;
+
   st := PromiseCreate(s, p, out);
   IF st # OK THEN RETURN st END;
   outSh := out;
 
   NEW(rsp);
   IF rsp = NIL THEN
+    Release(outSh);
     out := NIL;
     RETURN OutOfMemory
   END;
-  rsp^.outSh   := outSh;
-  rsp^.settled  := FALSE;
+  rsp^.outSh  := outSh;
+  rsp^.settled := FALSE;
 
+  outSh^.combSt   := rsp;
+  outSh^.combKind := CombRace;
+
+  allocated := 0;
   FOR i := 0 TO n - 1 DO
     IF NOT AllocCont(c) THEN
+      FOR j := 0 TO allocated - 1 DO
+        FreeCont(conts[j])
+      END;
+      outSh^.combSt   := NIL;
+      outSh^.combKind := CombNone;
+      DISPOSE(rsp);
+      Release(outSh);
       out := NIL;
       RETURN OutOfMemory
     END;
+    conts[i] := c;
+    allocated := allocated + 1
+  END;
+
+  FOR i := 0 TO n - 1 DO
+    c := conts[i];
     inSh := fs[i];
     c^.kind   := CKRace;
     c^.inSh   := inSh;
@@ -565,9 +855,20 @@ BEGIN
     c^.idx    := i;
     c^.next   := NIL;
     c^.user   := NIL;
+    Retain(outSh);
 
     IF inSh^.fate # Pending THEN
-      st := SchedulerEnqueue(s, ExecuteCont, c)
+      st := SchedulerEnqueue(s, execContProc, c);
+      IF st # OK THEN
+        Release(outSh);
+        FreeCont(c);
+        FOR j := i + 1 TO n - 1 DO
+          FreeCont(conts[j])
+        END;
+        Release(outSh);
+        out := NIL;
+        RETURN OutOfMemory
+      END
     ELSE
       AppendCont(inSh, c)
     END
@@ -580,8 +881,8 @@ END Race;
    ================================================================ *)
 
 CONST
-  POOL_CT = 64;      (* cancel-token pool capacity *)
-  MaxCancelCBs = 8;  (* max callbacks per token *)
+  POOL_CT = 64;
+  MaxCancelCBs = 8;
 
 TYPE
   CancelCB = RECORD
@@ -590,11 +891,14 @@ TYPE
   END;
 
   CancelRec = RECORD
-    cancelled: BOOLEAN;
-    sched:     Scheduler;
-    cbs:       ARRAY [0..MaxCancelCBs-1] OF CancelCB;
-    cbCount:   INTEGER;
-    poolIdx:   CARDINAL;
+    cancelled:   BOOLEAN;
+    dispatching: BOOLEAN;    (* TRUE while ExecCancelCB is queued/running *)
+    sched:       Scheduler;
+    cbs:         ARRAY [0..MaxCancelCBs-1] OF CancelCB;
+    cbCount:     INTEGER;
+    cbNext:      INTEGER;
+    refCount:    CARDINAL;  (* external + internal + dispatch refs *)
+    poolIdx:     CARDINAL;
   END;
 
   CancelPtr = POINTER TO CancelRec;
@@ -610,8 +914,11 @@ VAR i: CARDINAL;
 BEGIN
   FOR i := 0 TO POOL_CT - 1 DO
     ctPool[i].poolIdx   := i;
-    ctPool[i].cancelled := FALSE;
-    ctPool[i].cbCount   := 0;
+    ctPool[i].cancelled   := FALSE;
+    ctPool[i].dispatching := FALSE;
+    ctPool[i].cbCount     := 0;
+    ctPool[i].cbNext      := 0;
+    ctPool[i].refCount    := 0;
     ctFree[i] := i;
   END;
   ctTop := POOL_CT - 1;
@@ -628,6 +935,32 @@ BEGIN
   RETURN TRUE
 END AllocCancel;
 
+PROCEDURE FreeCancel(p: CancelPtr);
+BEGIN
+  p^.cancelled   := FALSE;
+  p^.dispatching := FALSE;
+  p^.cbCount     := 0;
+  p^.cbNext      := 0;
+  p^.refCount    := 0;
+  ctTop := ctTop + 1;
+  ctFree[ctTop] := p^.poolIdx
+END FreeCancel;
+
+PROCEDURE RetainCancel(cp: CancelPtr);
+BEGIN
+  cp^.refCount := cp^.refCount + 1
+END RetainCancel;
+
+(* Decrement cancel token refcount. Free when it reaches 0. *)
+PROCEDURE ReleaseCancel(cp: CancelPtr);
+BEGIN
+  IF cp^.refCount = 0 THEN RETURN END;
+  cp^.refCount := cp^.refCount - 1;
+  IF cp^.refCount = 0 THEN
+    FreeCancel(cp)
+  END
+END ReleaseCancel;
+
 PROCEDURE CancelTokenCreate(s: Scheduler; VAR ct: CancelToken): Status;
 VAR cp: CancelPtr;
 BEGIN
@@ -640,30 +973,90 @@ BEGIN
     ct := NIL;
     RETURN OutOfMemory
   END;
-  cp^.cancelled := FALSE;
-  cp^.sched     := s;
-  cp^.cbCount   := 0;
+  cp^.cancelled   := FALSE;
+  cp^.dispatching := FALSE;
+  cp^.sched       := s;
+  cp^.cbCount     := 0;
+  cp^.cbNext      := 0;
+  cp^.refCount    := 1;  (* external handle *)
   ct := cp;
   RETURN OK
 END CancelTokenCreate;
 
+(* Release the external cancel token reference.
+   The pool slot is freed when refCount reaches 0. *)
+PROCEDURE CancelTokenDestroy(VAR ct: CancelToken);
+VAR cp: CancelPtr;
+BEGIN
+  IF ct = NIL THEN RETURN END;
+  cp := ct;
+  ct := NIL;
+  ReleaseCancel(cp)
+END CancelTokenDestroy;
+
+(* Scheduler callback for cancel notification dispatch.
+   Dispatches one callback per pump step using cbNext index.
+   Holds a dispatch ref (acquired by Cancel/OnCancel) that is
+   released when all callbacks have been dispatched or when
+   enqueue of the next step fails. *)
+PROCEDURE ExecCancelCB(data: ADDRESS);
+VAR
+  cp: CancelPtr;
+  r: Result;
+  idx: INTEGER;
+  st: Status;
+BEGIN
+  cp := data;
+  IF cp^.cbNext >= cp^.cbCount THEN
+    cp^.dispatching := FALSE;
+    ReleaseCancel(cp);  (* drop dispatch ref *)
+    RETURN
+  END;
+  r.isOk := FALSE;
+  r.e.code := -1;
+  r.e.ptr := NIL;
+  idx := cp^.cbNext;
+  cp^.cbNext := cp^.cbNext + 1;
+  cp^.cbs[idx].fn(r, cp^.cbs[idx].ctx);
+  (* After the callback, check if more remain. Note: the callback
+     itself may have appended new entries via OnCancel, so cbCount
+     may have grown since we entered this invocation. *)
+  IF cp^.cbNext < cp^.cbCount THEN
+    st := SchedulerEnqueue(cp^.sched, ExecCancelCB, cp);
+    IF st # OK THEN
+      cp^.dispatching := FALSE;
+      ReleaseCancel(cp)  (* drop dispatch ref *)
+    END
+  ELSE
+    cp^.dispatching := FALSE;
+    ReleaseCancel(cp)  (* drop dispatch ref *)
+  END
+END ExecCancelCB;
+
+(* Cancel enqueues callback dispatch through the scheduler.
+   Acquires a dispatch ref to keep the token alive until all
+   callbacks have been dispatched. If the scheduler queue is
+   full, the token is marked cancelled but pending callbacks
+   may not fire; the dispatch ref is released immediately. *)
 PROCEDURE Cancel(ct: CancelToken);
 VAR
   cp: CancelPtr;
-  i: INTEGER;
-  r: Result;
+  st: Status;
 BEGIN
   IF ct = NIL THEN RETURN END;
   cp := ct;
   IF cp^.cancelled THEN RETURN END;
   cp^.cancelled := TRUE;
-  r.isOk := FALSE;
-  r.e.code := -1;
-  r.e.ptr := NIL;
-  FOR i := 0 TO cp^.cbCount - 1 DO
-    cp^.cbs[i].fn(r, cp^.cbs[i].ctx)
-  END;
-  cp^.cbCount := 0
+  cp^.cbNext := 0;
+  IF cp^.cbCount > 0 THEN
+    cp^.dispatching := TRUE;
+    RetainCancel(cp);  (* dispatch ref *)
+    st := SchedulerEnqueue(cp^.sched, ExecCancelCB, cp);
+    IF st # OK THEN
+      cp^.dispatching := FALSE;
+      ReleaseCancel(cp)  (* drop dispatch ref *)
+    END
+  END
 END Cancel;
 
 PROCEDURE IsCancelled(ct: CancelToken): BOOLEAN;
@@ -677,70 +1070,99 @@ END IsCancelled;
 PROCEDURE OnCancel(ct: CancelToken; fn: VoidFn; ctx: ADDRESS);
 VAR
   cp: CancelPtr;
-  r: Result;
+  st: Status;
 BEGIN
   IF ct = NIL THEN RETURN END;
+  IF fn = NIL THEN RETURN END;
   cp := ct;
+  IF cp^.cbCount >= MaxCancelCBs THEN RETURN END;
+  cp^.cbs[cp^.cbCount].fn  := fn;
+  cp^.cbs[cp^.cbCount].ctx := ctx;
+  INC(cp^.cbCount);
   IF cp^.cancelled THEN
-    r.isOk := FALSE;
-    r.e.code := -1;
-    r.e.ptr := NIL;
-    fn(r, ctx);
-    RETURN
-  END;
-  IF cp^.cbCount < MaxCancelCBs THEN
-    cp^.cbs[cp^.cbCount].fn  := fn;
-    cp^.cbs[cp^.cbCount].ctx := ctx;
-    INC(cp^.cbCount)
+    IF NOT cp^.dispatching THEN
+      (* No active dispatch — start one for the new callback. *)
+      cp^.cbNext := cp^.cbCount - 1;
+      cp^.dispatching := TRUE;
+      RetainCancel(cp);  (* dispatch ref *)
+      st := SchedulerEnqueue(cp^.sched, ExecCancelCB, cp);
+      IF st # OK THEN
+        cp^.dispatching := FALSE;
+        ReleaseCancel(cp)  (* drop dispatch ref *)
+      END
+    END
+    (* If already dispatching, the active dispatcher will pick up
+       the new callback naturally: it checks cbNext < cbCount after
+       each step, and cbCount was just incremented. *)
   END
 END OnCancel;
 
+(* ---- MapCancellable ---- *)
+
+TYPE
+  CancMapRec = RECORD
+    fn:   ThenFn;
+    user: ADDRESS;
+    ct:   CancelPtr;  (* retained reference *)
+  END;
+  CancMapPtr = POINTER TO CancMapRec;
+
+(* Wrapper callback for MapCancellable. Checks cancellation,
+   invokes the user fn, then releases the cancel token ref
+   and frees the wrapper record. *)
 PROCEDURE CancellableThen(inRes: Result; user: ADDRESS; VAR outRes: Result);
-(* Internal: wrapper for MapCancellable. user points to a CancMapRec. *)
 VAR
   cm: CancMapPtr;
   cp: CancelPtr;
-  e: Error;
 BEGIN
   cm := user;
   cp := cm^.ct;
   IF cp^.cancelled THEN
     outRes.isOk := FALSE;
     outRes.e.code := -1;
-    outRes.e.ptr := NIL;
-    RETURN
+    outRes.e.ptr := NIL
+  ELSE
+    IF cm^.fn # NIL THEN
+      cm^.fn(inRes, cm^.user, outRes)
+    ELSE
+      outRes.isOk := FALSE;
+      outRes.e.code := -2;
+      outRes.e.ptr := NIL
+    END
   END;
-  cm^.fn(inRes, cm^.user, outRes)
+  ReleaseCancel(cp);  (* drop internal ref *)
+  DISPOSE(cm)
 END CancellableThen;
-
-TYPE
-  CancMapRec = RECORD
-    fn:   ThenFn;
-    user: ADDRESS;
-    ct:   CancelToken;
-  END;
-  CancMapPtr = POINTER TO CancMapRec;
-
-VAR
-  cancMaps: ARRAY [0..63] OF CancMapRec;
-  cancMapTop: INTEGER;
 
 PROCEDURE MapCancellable(s: Scheduler; f: Future;
                          fn: ThenFn; user: ADDRESS;
                          ct: CancelToken;
                          VAR out: Future): Status;
-VAR cm: CancMapPtr;
+VAR
+  cm: CancMapPtr;
+  cp: CancelPtr;
+  st: Status;
 BEGIN
-  IF cancMapTop < 0 THEN
+  IF (s = NIL) OR (f = NIL) OR (ct = NIL) THEN
+    out := NIL;
+    RETURN Invalid
+  END;
+  cp := ct;
+  NEW(cm);
+  IF cm = NIL THEN
     out := NIL;
     RETURN OutOfMemory
   END;
-  cm := ADR(cancMaps[cancMapTop]);
-  DEC(cancMapTop);
   cm^.fn   := fn;
   cm^.user := user;
-  cm^.ct   := ct;
-  RETURN Map(s, f, CancellableThen, cm, out)
+  cm^.ct   := cp;
+  RetainCancel(cp);  (* internal ref for CancellableThen *)
+  st := Map(s, f, CancellableThen, cm, out);
+  IF st # OK THEN
+    ReleaseCancel(cp);  (* undo internal retain *)
+    DISPOSE(cm)
+  END;
+  RETURN st
 END MapCancellable;
 
 (* ================================================================
@@ -774,6 +1196,5 @@ END Fail;
 BEGIN
   poolsReady := FALSE;
   ctReady := FALSE;
-  cancMapTop := 63;
   execContProc := ExecuteCont
 END Promise.

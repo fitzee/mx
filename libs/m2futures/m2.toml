@@ -1,10 +1,13 @@
 # m2.toml - m2futures package manifest
 manifest_version=1
 name=m2futures
-version=0.1.0
+version=0.2.0
 edition=pim4
 entry=src/Promise.mod
 includes=src
+
+[test]
+entry=tests/promise_tests.mod
 
 [deps]
 

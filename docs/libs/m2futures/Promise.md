@@ -79,7 +79,7 @@ Promise = ADDRESS;  (* write handle *)
 Future  = ADDRESS;  (* read handle  *)
 ```
 
-Both are opaque `ADDRESS` values pointing to shared internal state. They are created as a linked pair by `PromiseCreate`.
+Both are opaque `ADDRESS` values pointing to shared internal state. They are created as a linked pair by `PromiseCreate`. **Promise and Future alias the same state** — they are not independent handles. See [Ownership](#ownership) below.
 
 ### AllResultPtr
 
@@ -92,6 +92,15 @@ TYPE
 
 When `All` fulfills, `Value.tag` holds the element count and `Value.ptr` can be cast to `AllResultPtr` to access individual results.
 
+## Ownership
+
+`PromiseCreate` returns a handle pair sharing **one reference**. Promise and Future alias the same internal state — they are **not** independent handles. The caller must call exactly one of `PromiseRelease` or `FutureRelease` to drop the creation reference:
+
+- Calling both is a **double-release bug**.
+- Calling neither is a **leak**.
+
+Continuations attached via `Map`, `OnReject`, `OnSettle`, `All`, and `Race` hold their own internal references and release them when they execute. The **output future** returned by each chaining operation carries its own independent reference that the caller must release via `FutureRelease`.
+
 ## Creation
 
 ### PromiseCreate
@@ -102,13 +111,32 @@ PROCEDURE PromiseCreate(s: Scheduler;
                         VAR f: Future): Status;
 ```
 
-Creates a linked promise/future pair on scheduler `s`. Both start in `Pending` state. Returns `Invalid` if `s` is `NIL`. Returns `OutOfMemory` if the internal pool is exhausted.
+Creates a linked promise/future pair on scheduler `s`. `p` and `f` alias the same state; `refCount = 1`. Both start in `Pending` state. The caller must call exactly one of `PromiseRelease` or `FutureRelease` — not both. Returns `Invalid` if `s` is `NIL`. Returns `OutOfMemory` if the internal pool is exhausted.
 
 ```modula2
 VAR p: Promise; f: Future; st: Status;
 ...
 st := PromiseCreate(sched, p, f);
+(* p and f are aliases — release exactly one when done *)
 ```
+
+## Lifetime
+
+### PromiseRelease
+
+```modula2
+PROCEDURE PromiseRelease(VAR p: Promise);
+```
+
+Release the promise handle. Sets `p` to `NIL`. The underlying state is freed when all references (external handle + continuations) are released.
+
+### FutureRelease
+
+```modula2
+PROCEDURE FutureRelease(VAR f: Future);
+```
+
+Release the future handle. Sets `f` to `NIL`. Same operation as `PromiseRelease`; both names exist for API clarity since Promise and Future share state.
 
 ## Settlement
 
@@ -243,7 +271,11 @@ On success:
 - `Value.tag` = element count
 - `Value.ptr` points to an `AllResultArray` containing each element's `Result` in order
 
-Returns `Invalid` if `s` is `NIL`, `fs` is empty, or the array exceeds `MAX_ALL_SIZE` (32). Returns `OutOfMemory` if allocation fails.
+**Result pointer lifetime**: the `AllResultPtr` in `Value.ptr` points to an array owned by the output future's internal state. It remains valid as long as the output future has not been released via `FutureRelease`. Copy any results you need before releasing.
+
+**Best-effort construction**: continuations are pre-allocated up front. If pre-allocation fails, full cleanup occurs and the caller receives `OutOfMemory` with `out = NIL`. If scheduler enqueue fails partway through attachment, already-attached continuations remain live (they hold refs and will execute normally when their input settles). Remaining unattached continuations are freed, and the caller receives `OutOfMemory` with `out = NIL`. The output state is reclaimed automatically once all live continuations have executed and released.
+
+Returns `Invalid` if `s` is `NIL`, `fs` is empty, any element is `NIL`, or the array exceeds `MAX_ALL_SIZE` (32). Returns `OutOfMemory` if allocation fails.
 
 ```modula2
 VAR fs: ARRAY [0..2] OF Future;
@@ -251,6 +283,7 @@ VAR fs: ARRAY [0..2] OF Future;
 fs[0] := f1; fs[1] := f2; fs[2] := f3;
 st := All(sched, fs, fAll);
 (* after pump: res.v.tag = 3, res.v.ptr^ has 3 Results *)
+(* copy results before calling FutureRelease(fAll) *)
 ```
 
 ### Race
@@ -260,11 +293,77 @@ PROCEDURE Race(s: Scheduler; fs: ARRAY OF Future;
                VAR out: Future): Status;
 ```
 
-Settles as soon as the first future in `fs` settles. The winning result (whether fulfilled or rejected) becomes the output. Subsequent settlements of other futures are ignored.
+Settles as soon as the first future in `fs` settles. The winning result (whether fulfilled or rejected) becomes the output. Subsequent settlements of other futures are ignored. Same best-effort construction and failure semantics as `All`.
 
 ```modula2
 st := Race(sched, fs, fRace);
 (* the first future to settle wins *)
+```
+
+## Cancellation
+
+### CancelTokenCreate
+
+```modula2
+PROCEDURE CancelTokenCreate(s: Scheduler; VAR ct: CancelToken): Status;
+```
+
+Create a new cancellation token on scheduler `s`. Returns `Invalid` if `s` is `NIL`. Returns `OutOfMemory` if the token pool (64 slots) is exhausted.
+
+### CancelTokenDestroy
+
+```modula2
+PROCEDURE CancelTokenDestroy(VAR ct: CancelToken);
+```
+
+Release the external reference to a cancel token. Sets `ct` to `NIL`. Safe to call immediately after `Cancel` — dispatched callbacks hold their own internal reference and will not outlive the token. The pool slot is freed when all references (external + internal from `MapCancellable` + dispatch) are released.
+
+### Cancel
+
+```modula2
+PROCEDURE Cancel(ct: CancelToken);
+```
+
+Signal cancellation on the token. Callbacks registered via `OnCancel` are dispatched through the scheduler, not inline. The dispatch holds its own reference to the token, so `CancelTokenDestroy` is safe immediately after `Cancel`. If the scheduler queue is full, the token is marked cancelled but pending callbacks may not fire. Calling `Cancel` on an already-cancelled token is a no-op.
+
+### IsCancelled
+
+```modula2
+PROCEDURE IsCancelled(ct: CancelToken): BOOLEAN;
+```
+
+Returns `TRUE` if the token has been cancelled.
+
+### OnCancel
+
+```modula2
+PROCEDURE OnCancel(ct: CancelToken; fn: VoidFn; ctx: ADDRESS);
+```
+
+Register a callback to be called when the token is cancelled. If already cancelled, `fn` is enqueued via the scheduler.
+
+**Limits**: at most 8 callbacks may be registered per token. Calls beyond that limit are silently dropped. If the scheduler queue is full when dispatch is attempted, the token remains marked cancelled but the affected callback will not fire.
+
+### MapCancellable
+
+```modula2
+PROCEDURE MapCancellable(s: Scheduler; f: Future;
+                         fn: ThenFn; user: ADDRESS;
+                         ct: CancelToken;
+                         VAR out: Future): Status;
+```
+
+Like `Map`, but checks the cancel token before invoking `fn`. If cancelled, rejects with error code `-1`. Internally retains the cancel token; released when the continuation executes or construction fails. The caller's external reference is independent.
+
+```modula2
+st := CancelTokenCreate(sched, ct);
+st := MapCancellable(sched, f, MyFn, NIL, ct, f2);
+Cancel(ct);
+(* safe to destroy immediately -- internal ref keeps token alive *)
+CancelTokenDestroy(ct);
+PumpAll;
+(* f2 is now rejected with code -1 *)
+FutureRelease(f2);
 ```
 
 ## Helpers
@@ -303,10 +402,13 @@ Convenience: fills a `Result` as rejected with error `e`.
 
 ## Notes
 
-- **Pool-based allocation**: The library pre-allocates 256 shared states and 512 continuation nodes. Normal promise operations (create, resolve, chain) use pool slots -- no `NEW`/`DISPOSE`. Only the `All` and `Race` combinators heap-allocate a small tracking record.
+- **Pool-based allocation**: The library pre-allocates 256 shared states, 512 continuation nodes, and 64 cancel token slots. Normal promise operations (create, resolve, chain) use pool slots — no `NEW`/`DISPOSE`. Only `All` and `Race` heap-allocate a small tracking record, and `MapCancellable` heap-allocates a small wrapper record.
+- **Alias-pair ownership**: `PromiseCreate` returns two handles that alias the same state with one shared reference. Release exactly one. Each chaining output future has its own independent reference.
 - **Late attachment**: Attaching a continuation to an already-settled future is safe. The continuation is enqueued immediately and fires on the next pump cycle.
-- **Re-entrancy**: Callbacks may create new promises, resolve other promises, or attach new continuations. All such work is enqueued -- never executed inline -- so stack depth stays bounded.
+- **Re-entrancy**: Callbacks may create new promises, resolve other promises, or attach new continuations. All such work is enqueued — never executed inline — so stack depth stays bounded.
 - **No threads required**: The entire library is single-threaded. All progress happens through `SchedulerPump`. This makes it suitable for event-loop architectures, game loops, or cooperative multitasking.
+- **Cancel token dispatch safety**: `Cancel` acquires a dispatch reference before enqueuing callbacks, so `CancelTokenDestroy` is safe immediately after `Cancel`. The dispatch reference is released when all callbacks have been dispatched.
+- **Lossy cancellation**: At most 8 `OnCancel` callbacks per token; excess registrations are silently dropped. If the scheduler queue is full during dispatch, the token is marked cancelled but remaining callbacks will not fire.
 - **`THEN` is reserved**: The chaining procedure is named `Map` (not `Then`) because `THEN` is a reserved keyword in Modula-2. Similarly, `Catch` becomes `OnReject` and `Finally` becomes `OnSettle`.
 
 ## Complete Example
@@ -324,7 +426,8 @@ FROM Scheduler IMPORT Status, Scheduler, OK,
 FROM Promise IMPORT Fate, Value, Error, Result, Promise, Future,
                     ThenFn, CatchFn, VoidFn,
                     AllResultPtr, MAX_ALL_SIZE,
-                    PromiseCreate, Resolve, Reject,
+                    PromiseCreate, FutureRelease,
+                    Resolve, Reject,
                     GetFate, Map, OnReject, OnSettle, All, Race,
                     MakeValue, MakeError, Ok, Fail;
 
@@ -371,6 +474,7 @@ BEGIN
   st := SchedulerCreate(1024, sched);
 
   (* Chain: 21 -> double -> print *)
+  (* p and f are aliases sharing one reference *)
   st := PromiseCreate(sched, p, f);
   st := Map(sched, f, DoubleVal, NIL, f2);
   st := Map(sched, f2, PrintVal, NIL, f3);
@@ -379,6 +483,11 @@ BEGIN
   st := Resolve(p, v);
   PumpAll;
   (* Output: => ok, tag=42 *)
+
+  (* Release handles: one for the creation pair, one for each Map output *)
+  FutureRelease(f);
+  FutureRelease(f2);
+  FutureRelease(f3);
 
   st := SchedulerDestroy(sched)
 END FuturesDemo.

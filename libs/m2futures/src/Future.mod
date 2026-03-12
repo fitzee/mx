@@ -7,6 +7,11 @@ FROM Promise IMPORT Future, Fate, Value, Error, Result,
                     ThenFn, CatchFn, VoidFn;
 IMPORT Promise;
 
+PROCEDURE Release(VAR f: Future);
+BEGIN
+  Promise.FutureRelease(f)
+END Release;
+
 PROCEDURE GetFate(f: Future; VAR fate: Fate): Status;
 BEGIN
   RETURN Promise.GetFate(f, fate)

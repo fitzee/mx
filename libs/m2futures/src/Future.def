@@ -9,6 +9,13 @@ FROM Scheduler IMPORT Scheduler, Status;
 FROM Promise IMPORT Future, Fate, Value, Error, Result,
                     ThenFn, CatchFn, VoidFn;
 
+(* ---- Lifetime ---- *)
+
+(* Release the future handle. Sets f to NIL.
+   The underlying state is freed when all references
+   (external handles + continuations) are released. *)
+PROCEDURE Release(VAR f: Future);
+
 (* ---- Inspection ---- *)
 
 PROCEDURE GetFate(f: Future; VAR fate: Fate): Status;

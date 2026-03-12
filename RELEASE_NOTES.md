@@ -1,5 +1,30 @@
 # Release Notes
 
+## m2futures 0.2.0 (2026-03-12)
+
+### Features
+
+- **Promise/Future lifetime management** — New `PromiseRelease` and `FutureRelease` procedures for explicit handle ownership. `PromiseCreate` returns an alias pair sharing one reference; callers release exactly one.
+- **Cancel token safety** — `CancelTokenDestroy` is now safe to call immediately after `Cancel`. Dispatch holds its own internal reference via a `dispatching` flag and dispatch ref, preventing use-after-free when the scheduler has queued `ExecCancelCB`.
+- **Future.Release** — The `Future` convenience module now re-exports `FutureRelease` as `Release`.
+
+### Bug fixes
+
+- **Cancel dispatch use-after-free** — `Cancel` now acquires a dispatch reference before enqueuing `ExecCancelCB`, preventing the token pool slot from being freed while callbacks are still queued.
+- **OnCancel double-dispatch** — `OnCancel` no longer resets `cbNext` or enqueues a second dispatcher while one is already in flight. New callbacks appended during dispatch are picked up naturally by the active dispatcher.
+- **ExecCancelCB enqueue failure** — Dispatch reference is now released on scheduler enqueue failure, preventing token leaks.
+
+### Documentation
+
+- **Ownership model** — Definition module documents alias-pair semantics, double-release/leak rules, and per-chaining-output independent references.
+- **All result pointer lifetime** — Documents that `AllResultPtr` is valid only until `FutureRelease` is called on the output future.
+- **Best-effort combinator construction** — Documents partial-failure semantics for `All` and `Race`.
+- **Cancellation limits** — Documents 8-callback-per-token limit and lossy scheduler-full behavior.
+
+### Test coverage
+
+- **New test suite** — 115 tests covering scheduler basics, promise lifecycle, settlement, chaining (Map/OnReject/OnSettle), combinators (All/Race), cancel tokens, OnCancel dispatch ordering, CancelTokenDestroy-after-Cancel safety, and MapCancellable flows.
+
 ## 1.0.3 (2026-03-12)
 
 ### Bug fixes
