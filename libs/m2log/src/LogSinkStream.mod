@@ -1,8 +1,7 @@
 IMPLEMENTATION MODULE LogSinkStream;
 
 FROM SYSTEM IMPORT ADDRESS, ADR;
-FROM Log IMPORT Sink, Record, Level;
-FROM LogFmt IMPORT Format, LineBuf, MaxLine;
+FROM Log IMPORT Sink, Record, Level, Format, LineBuf, MaxLine;
 FROM Stream IMPORT Stream, TryWrite, Status;
 
 PROCEDURE StreamSinkProc(ctx: ADDRESS; VAR rec: Record);
@@ -30,7 +29,7 @@ PROCEDURE Create(streamHandle: ADDRESS; VAR out: Sink);
 BEGIN
   out.proc := StreamSinkProc;
   out.ctx := streamHandle;
-  out.minLevel := Level.TRACE
+  out.minLevel := TRACE
 END Create;
 
 END LogSinkStream.

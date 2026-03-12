@@ -22,14 +22,16 @@ FROM InOut IMPORT WriteString, WriteInt, WriteLn;
 FROM Sockets IMPORT Socket, InvalidSocket, AF_INET, SOCK_STREAM,
                     SockAddr, SocketCreate, CloseSocket, Bind, Listen,
                     Accept, Connect, SetNonBlocking;
-FROM EventLoop IMPORT Loop, Create, Destroy, GetScheduler, RunOnce;
+FROM EventLoop IMPORT Loop, Create, GetScheduler, RunOnce;
+IMPORT EventLoop;
 FROM Scheduler IMPORT Scheduler;
 FROM Stream IMPORT Stream, StreamKind, StreamState, Status,
                    CreateTCP, CreateTLS, TryRead, TryWrite,
                    ShutdownWrite, GetState, GetKind, GetFd,
-                   ReadAsync, WriteAsync, WriteAllAsync, CloseAsync;
-IMPORT Stream;
-FROM Promise IMPORT Future, Fate, Result, GetFate, GetResultIfSettled;
+                   ReadAsync, WriteAsync, WriteAllAsync, CloseAsync,
+                   Destroy;
+FROM Promise IMPORT Future, Fate, Result, GetFate, GetResultIfSettled,
+                    FutureRelease;
 FROM SocketsBridge IMPORT m2_send, m2_recv;
 
 CONST
@@ -183,7 +185,7 @@ BEGIN
   Check(st = Invalid, "TryWrite after shutdown");
 
   (* 10. Destroy stream *)
-  st := Stream.Destroy(str);
+  st := Destroy(str);
   Check(st = OK, "Destroy OK");
   Check(str = NIL, "Destroy sets NIL");
 
@@ -279,6 +281,8 @@ BEGIN
   END;
   Check(i = 15, "ReadAsync data matches");
 
+  FutureRelease(fut);  (* release ReadAsync future *)
+
   (* --- Test WriteAsync --- *)
   sendbuf := "Async reply!!";
   st := WriteAsync(str, ADR(sendbuf), 13, fut);
@@ -301,6 +305,8 @@ BEGIN
     i := i + 1
   END;
   Check(i = n, "WriteAsync data matches");
+
+  FutureRelease(fut);  (* release WriteAsync future *)
 
   (* --- Test WriteAllAsync --- *)
   (* Fill sendbuf with a known pattern *)
@@ -334,8 +340,10 @@ BEGIN
   END;
   Check(n = 100, "WriteAllAsync client got 100");
 
+  FutureRelease(fut);  (* release WriteAllAsync future *)
+
   (* Cleanup this stream before close test *)
-  st := Stream.Destroy(str);
+  st := Destroy(str);
   sst := CloseSocket(clientSock);
   sst := CloseSocket(listenSock)
 END TestAsyncReadWrite;
@@ -415,8 +423,10 @@ BEGIN
   (* fd should be invalidated *)
   Check(GetFd(str) = InvalidSocket, "CloseAsync fd = Invalid");
 
+  FutureRelease(fut);  (* release CloseAsync future *)
+
   (* Destroy after close should still work *)
-  st := Stream.Destroy(str);
+  st := Destroy(str);
   Check(st = OK, "Destroy after CloseAsync");
 
   sst := CloseSocket(clientSock);
@@ -449,7 +459,7 @@ BEGIN
   Check(GetKind(NIL) = TCP, "GetKind NIL = TCP");
 
   str := NIL;
-  st := Stream.Destroy(str);
+  st := Destroy(str);
   Check(st = Invalid, "Destroy NIL = Invalid");
 
   (* CreateTCP with invalid args *)
@@ -520,7 +530,7 @@ BEGIN
   TestAsyncReadWrite;
   TestAsyncClose;
 
-  est := Destroy(lp);
+  est := EventLoop.Destroy(lp);
 
   WriteLn;
   WriteString("=== Results: ");

@@ -22,8 +22,8 @@ IMPORT EventLoop;
 FROM EventLoop IMPORT Loop;
 FROM Poller IMPORT EvRead, EvWrite;
 IMPORT Scheduler;
-FROM Promise IMPORT Future, Promise, Value, Error,
-                    PromiseCreate, Resolve, Reject;
+FROM Promise IMPORT Future, Value,
+                    PromiseCreate, PromiseRelease, Resolve, Reject;
 IMPORT Promise;
 
 (* ── Internal types ──────────────────────────────────────────────── *)
@@ -46,7 +46,7 @@ TYPE
     sched:    Scheduler.Scheduler;
     fd:       INTEGER;
     op:       INTEGER;               (* OpNone..OpWriteAll *)
-    promise:  Promise;
+    promise:  Promise.Promise;
     rdBuf:    ADDRESS;
     rdMax:    INTEGER;
     wrBuf:    ADDRESS;
@@ -77,18 +77,22 @@ BEGIN
   v.tag := tag;
   v.ptr := NIL;
   dummy := Resolve(sp^.promise, v);
+  PromiseRelease(sp^.promise);
+  sp^.promise := NIL;
   sp^.op := OpNone
 END ResolveSess;
 
 (* ── Helper: reject pending promise ──────────────────────────────── *)
 
 PROCEDURE RejectSess(sp: SessPtr; code: INTEGER);
-VAR e: Error; dummy: Promise.Status;
+VAR e: Promise.Error; dummy: Promise.Status;
 BEGIN
   UnwatchSess(sp);
   e.code := code;
   e.ptr := NIL;
   dummy := Reject(sp^.promise, e);
+  PromiseRelease(sp^.promise);
+  sp^.promise := NIL;
   sp^.op := OpNone
 END RejectSess;
 
@@ -384,6 +388,7 @@ BEGIN
   sp^.sched := sched;
   sp^.fd := fd;
   sp^.op := OpNone;
+  sp^.promise := NIL;
   sp^.rdBuf := NIL;
   sp^.rdMax := 0;
   sp^.wrBuf := NIL;
@@ -419,6 +424,7 @@ BEGIN
   sp^.sched := sched;
   sp^.fd := fd;
   sp^.op := OpNone;
+  sp^.promise := NIL;
   sp^.rdBuf := NIL;
   sp^.rdMax := 0;
   sp^.wrBuf := NIL;
@@ -437,8 +443,9 @@ BEGIN
   (* Cancel any pending async operation *)
   IF sp^.op # OpNone THEN
     RejectSess(sp, ErrSys)
+  ELSE
+    UnwatchSess(sp)
   END;
-  UnwatchSess(sp);
   m2_tls_session_destroy(sp^.ssl);
   sp^.ssl := NIL;
   DEALLOCATE(sp, TSIZE(SessRec));
@@ -531,7 +538,7 @@ END Shutdown;
 
 PROCEDURE StartAsync(sp: SessPtr; opKind: INTEGER;
                      VAR out: Future): Status;
-VAR pst: Promise.Status; f: Future; p: Promise;
+VAR pst: Promise.Status; f: Future; p: Promise.Promise;
 BEGIN
   IF sp^.op # OpNone THEN
     out := NIL;
@@ -550,7 +557,6 @@ END StartAsync;
 
 PROCEDURE HandshakeAsync(s: TLSSession; VAR out: Future): Status;
 VAR sp: SessPtr; rc: INTEGER; st: Status;
-    v: Value; e: Error; dummy: Promise.Status;
 BEGIN
   IF s = NIL THEN RETURN Invalid END;
   sp := s;
@@ -562,9 +568,7 @@ BEGIN
     (* Already complete — return settled future *)
     st := StartAsync(sp, OpHandshake, out);
     IF st # OK THEN RETURN st END;
-    v.tag := 0; v.ptr := NIL;
-    dummy := Resolve(sp^.promise, v);
-    sp^.op := OpNone;
+    ResolveSess(sp, 0);
     RETURN OK
   END;
 
@@ -572,11 +576,11 @@ BEGIN
     (* Error — return rejected future *)
     st := StartAsync(sp, OpHandshake, out);
     IF st # OK THEN RETURN st END;
-    e.ptr := NIL;
-    IF rc = -2 THEN e.code := ErrVerify ELSE e.code := ErrSys END;
-    dummy := Reject(sp^.promise, e);
-    sp^.op := OpNone;
-    IF rc = -2 THEN RETURN VerifyFailed ELSE RETURN SysError END
+    IF rc = -2 THEN
+      RejectSess(sp, ErrVerify); RETURN VerifyFailed
+    ELSE
+      RejectSess(sp, ErrSys); RETURN SysError
+    END
   END;
 
   (* WANT_READ or WANT_WRITE — register watcher *)
@@ -593,7 +597,6 @@ END HandshakeAsync;
 PROCEDURE ReadAsync(s: TLSSession; buf: ADDRESS; max: INTEGER;
                     VAR out: Future): Status;
 VAR sp: SessPtr; n: INTEGER; st: Status;
-    v: Value; e: Error; dummy: Promise.Status;
 BEGIN
   IF s = NIL THEN RETURN Invalid END;
   sp := s;
@@ -606,27 +609,21 @@ BEGIN
   IF n > 0 THEN
     st := StartAsync(sp, OpRead, out);
     IF st # OK THEN RETURN st END;
-    v.tag := n; v.ptr := NIL;
-    dummy := Resolve(sp^.promise, v);
-    sp^.op := OpNone;
+    ResolveSess(sp, n);
     RETURN OK
   END;
 
   IF n = 0 THEN
     st := StartAsync(sp, OpRead, out);
     IF st # OK THEN RETURN st END;
-    e.code := ErrClosed; e.ptr := NIL;
-    dummy := Reject(sp^.promise, e);
-    sp^.op := OpNone;
+    RejectSess(sp, ErrClosed);
     RETURN Closed
   END;
 
   IF (n # -1) AND (n # -2) THEN
     st := StartAsync(sp, OpRead, out);
     IF st # OK THEN RETURN st END;
-    e.code := ErrSys; e.ptr := NIL;
-    dummy := Reject(sp^.promise, e);
-    sp^.op := OpNone;
+    RejectSess(sp, ErrSys);
     RETURN SysError
   END;
 
@@ -644,7 +641,6 @@ END ReadAsync;
 PROCEDURE WriteAsync(s: TLSSession; buf: ADDRESS; len: INTEGER;
                      VAR out: Future): Status;
 VAR sp: SessPtr; n: INTEGER; st: Status;
-    v: Value; e: Error; dummy: Promise.Status;
 BEGIN
   IF s = NIL THEN RETURN Invalid END;
   sp := s;
@@ -657,18 +653,14 @@ BEGIN
   IF n > 0 THEN
     st := StartAsync(sp, OpWrite, out);
     IF st # OK THEN RETURN st END;
-    v.tag := n; v.ptr := NIL;
-    dummy := Resolve(sp^.promise, v);
-    sp^.op := OpNone;
+    ResolveSess(sp, n);
     RETURN OK
   END;
 
   IF (n # -1) AND (n # -2) THEN
     st := StartAsync(sp, OpWrite, out);
     IF st # OK THEN RETURN st END;
-    e.code := ErrSys; e.ptr := NIL;
-    dummy := Reject(sp^.promise, e);
-    sp^.op := OpNone;
+    RejectSess(sp, ErrSys);
     RETURN SysError
   END;
 
@@ -685,7 +677,6 @@ END WriteAsync;
 PROCEDURE WriteAllAsync(s: TLSSession; buf: ADDRESS; len: INTEGER;
                         VAR out: Future): Status;
 VAR sp: SessPtr; n: INTEGER; st: Status;
-    v: Value; e: Error; dummy: Promise.Status;
 BEGIN
   IF s = NIL THEN RETURN Invalid END;
   sp := s;
@@ -701,9 +692,7 @@ BEGIN
     IF sp^.wrSent >= len THEN
       st := StartAsync(sp, OpWriteAll, out);
       IF st # OK THEN RETURN st END;
-      v.tag := sp^.wrSent; v.ptr := NIL;
-      dummy := Resolve(sp^.promise, v);
-      sp^.op := OpNone;
+      ResolveSess(sp, sp^.wrSent);
       RETURN OK
     END;
     (* Partial write — need async completion *)
@@ -716,9 +705,7 @@ BEGIN
   IF (n # -1) AND (n # -2) THEN
     st := StartAsync(sp, OpWriteAll, out);
     IF st # OK THEN RETURN st END;
-    e.code := ErrSys; e.ptr := NIL;
-    dummy := Reject(sp^.promise, e);
-    sp^.op := OpNone;
+    RejectSess(sp, ErrSys);
     RETURN SysError
   END;
 

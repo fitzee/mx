@@ -2,7 +2,7 @@ IMPLEMENTATION MODULE Timers;
 
 FROM SYSTEM IMPORT ADDRESS, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
-FROM Scheduler IMPORT Scheduler, TaskProc;
+FROM Scheduler IMPORT TaskProc;
 IMPORT Scheduler;
 
 (* ── Internal types ────────────────────────────────────────────── *)
@@ -18,7 +18,7 @@ TYPE
   END;
 
   QueueRec = RECORD
-    sched    : Scheduler;
+    sched    : Scheduler.Scheduler;
     heap     : ARRAY [0..MaxTimers-1] OF INTEGER;  (* indices into pool *)
     heapSize : INTEGER;
     pool     : ARRAY [0..MaxTimers-1] OF TimerEntry;
@@ -120,7 +120,7 @@ END AllocSlot;
 
 (* ── Public procedures ─────────────────────────────────────────── *)
 
-PROCEDURE Create(sched: Scheduler;
+PROCEDURE Create(sched: Scheduler.Scheduler;
                  VAR out: TimerQueue): Status;
 VAR qp: QueuePtr; i: INTEGER;
 BEGIN
@@ -170,7 +170,11 @@ BEGIN
   qp^.pool[slot].interval := 0;
   qp^.pool[slot].active := TRUE;
   id := qp^.nextId;
-  INC(qp^.nextId);
+  IF qp^.nextId = MAX(INTEGER) THEN
+    qp^.nextId := 1
+  ELSE
+    INC(qp^.nextId)
+  END;
   HeapPush(qp^, slot);
   RETURN OK
 END SetTimeout;
@@ -192,7 +196,11 @@ BEGIN
   qp^.pool[slot].interval := intervalMs;
   qp^.pool[slot].active := TRUE;
   id := qp^.nextId;
-  INC(qp^.nextId);
+  IF qp^.nextId = MAX(INTEGER) THEN
+    qp^.nextId := 1
+  ELSE
+    INC(qp^.nextId)
+  END;
   HeapPush(qp^, slot);
   RETURN OK
 END SetInterval;

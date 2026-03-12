@@ -237,8 +237,9 @@ VAR
   key:    ARRAY [0..31] OF CHAR;
   kidBuf: ARRAY [0..MaxKidLen] OF CHAR;
   rsaKey: ADDRESS;
-  inKeys: BOOLEAN;
-  dummy:  BOOLEAN;
+  inKeys:  BOOLEAN;
+  dropped: BOOLEAN;
+  dummy:   BOOLEAN;
 BEGIN
   IF ks = NIL THEN RETURN JkInvalid END;
   ksp := KeySetPtr(ks);
@@ -275,6 +276,7 @@ BEGIN
   (* Now parse array of JWK objects *)
   MutexLock(ksp^.mu);
   ClearKeys(ksp);
+  dropped := FALSE;
 
   LOOP
     IF NOT Json.Next(p, tok) THEN
@@ -293,13 +295,15 @@ BEGIN
           INC(ksp^.count)
         ELSE
           (* Too many keys — free this one and skip *)
-          m2_oidc_rsa_free(rsaKey)
+          m2_oidc_rsa_free(rsaKey);
+          dropped := TRUE
         END
       END
     END
   END;
 
   MutexUnlock(ksp^.mu);
+  IF dropped THEN RETURN JkFull END;
   RETURN JkOk
 END ParseJson;
 

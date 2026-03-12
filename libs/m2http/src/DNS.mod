@@ -4,8 +4,8 @@ FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE, BYTE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM EventLoop IMPORT Loop;
 FROM Scheduler IMPORT Scheduler;
-FROM Promise IMPORT Future, Promise, Value, Error,
-                    PromiseCreate, Resolve, Reject;
+FROM Promise IMPORT Future, Value,
+                    PromiseCreate, PromiseRelease, Resolve, Reject;
 IMPORT Promise;
 FROM DnsBridge IMPORT m2_dns_resolve_a, m2_dns_resolve_async;
 
@@ -25,7 +25,7 @@ CONST
 TYPE
   PendingSlot = RECORD
     inUse   : BOOLEAN;
-    promise : Promise;
+    promise : Promise.Promise;
     addr    : AddrPtr;
     sched   : Scheduler;
   END;
@@ -62,7 +62,7 @@ PROCEDURE AsyncCallback(callbackId: INTEGER;
 VAR
   ap: AddrPtr;
   v: Value;
-  e: Error;
+  e: Promise.Error;
   dummy: Promise.Status;
 BEGIN
   IF (callbackId < 0) OR (callbackId >= MaxPending) THEN RETURN END;
@@ -76,6 +76,8 @@ BEGIN
     e.code := 2;
     e.ptr := NIL;
     dummy := Reject(slots[callbackId].promise, e);
+    PromiseRelease(slots[callbackId].promise);
+    slots[callbackId].promise := NIL;
     slots[callbackId].inUse := FALSE;
     RETURN
   END;
@@ -91,6 +93,8 @@ BEGIN
   v.tag := 0;
   v.ptr := ap;
   dummy := Resolve(slots[callbackId].promise, v);
+  PromiseRelease(slots[callbackId].promise);
+  slots[callbackId].promise := NIL;
   slots[callbackId].inUse := FALSE
 END AsyncCallback;
 
@@ -101,13 +105,13 @@ PROCEDURE ResolveA(lp: Loop; sched: Scheduler;
                    port: INTEGER;
                    VAR outFuture: Future): Status;
 VAR
-  p: Promise;
+  p: Promise.Promise;
   f: Future;
   pst: Promise.Status;
   ap: AddrPtr;
   rc: INTEGER;
   v: Value;
-  e: Error;
+  e: Promise.Error;
   dummy: Promise.Status;
 BEGIN
   IF sched = NIL THEN RETURN Invalid END;
@@ -122,6 +126,7 @@ BEGIN
     e.code := 1;
     e.ptr := NIL;
     dummy := Reject(p, e);
+    PromiseRelease(p); p := NIL;
     outFuture := f;
     RETURN OutOfMemory
   END;
@@ -134,6 +139,7 @@ BEGIN
     e.code := 2;
     e.ptr := NIL;
     dummy := Reject(p, e);
+    PromiseRelease(p); p := NIL;
     outFuture := f;
     RETURN ResolveFailed
   END;
@@ -142,6 +148,7 @@ BEGIN
   v.tag := 0;
   v.ptr := ap;
   dummy := Resolve(p, v);
+  PromiseRelease(p); p := NIL;
   outFuture := f;
   RETURN OK
 END ResolveA;
@@ -153,12 +160,12 @@ PROCEDURE ResolveAsync(lp: Loop; sched: Scheduler;
                        port: INTEGER;
                        VAR outFuture: Future): Status;
 VAR
-  p: Promise;
+  p: Promise.Promise;
   f: Future;
   pst: Promise.Status;
   ap: AddrPtr;
   id: INTEGER;
-  e: Error;
+  e: Promise.Error;
   dummy: Promise.Status;
 BEGIN
   IF sched = NIL THEN RETURN Invalid END;
@@ -179,6 +186,7 @@ BEGIN
     e.code := 1;
     e.ptr := NIL;
     dummy := Reject(p, e);
+    PromiseRelease(p); p := NIL;
     slots[id].inUse := FALSE;
     outFuture := f;
     RETURN OutOfMemory

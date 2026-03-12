@@ -4,8 +4,9 @@ FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Poller IMPORT EvRead, EvWrite;
 IMPORT EventLoop;
-FROM Promise IMPORT Promise, Future, Value, Error,
-                    PromiseCreate, Resolve, Reject;
+FROM Scheduler IMPORT Scheduler;
+FROM Promise IMPORT Future, Value,
+                    PromiseCreate, PromiseRelease, Resolve, Reject;
 IMPORT Promise;
 IMPORT TLS;
 FROM SocketsBridge IMPORT m2_send, m2_recv;
@@ -148,16 +149,18 @@ BEGIN
   sp^.op := OpNone;
   v.tag := tag;
   v.ptr := NIL;
-  pst := Resolve(sp^.promise, v)
+  pst := Resolve(sp^.promise, v);
+  sp^.promise := NIL  (* settled; caller owns the Future ref *)
 END ResolveOp;
 
 PROCEDURE RejectOp(sp: StreamPtr; code: INTEGER);
-VAR e: Error; pst: Promise.Status;
+VAR e: Promise.Error; pst: Promise.Status;
 BEGIN
   sp^.op := OpNone;
   e.code := code;
   e.ptr := NIL;
-  pst := Reject(sp^.promise, e)
+  pst := Reject(sp^.promise, e);
+  sp^.promise := NIL  (* settled; caller owns the Future ref *)
 END RejectOp;
 
 PROCEDURE OnStreamEvent(fd, events: INTEGER; user: ADDRESS);
@@ -344,6 +347,8 @@ BEGIN
   wst := EnsureWatcher(sp, EvRead);
   IF wst # OK THEN
     sp^.op := OpNone;
+    PromiseRelease(sp^.promise);
+    out := NIL;
     RETURN wst
   END;
   RETURN OK
@@ -372,6 +377,8 @@ BEGIN
   wst := EnsureWatcher(sp, EvWrite);
   IF wst # OK THEN
     sp^.op := OpNone;
+    PromiseRelease(sp^.promise);
+    out := NIL;
     RETURN wst
   END;
   RETURN OK
@@ -400,6 +407,8 @@ BEGIN
   wst := EnsureWatcher(sp, EvWrite);
   IF wst # OK THEN
     sp^.op := OpNone;
+    PromiseRelease(sp^.promise);
+    out := NIL;
     RETURN wst
   END;
   RETURN OK
@@ -429,6 +438,8 @@ BEGIN
     wst := EnsureWatcher(sp, EvWrite);
     IF wst # OK THEN
       sp^.op := OpNone;
+      PromiseRelease(sp^.promise);
+      out := NIL;
       RETURN wst
     END
   ELSE
@@ -436,6 +447,8 @@ BEGIN
     wst := EnsureWatcher(sp, EvWrite);
     IF wst # OK THEN
       sp^.op := OpNone;
+      PromiseRelease(sp^.promise);
+      out := NIL;
       RETURN wst
     END
   END;

@@ -19,7 +19,8 @@ DEFINITION MODULE EventLoop;
      active watchers, timers, or scheduled tasks. *)
 
   FROM SYSTEM IMPORT ADDRESS;
-  FROM Scheduler IMPORT Scheduler, TaskProc;
+  IMPORT Scheduler;
+  FROM Scheduler IMPORT TaskProc;
   FROM Timers IMPORT TimerId;
 
   TYPE
@@ -80,7 +81,7 @@ DEFINITION MODULE EventLoop;
 
   (* Return the underlying Scheduler handle (for use with
      Promise/Future APIs that require a Scheduler). *)
-  PROCEDURE GetScheduler(lp: Loop): Scheduler;
+  PROCEDURE GetScheduler(lp: Loop): Scheduler.Scheduler;
 
   (* ── Running ───────────────────────────────────────────── *)
 

@@ -13,9 +13,11 @@ FROM RpcCodec IMPORT MsgResponse, MsgError,
                       EncodeRequest;
 FROM RpcErrors IMPORT Timeout, Closed;
 FROM Scheduler IMPORT Scheduler, TaskProc, OK;
-FROM Promise IMPORT Promise, Future, Value, Error,
+FROM Promise IMPORT Future, Value,
                      PromiseCreate, Resolve, Reject,
+                     PromiseRelease,
                      MakeValue, MakeError;
+IMPORT Promise;
 IMPORT EventLoop;
 FROM Timers IMPORT TimerId;
 
@@ -51,11 +53,13 @@ END FindPending;
 
 PROCEDURE RejectPending(VAR c: Client; idx: CARDINAL; code: CARDINAL);
 VAR
-  e: Error;
+  e: Promise.Error;
   st: CARDINAL;
 BEGIN
   MakeError(INTEGER(code), NIL, e);
   st := CARDINAL(Reject(c.pending[idx].promise, e));
+  PromiseRelease(c.pending[idx].promise);
+  c.pending[idx].promise := NIL;
   IF c.pending[idx].hasTimer AND (c.loop # NIL) THEN
     st := CARDINAL(EventLoop.CancelTimer(c.loop, c.pending[idx].timerId))
   END;
@@ -116,7 +120,7 @@ PROCEDURE Call(VAR c: Client;
 VAR
   slot: INTEGER;
   reqId, st: CARDINAL;
-  p: Promise;
+  p: Promise.Promise;
   f: Future;
   pv: BytesView;
   tid: TimerId;
@@ -197,6 +201,8 @@ BEGIN
 
             MakeValue(0, ADR(c.respBuf), v);
             st := CARDINAL(Resolve(c.pending[idx].promise, v));
+            PromiseRelease(c.pending[idx].promise);
+            c.pending[idx].promise := NIL;
             IF c.pending[idx].hasTimer AND (c.loop # NIL) THEN
               st := CARDINAL(EventLoop.CancelTimer(c.loop,
                              c.pending[idx].timerId))

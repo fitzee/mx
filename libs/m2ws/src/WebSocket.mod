@@ -3,12 +3,13 @@ IMPLEMENTATION MODULE WebSocket;
 FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE, BYTE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler;
-FROM Promise IMPORT Future, Promise, Value, Error, Result,
-                    PromiseCreate, Resolve, Reject,
+FROM Promise IMPORT Future, Value, Result,
+                    PromiseCreate, PromiseRelease, Resolve, Reject,
                     GetResultIfSettled;
 IMPORT Promise;
 FROM Poller IMPORT EvRead, EvWrite;
 IMPORT EventLoop;
+FROM EventLoop IMPORT Loop;
 FROM URI IMPORT URIRec;
 IMPORT URI;
 IMPORT DNS;
@@ -56,7 +57,7 @@ TYPE
   WsRec = RECORD
     state       : INTEGER;
     sock        : Socket;
-    promise     : Promise;     (* connect/close promise *)
+    promise     : Promise.Promise;     (* connect/close promise *)
     loop        : EventLoop.Loop;
     sched       : Scheduler;
     (* Transport *)
@@ -91,7 +92,7 @@ TYPE
     handler     : MessageProc;
     handlerCtx  : ADDRESS;
     (* Close *)
-    closePromise: Promise;
+    closePromise: Promise.Promise;
   END;
 
   WsPtr = POINTER TO WsRec;
@@ -313,17 +314,19 @@ BEGIN
 END CleanupWs;
 
 PROCEDURE FailWs(w: WsPtr; code: INTEGER);
-VAR e: Error; dummy: Promise.Status;
+VAR e: Promise.Error; dummy: Promise.Status;
 BEGIN
   CleanupWs(w);
   e.code := code;
   e.ptr := NIL;
   IF w^.promise # NIL THEN
     dummy := Reject(w^.promise, e);
+    PromiseRelease(w^.promise);
     w^.promise := NIL
   END;
   IF w^.closePromise # NIL THEN
     dummy := Reject(w^.closePromise, e);
+    PromiseRelease(w^.closePromise);
     w^.closePromise := NIL
   END;
   w^.state := StError
@@ -434,8 +437,8 @@ PROCEDURE HandleFrame(w: WsPtr; VAR hdr: FrameHeader;
                       payload: ADDRESS);
 VAR
   v: Value;
-  e: Error;
-  dummy: Promise.Status;
+  e: Promise.Error;
+  dummy: INTEGER;
   closeCode: CARDINAL;
 BEGIN
   CASE OpcodeToInt(hdr.opcode) OF
@@ -478,11 +481,9 @@ BEGIN
       IF w^.state = StOpen THEN
         (* Echo close frame *)
         IF hdr.payloadLen >= 2 THEN
-          dummy := VAL(Promise.Status,
-                       SendFrame(w, OpClose, TRUE, payload, hdr.payloadLen))
+          dummy := SendFrame(w, OpClose, TRUE, payload, hdr.payloadLen)
         ELSE
-          dummy := VAL(Promise.Status,
-                       SendFrame(w, OpClose, TRUE, NIL, 0))
+          dummy := SendFrame(w, OpClose, TRUE, NIL, 0)
         END;
         w^.state := StClosed;
         IF w^.handler # NIL THEN
@@ -495,14 +496,14 @@ BEGIN
           v.tag := 0;
           v.ptr := NIL;
           dummy := Resolve(w^.closePromise, v);
+          PromiseRelease(w^.closePromise);
           w^.closePromise := NIL
         END
       END |
 
     9: (* Ping *)
       (* Reply with Pong *)
-      dummy := VAL(Promise.Status,
-                   SendFrame(w, OpPong, TRUE, payload, hdr.payloadLen));
+      dummy := SendFrame(w, OpPong, TRUE, payload, hdr.payloadLen);
       IF w^.handler # NIL THEN
         w^.handler(w, OpPing, payload, hdr.payloadLen, w^.handlerCtx)
       END |
@@ -693,7 +694,7 @@ VAR
   w: WsPtr;
   n, err: INTEGER;
   v: Value;
-  e: Error;
+  e: Promise.Error;
   dummy: Promise.Status;
   est: EventLoop.Status;
   tst: TLS.Status;
@@ -814,6 +815,7 @@ BEGIN
           v.ptr := w;
           IF w^.promise # NIL THEN
             dummy := Resolve(w^.promise, v);
+            PromiseRelease(w^.promise);
             w^.promise := NIL
           END;
           est := EventLoop.ModifyFd(w^.loop, w^.sock, EvRead)
@@ -844,6 +846,7 @@ BEGIN
           v.tag := 0;
           v.ptr := NIL;
           dummy := Resolve(w^.closePromise, v);
+          PromiseRelease(w^.closePromise);
           w^.closePromise := NIL
         END
       ELSIF n = -2 THEN
@@ -960,6 +963,7 @@ BEGIN
   w^.msgCap := 0;
   w^.handler := NIL;
   w^.handlerCtx := NIL;
+  w^.promise := NIL;
   w^.closePromise := NIL;
 
   (* Generate WebSocket key and compute expected accept *)
@@ -1093,10 +1097,10 @@ PROCEDURE Send(ws: WebSocket; opcode: Opcode;
 VAR
   w: WsPtr;
   f: Future;
-  p: Promise;
+  p: Promise.Promise;
   pst: Promise.Status;
   v: Value;
-  e: Error;
+  e: Promise.Error;
   rc: INTEGER;
 BEGIN
   w := ws;
@@ -1116,6 +1120,8 @@ BEGIN
     e.ptr := NIL;
     pst := Reject(p, e)
   END;
+  PromiseRelease(p);
+  p := NIL;
 
   RETURN f
 END Send;

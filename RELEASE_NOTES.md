@@ -1,5 +1,27 @@
 # Release Notes
 
+## Library audit refactor (2026-03-13)
+
+### Bug fixes
+
+- **m2log 1.0.1** — Fix LogSinkStream importing from nonexistent `LogFmt` module; correct `Level.TRACE` to bare `TRACE`.
+- **m2evloop 0.2.0** — Fix import shadowing of `Scheduler` type in Timers and EventLoop `.def`/`.mod` files, enabling qualified access (`Scheduler.Status`, `Scheduler.SchedulerEnqueue`).
+- **m2oidc 0.1.3** — Return `JkFull` when JWKS key array overflows instead of silently dropping keys and returning `JkOk`.
+
+### Features
+
+- **m2bytes 1.2.0** — `AppendByte`, `AppendChars`, `AppendView` now return `BOOLEAN` (FALSE on allocation failure). Backward-compatible under PIM4.
+- **m2stream 0.2.0** — Stream `.def` API updates.
+
+### Hardening
+
+- **m2evloop 0.2.0** — Timer ID counter wraps to 1 at `MAX(INTEGER)` instead of overflowing.
+- **m2regex 0.1.1** — `FindAll` clamps output to caller's `matches` array capacity, preventing buffer overrun.
+- **m2tls 0.1.1** — Promise lifetime alignment: `PromiseRelease` after every `Resolve`/`Reject`; consolidate settlement through `ResolveSess`/`RejectSess` helpers.
+- **m2http 0.1.2** — Promise lifetime alignment in DNS, HTTPClient, H2Client.
+- **m2rpc 0.1.2** — Promise lifetime alignment in RpcClient.
+- **m2ws 0.1.2** — Promise lifetime alignment in WebSocket.
+
 ## m2futures 0.2.0 (2026-03-12)
 
 ### Features

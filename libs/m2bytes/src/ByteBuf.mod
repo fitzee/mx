@@ -95,37 +95,38 @@ END Reserve;
 
 (* ── Append operations ──────────────────────────────── *)
 
-PROCEDURE AppendByte(VAR b: Buf; x: CARDINAL);
+PROCEDURE AppendByte(VAR b: Buf; x: CARDINAL): BOOLEAN;
 BEGIN
-  IF Reserve(b, 1) THEN
-    PokeChar(b.data, b.len, CHR(x MOD 256));
-    INC(b.len)
-  END
+  IF NOT Reserve(b, 1) THEN RETURN FALSE END;
+  PokeChar(b.data, b.len, CHR(x MOD 256));
+  INC(b.len);
+  RETURN TRUE
 END AppendByte;
 
-PROCEDURE AppendChars(VAR b: Buf; a: ARRAY OF CHAR; n: CARDINAL);
+PROCEDURE AppendChars(VAR b: Buf; a: ARRAY OF CHAR;
+                      n: CARDINAL): BOOLEAN;
 VAR count, i: CARDINAL;
 BEGIN
   count := n;
   IF count > HIGH(a) + 1 THEN count := HIGH(a) + 1 END;
-  IF count = 0 THEN RETURN END;
-  IF Reserve(b, count) THEN
-    i := 0;
-    WHILE i < count DO
-      PokeChar(b.data, b.len + i, a[i]);
-      INC(i)
-    END;
-    b.len := b.len + count
-  END
+  IF count = 0 THEN RETURN TRUE END;
+  IF NOT Reserve(b, count) THEN RETURN FALSE END;
+  i := 0;
+  WHILE i < count DO
+    PokeChar(b.data, b.len + i, a[i]);
+    INC(i)
+  END;
+  b.len := b.len + count;
+  RETURN TRUE
 END AppendChars;
 
-PROCEDURE AppendView(VAR b: Buf; v: BytesView);
+PROCEDURE AppendView(VAR b: Buf; v: BytesView): BOOLEAN;
 BEGIN
-  IF v.len = 0 THEN RETURN END;
-  IF Reserve(b, v.len) THEN
-    CopyBytes(v.base, b.data, 0, b.len, v.len);
-    b.len := b.len + v.len
-  END
+  IF v.len = 0 THEN RETURN TRUE END;
+  IF NOT Reserve(b, v.len) THEN RETURN FALSE END;
+  CopyBytes(v.base, b.data, 0, b.len, v.len);
+  b.len := b.len + v.len;
+  RETURN TRUE
 END AppendView;
 
 (* ── Access ─────────────────────────────────────────── *)

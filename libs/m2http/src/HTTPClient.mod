@@ -3,13 +3,14 @@ IMPLEMENTATION MODULE HTTPClient;
 FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler;
-FROM Promise IMPORT Future, Promise, Value, Error,
-                    PromiseCreate, Resolve, Reject,
+FROM Promise IMPORT Future, Value,
+                    PromiseCreate, PromiseRelease, Resolve, Reject,
                     GetResultIfSettled, Result;
 IMPORT Promise;
 FROM Poller IMPORT EvRead, EvWrite;
 IMPORT EventLoop;
 IMPORT Buffers;
+FROM Buffers IMPORT Buffer;
 FROM URI IMPORT URIRec, RequestPath;
 IMPORT URI;
 IMPORT DNS;
@@ -47,7 +48,7 @@ TYPE
   ConnRec = RECORD
     state      : INTEGER;
     sock       : Socket;
-    promise    : Promise;
+    promise    : Promise.Promise;
     loop       : EventLoop.Loop;
     sched      : Scheduler;
     recvBuf    : Buffers.Buffer;
@@ -236,12 +237,13 @@ BEGIN
 END CleanupConn;
 
 PROCEDURE FailConn(c: ConnPtr; code: INTEGER);
-VAR e: Error; dummy: Promise.Status; bst: Buffers.Status;
+VAR e: Promise.Error; dummy: Promise.Status; bst: Buffers.Status;
 BEGIN
   CleanupConn(c);
   e.code := code;
   e.ptr := NIL;
   dummy := Reject(c^.promise, e);
+  PromiseRelease(c^.promise); c^.promise := NIL;
   c^.state := StError;
   (* Free response if promise rejected *)
   IF c^.resp # NIL THEN
@@ -267,6 +269,7 @@ BEGIN
   v.tag := 0;
   v.ptr := c^.resp;
   dummy := Resolve(c^.promise, v);
+  PromiseRelease(c^.promise); c^.promise := NIL;
   c^.state := StDone;
   c^.resp := NIL;
   DEALLOCATE(c, TSIZE(ConnRec))

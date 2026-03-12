@@ -11,7 +11,8 @@ DEFINITION MODULE Timers;
      Scheduler rather than called inline. *)
 
   FROM SYSTEM IMPORT ADDRESS;
-  FROM Scheduler IMPORT Scheduler, TaskProc;
+  IMPORT Scheduler;
+  FROM Scheduler IMPORT TaskProc;
 
   CONST
     MaxTimers = 256;
@@ -26,7 +27,7 @@ DEFINITION MODULE Timers;
   (* Create a timer queue.
      Pre:  sched is a valid Scheduler handle.
      Post: out contains a valid TimerQueue on OK. *)
-  PROCEDURE Create(sched: Scheduler;
+  PROCEDURE Create(sched: Scheduler.Scheduler;
                    VAR out: TimerQueue): Status;
 
   (* Destroy a timer queue and free resources. *)

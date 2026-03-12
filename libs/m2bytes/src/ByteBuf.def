@@ -50,14 +50,18 @@ PROCEDURE Reserve(VAR b: Buf; extra: CARDINAL): BOOLEAN;
 
 (* ── Append operations ──────────────────────────────── *)
 
-(* Append a single byte (0..255). *)
-PROCEDURE AppendByte(VAR b: Buf; x: CARDINAL);
+(* Append a single byte (0..255).
+   Returns FALSE if growth fails. *)
+PROCEDURE AppendByte(VAR b: Buf; x: CARDINAL): BOOLEAN;
 
-(* Append bytes from an open CHAR array. *)
-PROCEDURE AppendChars(VAR b: Buf; a: ARRAY OF CHAR; n: CARDINAL);
+(* Append bytes from an open CHAR array.
+   Returns FALSE if growth fails. *)
+PROCEDURE AppendChars(VAR b: Buf; a: ARRAY OF CHAR;
+                      n: CARDINAL): BOOLEAN;
 
-(* Append contents of a BytesView. *)
-PROCEDURE AppendView(VAR b: Buf; v: BytesView);
+(* Append contents of a BytesView.
+   Returns FALSE if growth fails. *)
+PROCEDURE AppendView(VAR b: Buf; v: BytesView): BOOLEAN;
 
 (* ── Access ─────────────────────────────────────────── *)
 

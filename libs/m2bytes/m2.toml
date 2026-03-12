@@ -5,7 +5,7 @@
 # Core depends only on SYSTEM, Storage, InOut, and Strings.
 manifest_version=1
 name=m2bytes
-version=1.1.0
+version=1.2.0
 edition=pim4
 entry=src/ByteBuf.mod
 includes=src

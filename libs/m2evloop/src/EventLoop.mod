@@ -2,7 +2,7 @@ IMPLEMENTATION MODULE EventLoop;
 
 FROM SYSTEM IMPORT ADDRESS, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
-FROM Scheduler IMPORT Scheduler, TaskProc,
+FROM Scheduler IMPORT TaskProc,
                       SchedulerCreate, SchedulerDestroy,
                       SchedulerEnqueue, SchedulerPump;
 FROM Timers IMPORT TimerId, TimerQueue;
@@ -29,7 +29,7 @@ TYPE
   LoopRec = RECORD
     poller      : INTEGER;     (* Poller handle *)
     timers      : TimerQueue;
-    sched       : Scheduler;
+    sched       : Scheduler.Scheduler;
     watchers    : ARRAY [0..MaxWatchers-1] OF WatcherEntry;
     nWatchers   : INTEGER;
     running     : BOOLEAN;
@@ -221,7 +221,7 @@ BEGIN
   RETURN OK
 END Enqueue;
 
-PROCEDURE GetScheduler(lp: Loop): Scheduler;
+PROCEDURE GetScheduler(lp: Loop): Scheduler.Scheduler;
 VAR p: LoopPtr;
 BEGIN
   IF lp = NIL THEN RETURN NIL END;

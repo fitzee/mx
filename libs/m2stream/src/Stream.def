@@ -87,7 +87,11 @@ DEFINITION MODULE Stream;
 
   (* All async operations register an EventLoop watcher on the fd.
      Only ONE async operation may be pending at a time.
-     Pre: no other watcher is registered on this fd. *)
+     Pre: no other watcher is registered on this fd.
+
+     Ownership: each async operation returns a Future that the caller
+     must release via FutureRelease when done inspecting the result.
+     On error return, out is NIL and no release is needed. *)
 
   (* Read up to max bytes asynchronously.
      buf must remain valid until the future settles.

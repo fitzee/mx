@@ -74,11 +74,19 @@ BEGIN
     max := INTEGER(maxMatches)
   END;
 
+  (* also clamp to caller's array capacity *)
+  IF max > INTEGER(HIGH(matches) + 1) THEN
+    max := INTEGER(HIGH(matches) + 1)
+  END;
+
   rc := m2_regex_find_all(re, ADR(text),
                            ADR(starts), ADR(lens),
                            max, cnt);
   IF rc = 0 THEN
     count := CARDINAL(cnt);
+    IF count > HIGH(matches) + 1 THEN
+      count := HIGH(matches) + 1
+    END;
     i := 0;
     WHILE i < count DO
       matches[i].start := CARDINAL(starts[i]);
