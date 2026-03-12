@@ -173,11 +173,11 @@ BEGIN
 
   Arena.Alloc(a, 64, 1, p2, ok);
   Check("arena: alloc2 ok", ok);
-  Check("arena: p2 > p1", VAL(LONGINT, p2) > VAL(LONGINT, p1));
+  Check("arena: p2 > p1", LONGCARD(p2) > LONGCARD(p1));
 
   Arena.Alloc(a, 16, 1, p3, ok);
   Check("arena: alloc3 ok", ok);
-  Check("arena: p3 > p2", VAL(LONGINT, p3) > VAL(LONGINT, p2));
+  Check("arena: p3 > p2", LONGCARD(p3) > LONGCARD(p2));
 
   Check("arena: remaining decreased", Arena.Remaining(a) < 1024);
   Check("arena: remaining=912", Arena.Remaining(a) = 1024 - 32 - 64 - 16)

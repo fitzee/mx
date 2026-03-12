@@ -1,6 +1,6 @@
 MODULE h2_tests;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM InOut IMPORT WriteString, WriteLn, WriteCard;
 FROM ByteBuf IMPORT BytesView, Buf, Init, Free, Clear, AsView,
                     AppendByte, ViewGetByte, GetByte;
@@ -167,7 +167,7 @@ BEGIN
   Check("settings: stream 0", hdr.streamId = 0);
   (* Decode settings payload *)
   payload.base := VAL(ADDRESS,
-    VAL(LONGINT, v.base) + VAL(LONGINT, FrameHeaderSize));
+    LONGCARD(v.base) + LONGCARD(FrameHeaderSize));
   payload.len := hdr.length;
   Http2Types.InitDefaultSettings(s);  (* reset *)
   DecodeSettings(payload, s, ok);
@@ -247,7 +247,7 @@ BEGIN
   Check("goaway: type", hdr.ftype = FrameGoaway);
   Check("goaway: stream 0", hdr.streamId = 0);
   payload.base := VAL(ADDRESS,
-    VAL(LONGINT, v.base) + VAL(LONGINT, FrameHeaderSize));
+    LONGCARD(v.base) + LONGCARD(FrameHeaderSize));
   payload.len := hdr.length;
   DecodeGoaway(payload, lastId, errCode, ok);
   Check("goaway: decode ok", ok);
@@ -275,7 +275,7 @@ BEGIN
   Check("winup: type", hdr.ftype = FrameWindowUpdate);
   Check("winup: streamId", hdr.streamId = 3);
   payload.base := VAL(ADDRESS,
-    VAL(LONGINT, v.base) + VAL(LONGINT, FrameHeaderSize));
+    LONGCARD(v.base) + LONGCARD(FrameHeaderSize));
   payload.len := hdr.length;
   DecodeWindowUpdate(payload, inc, ok);
   Check("winup: decode ok", ok);
@@ -302,7 +302,7 @@ BEGIN
   Check("rst: type", hdr.ftype = FrameRstStream);
   Check("rst: streamId", hdr.streamId = 5);
   payload.base := VAL(ADDRESS,
-    VAL(LONGINT, v.base) + VAL(LONGINT, FrameHeaderSize));
+    LONGCARD(v.base) + LONGCARD(FrameHeaderSize));
   payload.len := hdr.length;
   DecodeRstStream(payload, errCode, ok);
   Check("rst: decode ok", ok);

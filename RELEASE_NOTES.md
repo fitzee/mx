@@ -1,5 +1,21 @@
 # Release Notes
 
+## 1.0.3 (2026-03-12)
+
+### Bug fixes
+
+- **Definition module load order** — Def modules are now registered in topological (dependency-first) order, fixing "undefined type" errors when a def imports types from another def that hasn't been registered yet.
+- **Re-export visibility** — Symbols imported into a `.def` module are now marked as exported, so qualified access (e.g., `Module.ImportedType`) works correctly from client code.
+- **Module symbol shadowing** — `FROM Module IMPORT Module` (where type and module share a name) no longer prevents qualified access to other members of that module.
+
+### Libraries
+
+- **m2fmt 0.1.1** — PIM4-conformant `LONGCARD` pointer arithmetic in `PutCh`.
+- **m2hash 0.1.1** — PIM4-conformant `LONGCARD` pointer arithmetic in `BucketAt`.
+- **m2stream 0.1.1** — PIM4-conformant `LONGCARD` pointer arithmetic in `OffsetPtr`.
+- **m2text 0.1.1** — PIM4-conformant `LONGCARD` pointer arithmetic in `PtrAt`.
+- **m2alloc, m2http2** — Test-only fixes: `LONGCARD` pointer comparisons and arithmetic (no version bump).
+
 ## Library releases (2026-03-11)
 
 ### Libraries

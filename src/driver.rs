@@ -686,19 +686,6 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         None
     };
 
-    // Generate C
-    let mut codegen = CodeGen::new();
-    codegen.set_m2plus(opts.m2plus);
-    codegen.set_debug(opts.debug);
-    codegen.multi_tu = opts.emit_per_module;
-
-    // Register the implementation module's own definition module first,
-    // so that types/constants from the .def are visible in the .mod
-    // (PIM4: implementation module implicitly sees its definition module)
-    if let Some(ref def_mod) = own_def {
-        codegen.register_def_module(def_mod);
-    }
-
     // For FROM Module IMPORT and IMPORT Module, find and load dependency modules
     let imports = match &unit {
         CompilationUnit::ProgramModule(m) => m.imports.clone(),
@@ -718,16 +705,33 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
     }
 
-    // First pass: parse and register definition modules for all non-stdlib imports
-    // This allows sema to resolve types and procedures from imported modules
+    // Generate C
+    let mut codegen = CodeGen::new();
+    codegen.set_m2plus(opts.m2plus);
+    codegen.set_debug(opts.debug);
+    codegen.multi_tu = opts.emit_per_module;
+
+    // First pass: parse all definition modules for non-stdlib imports (transitive)
     let mut registered_defs = std::collections::HashSet::new();
-    // Mark own def as already registered so the import loop doesn't re-parse it
+    // Phase 1: parse all .def files and collect them (including the own def)
+    let mut parsed_defs: std::collections::HashMap<String, crate::ast::DefinitionModule> = std::collections::HashMap::new();
+    // Include the own .def in parsed_defs so it participates in topological sort
     if let Some(ref def_mod) = own_def {
-        registered_defs.insert(def_mod.name.clone());
+        // Seed queue with the own def's imports
+        for imp in &def_mod.imports {
+            if let Some(ref from_mod) = imp.from_module {
+                all_imported_modules.push(from_mod.clone());
+            } else {
+                for name in &imp.names {
+                    all_imported_modules.push(name.name.clone());
+                }
+            }
+        }
+        parsed_defs.insert(def_mod.name.clone(), def_mod.clone());
     }
     let mut def_queue: Vec<String> = all_imported_modules.clone();
     while let Some(mod_name) = def_queue.pop() {
-        if crate::stdlib::is_stdlib_module(&mod_name) || registered_defs.contains(&mod_name) {
+        if crate::stdlib::is_stdlib_module(&mod_name) || registered_defs.contains(&mod_name) || parsed_defs.contains_key(&mod_name) {
             continue;
         }
         if let Some(def_path) = find_def_file(&mod_name, &opts.input, &opts.include_paths) {
@@ -736,22 +740,64 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
             let def_unit = parse_file(&def_path, opts.case_sensitive, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
-                // Transitively discover imports of this def module's corresponding impl
+                // Transitively discover imports of this def module
                 for imp in &def_mod.imports {
                     if let Some(ref from_mod) = imp.from_module {
-                        if !registered_defs.contains(from_mod) {
+                        if !registered_defs.contains(from_mod) && !parsed_defs.contains_key(from_mod) {
                             def_queue.push(from_mod.clone());
                         }
                     } else {
                         for name in &imp.names {
-                            if !registered_defs.contains(&name.name) {
+                            if !registered_defs.contains(&name.name) && !parsed_defs.contains_key(&name.name) {
                                 def_queue.push(name.name.clone());
                             }
                         }
                     }
                 }
+                parsed_defs.insert(mod_name.clone(), def_mod);
+            }
+        }
+    }
+    // Phase 2: topologically sort def modules so dependencies are registered first
+    {
+        let mut sorted = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        fn topo_visit(
+            name: &str,
+            parsed: &std::collections::HashMap<String, crate::ast::DefinitionModule>,
+            visited: &mut std::collections::HashSet<String>,
+            sorted: &mut Vec<String>,
+            registered: &std::collections::HashSet<String>,
+        ) {
+            if visited.contains(name) || registered.contains(name) {
+                return;
+            }
+            visited.insert(name.to_string());
+            if let Some(def) = parsed.get(name) {
+                for imp in &def.imports {
+                    if let Some(ref from_mod) = imp.from_module {
+                        topo_visit(from_mod, parsed, visited, sorted, registered);
+                    } else {
+                        for n in &imp.names {
+                            topo_visit(&n.name, parsed, visited, sorted, registered);
+                        }
+                    }
+                }
+            }
+            sorted.push(name.to_string());
+        }
+        let names: Vec<String> = parsed_defs.keys().cloned().collect();
+        for name in &names {
+            topo_visit(name, &parsed_defs, &mut visited, &mut sorted, &registered_defs);
+        }
+        // Register in dependency order
+        for name in &sorted {
+            if let Some(def_mod) = parsed_defs.remove(name) {
+                if opts.verbose {
+                    eprintln!("{}: registering definition module: {}", identity::COMPILER_NAME, name);
+                }
                 codegen.register_def_module(&def_mod);
-                registered_defs.insert(mod_name.clone());
+                registered_defs.insert(name.clone());
             }
         }
     }

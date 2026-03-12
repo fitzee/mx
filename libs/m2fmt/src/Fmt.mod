@@ -2,7 +2,7 @@ IMPLEMENTATION MODULE Fmt;
 (* JSON/CSV/table output formatting.
    All output to caller-provided Buf.  No heap allocation. *)
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Strings IMPORT Assign, Length, Concat;
 
 TYPE
@@ -13,7 +13,7 @@ TYPE
 PROCEDURE PutCh(base: ADDRESS; idx: CARDINAL; ch: CHAR);
 VAR p: CharPtr;
 BEGIN
-  p := VAL(ADDRESS, VAL(LONGINT, base) + VAL(LONGINT, idx));
+  p := CharPtr(LONGCARD(base) + LONGCARD(idx));
   p^ := ch
 END PutCh;
 

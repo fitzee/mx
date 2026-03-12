@@ -310,6 +310,20 @@ impl SemanticAnalyzer {
         };
         let export_all = !has_export;  // If no EXPORT clause, everything is exported
 
+        // Mark imported symbols as exported if they should be visible via qualified access.
+        // In PIM4, a .def without an EXPORT clause exports everything, including re-imports.
+        // With an EXPORT clause, only listed names are exported.
+        {
+            let symbols_to_export: Vec<String> = self.symtab
+                .scope_symbols(scope_id)
+                .filter(|s| !s.exported && (export_all || exported_names.contains(&s.name)))
+                .map(|s| s.name.clone())
+                .collect();
+            for name in symbols_to_export {
+                self.symtab.set_exported(scope_id, &name, true);
+            }
+        }
+
         for def in &m.definitions {
             let is_exported = |name: &str| export_all || exported_names.contains(&name.to_string());
             let mod_name = Some(m.name.clone());
@@ -410,11 +424,12 @@ impl SemanticAnalyzer {
     /// Ensure a module scope exists (from a prior .def registration or stdlib stubs).
     /// Returns the scope ID for the module.
     fn ensure_module_scope(&mut self, mod_name: &str) -> usize {
-        // Check if already registered (e.g. from a .def file)
-        if let Some(sym) = self.symtab.lookup_in_scope(self.current_scope, mod_name) {
-            if let SymbolKind::Module { scope_id } = &sym.kind {
-                return *scope_id;
-            }
+        // Check if already registered as a Module symbol (e.g. from a .def file).
+        // Must search specifically for Module kind, because a FROM import may have
+        // created a non-module symbol with the same name (e.g., Promise is both a
+        // module and a type exported by that module).
+        if let Some(scope_id) = self.symtab.lookup_module_scope(mod_name) {
+            return scope_id;
         }
         // Create new scope with stdlib stubs
         let sid = self.enter_scope(mod_name);
@@ -465,9 +480,13 @@ impl SemanticAnalyzer {
 
     /// Handle `IMPORT Module` (whole-module / qualified import)
     fn import_whole_module(&mut self, name: &str) {
-        // Skip if already registered (e.g., from a .def file)
-        if self.symtab.lookup(name).is_some() {
-            return;
+        // Skip if already registered as a module (e.g., from a .def file).
+        // Don't skip if the name exists but is a non-module symbol (e.g., a type
+        // imported via FROM Module IMPORT TypeName where TypeName == ModuleName).
+        if let Some(sym) = self.symtab.lookup(name) {
+            if matches!(sym.kind, SymbolKind::Module { .. }) {
+                return;
+            }
         }
         self.ensure_module_scope(name);
     }
@@ -887,8 +906,8 @@ impl SemanticAnalyzer {
 
     fn resolve_named_type(&mut self, qi: &QualIdent) -> TypeId {
         let resolved = if let Some(module) = &qi.module {
-            self.symtab.lookup_qualified_with_scope(module, &qi.name)
-                .map(|(ds, sym)| (ds, sym.typ, sym.kind.clone()))
+            let r = self.symtab.lookup_qualified_with_scope(module, &qi.name);
+            r.map(|(ds, sym)| (ds, sym.typ, sym.kind.clone()))
         } else {
             self.symtab.lookup_in_scope_with_id(self.current_scope, &qi.name)
                 .map(|(ds, sym)| (ds, sym.typ, sym.kind.clone()))

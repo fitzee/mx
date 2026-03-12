@@ -192,6 +192,37 @@ impl SymbolTable {
         self.scopes.get(scope_id).and_then(|s| s.parent)
     }
 
+    /// Search all scopes for a Module symbol with the given name and return its scope_id.
+    /// This bypasses the normal scope chain to handle cases where a type import shadows
+    /// the module symbol (e.g., FROM Promise IMPORT Promise where Promise is both module and type).
+    pub fn lookup_module_scope(&self, name: &str) -> Option<usize> {
+        // Walk scope chain from current scope first
+        let mut sid = self.current_scope();
+        loop {
+            let scope = &self.scopes[sid];
+            if let Some(sym) = scope.symbols.get(name) {
+                if let SymbolKind::Module { scope_id } = &sym.kind {
+                    return Some(*scope_id);
+                }
+            }
+            if let Some(parent) = scope.parent {
+                sid = parent;
+            } else {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Set the exported flag on a symbol in a specific scope.
+    pub fn set_exported(&mut self, scope_id: usize, name: &str, exported: bool) {
+        if let Some(scope) = self.scopes.get_mut(scope_id) {
+            if let Some(sym) = scope.symbols.get_mut(name) {
+                sym.exported = exported;
+            }
+        }
+    }
+
     /// Return the name of a scope (e.g. procedure name for a procedure body scope).
     pub fn scope_name(&self, scope_id: usize) -> Option<&str> {
         self.scopes.get(scope_id).map(|s| s.name.as_str())
@@ -217,13 +248,14 @@ impl SymbolTable {
 
     /// Look up a qualified name, returning (defining_scope_id, &Symbol).
     pub fn lookup_qualified_with_scope(&self, module: &str, name: &str) -> Option<(usize, &Symbol)> {
-        if let Some(sym) = self.lookup(module) {
-            if let SymbolKind::Module { scope_id } = &sym.kind {
-                let scope = &self.scopes[*scope_id];
-                if let Some(s) = scope.symbols.get(name) {
-                    if s.exported {
-                        return Some((*scope_id, s));
-                    }
+        // Use lookup_module_scope to find the module, bypassing any non-module
+        // symbols with the same name (e.g., a type imported via FROM Module IMPORT TypeName
+        // where TypeName == ModuleName).
+        if let Some(mod_scope) = self.lookup_module_scope(module) {
+            let scope = &self.scopes[mod_scope];
+            if let Some(s) = scope.symbols.get(name) {
+                if s.exported {
+                    return Some((mod_scope, s));
                 }
             }
         }

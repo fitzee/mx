@@ -4,7 +4,7 @@
 # Provides both sync (try-once) and async (Future-returning) APIs.
 manifest_version=1
 name=m2stream
-version=0.1.0
+version=0.1.1
 edition=pim4
 entry=src/Stream.mod
 includes=src

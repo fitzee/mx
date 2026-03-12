@@ -1,6 +1,6 @@
 IMPLEMENTATION MODULE HashMap;
 
-FROM SYSTEM IMPORT ADDRESS, ADR, TSIZE;
+FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Strings IMPORT Length;
 
 (* ── Pointer arithmetic for bucket access ────────────── *)
@@ -12,8 +12,7 @@ TYPE
 
 PROCEDURE BucketAt(base: ADDRESS; idx: CARDINAL): BucketPtr;
 BEGIN
-  RETURN VAL(ADDRESS,
-    VAL(LONGINT, base) + VAL(LONGINT, idx) * VAL(LONGINT, TSIZE(Bucket)))
+  RETURN BucketPtr(LONGCARD(base) + LONGCARD(idx) * LONGCARD(TSIZE(Bucket)))
 END BucketAt;
 
 (* ── FNV-1a constants ────────────────────────────────── *)
