@@ -1,5 +1,21 @@
 # Release Notes
 
+## 1.0.4 (2026-03-13)
+
+### Bug fixes
+
+- **Def-only module types emitted before embedded implementations** — Definition modules with no matching implementation (pure type/constant modules) now have their types emitted in the C preamble before embedded modules, so dependent modules can reference them.
+- **Array-indexed field resolution uses type-aware lookup** — `arr[i].field` assignments now resolve the record type through tracked array element types, preventing false-positive memcpy generation when identically-named fields exist across records with different types.
+
+### Features
+
+- **m2lmdb 0.2.0** — New `DbiStatEntries` procedure to query entry count via `mdb_stat`.
+
+### Test coverage
+
+- New adversarial regression test: `def_only_module` — verifies def-only module types are available to embedded modules.
+- New adversarial regression test: `array_field_name_collision` — verifies scalar field assignment through array indexing when another record has an array field with the same name.
+
 ## Library audit refactor (2026-03-13)
 
 ### Bug fixes

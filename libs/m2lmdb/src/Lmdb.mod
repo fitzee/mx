@@ -14,6 +14,7 @@ FROM LmdbBridge IMPORT
   m2_lmdb_get, m2_lmdb_put, m2_lmdb_del,
   m2_lmdb_cursor_open, m2_lmdb_cursor_close,
   m2_lmdb_cursor_get, m2_lmdb_cursor_seek, m2_lmdb_cursor_put,
+  m2_lmdb_dbi_stat_entries,
   m2_lmdb_errmsg;
 
 (* ── Status mapping ──────────────────────────────── *)
@@ -216,6 +217,16 @@ BEGIN
   rc := m2_lmdb_cursor_put(cur, key, keyLen, val, valLen, flags);
   RETURN MapStatus(rc)
 END CursorPut;
+
+(* ── Statistics ─────────────────────────────────── *)
+
+PROCEDURE DbiStatEntries(txn: Txn; dbi: Dbi;
+                         VAR entries: LONGCARD): Status;
+VAR rc: INTEGER;
+BEGIN
+  rc := m2_lmdb_dbi_stat_entries(txn, dbi, entries);
+  RETURN MapStatus(rc)
+END DbiStatEntries;
 
 (* ── Error reporting ────────────────────────────── *)
 

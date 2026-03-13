@@ -1,0 +1,20 @@
+IMPLEMENTATION MODULE Backend;
+
+FROM SYSTEM IMPORT ADDRESS;
+
+VAR gOpen: BOOLEAN;
+
+PROCEDURE Open(VAR h: Handle): BOOLEAN;
+BEGIN
+  gOpen := TRUE;
+  h := NIL;
+  RETURN TRUE
+END Open;
+
+PROCEDURE Close(VAR h: Handle);
+BEGIN
+  h := NIL;
+  gOpen := FALSE
+END Close;
+
+END Backend.

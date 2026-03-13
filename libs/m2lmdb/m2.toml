@@ -8,7 +8,7 @@
 #   Linux:  apt install liblmdb-dev  (or equivalent)
 manifest_version=1
 name=m2lmdb
-version=0.1.0
+version=0.2.0
 edition=pim4
 entry=src/Lmdb.mod
 includes=src

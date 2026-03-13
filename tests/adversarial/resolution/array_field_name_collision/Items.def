@@ -1,0 +1,16 @@
+DEFINITION MODULE Items;
+(* Module with a record field named "tag" that is INTEGER.
+   When stored in an array and accessed via arr[i].tag,
+   the codegen must NOT generate memcpy — it must be a
+   plain scalar assignment. *)
+
+TYPE
+  Item = RECORD
+    tag:   INTEGER;     (* same name as Keys.KeyEntry.tag, but scalar *)
+    value: INTEGER;
+  END;
+
+PROCEDURE SetTag(VAR items: ARRAY OF Item; idx: CARDINAL; t: INTEGER);
+PROCEDURE GetTag(VAR items: ARRAY OF Item; idx: CARDINAL): INTEGER;
+
+END Items.

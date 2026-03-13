@@ -1,0 +1,11 @@
+DEFINITION MODULE Backend;
+(* Library-like module that does NOT import SharedTypes.
+   Its types must not collide with SharedTypes. *)
+
+TYPE
+  Handle = ADDRESS;
+
+PROCEDURE Open(VAR h: Handle): BOOLEAN;
+PROCEDURE Close(VAR h: Handle);
+
+END Backend.

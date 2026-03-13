@@ -1,0 +1,18 @@
+DEFINITION MODULE SharedTypes;
+(* Definition-only module — no .mod file.
+   Exercises enum, record, constant, and alias types
+   that must be available to other modules. *)
+
+CONST
+  MaxItems = 64;
+
+TYPE
+  Color = (Red, Green, Blue);
+
+  Coord = RECORD
+    x, y: INTEGER;
+  END;
+
+  Status = (StOk, StNotFound, StFull);
+
+END SharedTypes.

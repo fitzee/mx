@@ -580,6 +580,40 @@
     "_comment": "Regression: FROM-imported proc with open array param must resolve correct module's param info when another module exports a same-named proc without open arrays."
   },
   {
+    "name": "def_only_module",
+    "category": "resolution",
+    "dir": "resolution/def_only_module",
+    "main": "DefOnlyModule.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "color=0\ncolor=2\nmax=64\ncoord=10,20\ninit OK\nsetcolor OK\ngetcoord OK\nall def-only module OK\n",
+    "c_scan": true,
+    "tags": [
+      "ci"
+    ],
+    "_comment": "Regression: definition-only modules (.def without .mod) must have their types emitted in the C output. Without this, modules referencing def-only types in procedure signatures get 'type not declared' errors attributed to unrelated library modules."
+  },
+  {
+    "name": "array_field_name_collision",
+    "category": "resolution",
+    "dir": "resolution/array_field_name_collision",
+    "main": "ArrayFieldCollision.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "tag=42 val=420\ntag=99 val=990\ntag=-7 val=-70\ntag=0 val=0\ndirect=100,101\nall array field collision OK\n",
+    "c_scan": true,
+    "tags": [
+      "ci"
+    ],
+    "_comment": "Regression: when two records in different modules have same-named fields with different types (one array, one scalar), arr[i].field assignment must resolve the correct record type through array indexing instead of falling back to name-only matching that would incorrectly generate memcpy for scalar fields."
+  },
+  {
     "name": "args_getarg_high_test",
     "category": "resolution",
     "dir": "resolution",

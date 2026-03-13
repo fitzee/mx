@@ -114,6 +114,13 @@ PROCEDURE CursorPut(cur: Cursor;
                     val: ADDRESS; valLen: LONGCARD;
                     flags: CARDINAL): Status;
 
+(* ── Statistics ─────────────────────────────────── *)
+
+(* DbiStatEntries returns the number of entries in the given database
+   handle via mdb_stat.  Requires an active transaction (read-only is fine). *)
+PROCEDURE DbiStatEntries(txn: Txn; dbi: Dbi;
+                         VAR entries: LONGCARD): Status;
+
 (* ── Error reporting ────────────────────────────── *)
 
 (* ErrMsg writes a human-readable error string for the given LMDB

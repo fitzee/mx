@@ -171,6 +171,15 @@ int32_t m2_lmdb_cursor_put(void *cur,
     return map_rc(mdb_cursor_put((MDB_cursor *)cur, &k, &v, flags));
 }
 
+/* ── Statistics ───────────────────────────────────── */
+
+int32_t m2_lmdb_dbi_stat_entries(void *txn, uint32_t dbi, uint64_t *entries) {
+    MDB_stat stat;
+    int rc = mdb_stat((MDB_txn *)txn, (MDB_dbi)dbi, &stat);
+    if (rc == 0) *entries = (uint64_t)stat.ms_entries;
+    return map_rc(rc);
+}
+
 /* ── Error reporting ──────────────────────────────── */
 
 void m2_lmdb_errmsg(int32_t code, char *buf, int32_t bufLen) {

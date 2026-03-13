@@ -95,6 +95,8 @@ pub struct CodeGen {
     array_fields: HashSet<(String, String)>,
     /// Record field names that are pointer types (bare name, for disambiguating array_fields)
     pointer_fields: HashSet<String>,
+    /// Maps array variable name → element type name (for resolving arr[i].field patterns)
+    array_var_elem_types: HashMap<String, String>,
     /// Variable names that are SET or BITSET types
     set_vars: HashSet<String>,
     /// Variable names that are CARDINAL (unsigned) types
@@ -461,6 +463,7 @@ impl CodeGen {
             array_vars: HashSet::new(),
             array_fields: HashSet::new(),
             pointer_fields: HashSet::new(),
+            array_var_elem_types: HashMap::new(),
             set_vars: HashSet::new(),
             cardinal_vars: HashSet::new(),
             complex_vars: HashSet::new(),
@@ -841,6 +844,75 @@ impl CodeGen {
 
         if let Some(pending) = self.pending_modules.take() {
             let sorted = Self::topo_sort_modules(pending, &self.def_modules)?;
+            let embedded_names: std::collections::HashSet<String> =
+                sorted.iter().map(|m| m.name.clone()).collect();
+
+            // Emit types and constants for definition-only modules (no .mod counterpart)
+            // BEFORE embedded implementations, since embedded modules may reference these types.
+            // These are registered def modules with no matching implementation module,
+            // e.g. pure type-definition modules like "PdcTypes.def".
+            let def_only_modules: Vec<String> = self.def_modules.keys()
+                .filter(|name| {
+                    !embedded_names.contains(name.as_str())
+                        && !self.foreign_modules.contains(name.as_str())
+                        && name.as_str() != self.module_name
+                })
+                .cloned()
+                .collect();
+            if !def_only_modules.is_empty() {
+                let mut def_only_sorted = def_only_modules;
+                def_only_sorted.sort();
+                for mod_name in &def_only_sorted {
+                    if let Some(def_mod) = self.def_modules.get(mod_name).cloned() {
+                        let saved_module_name = self.module_name.clone();
+                        let saved_import_map = self.import_map.clone();
+                        let saved_import_alias_map = self.import_alias_map.clone();
+
+                        self.module_name = mod_name.clone();
+                        self.emitln(&format!("/* Definition-only module {} */", mod_name));
+                        self.generating_for_module = Some(mod_name.clone());
+
+                        // Build import scope so intra-module type references resolve
+                        self.import_map.clear();
+                        self.import_alias_map.clear();
+                        self.build_import_map(&def_mod.imports);
+
+                        // Pre-register type names in embedded_enum_types
+                        for d in &def_mod.definitions {
+                            if let Definition::Type(t) = d {
+                                let prefixed = format!("{}_{}", mod_name, self.mangle(&t.name));
+                                self.embedded_enum_types.insert(prefixed);
+                            }
+                        }
+
+                        // Forward declare record types
+                        for d in &def_mod.definitions {
+                            if let Definition::Type(t) = d {
+                                if matches!(&t.typ, Some(TypeNode::Record { .. })) {
+                                    let cn = self.type_decl_c_name(&t.name);
+                                    self.emitln(&format!("typedef struct {} {};", cn, cn));
+                                }
+                            }
+                        }
+
+                        // Emit type and constant declarations
+                        for d in &def_mod.definitions {
+                            match d {
+                                Definition::Type(t) => self.gen_type_decl(t),
+                                Definition::Const(c) => self.gen_const_decl(c),
+                                _ => {}
+                            }
+                        }
+
+                        self.generating_for_module = None;
+                        self.module_name = saved_module_name;
+                        self.import_map = saved_import_map;
+                        self.import_alias_map = saved_import_alias_map;
+                        self.newline();
+                    }
+                }
+            }
+
             for imp_mod in &sorted {
                 self.gen_embedded_implementation(imp_mod);
             }
@@ -2448,6 +2520,17 @@ impl CodeGen {
                     for name in &v.names {
                         self.array_vars.insert(name.clone());
                     }
+                }
+            }
+        }
+        // Track array variable element types for resolving arr[i].field patterns.
+        // Uses the C-level type name (module-prefixed in embedded modules) to match
+        // record_fields / record_field_types keys.
+        if let TypeNode::Array { elem_type, .. } = &v.typ {
+            if let TypeNode::Named(qi) = elem_type.as_ref() {
+                let elem_name = self.named_type_to_c(qi);
+                for name in &v.names {
+                    self.array_var_elem_types.insert(name.clone(), elem_name.clone());
                 }
             }
         }
@@ -4835,9 +4918,19 @@ impl CodeGen {
                         current = self.record_field_types.get(&(tn.clone(), name.clone())).cloned();
                     }
                 }
-                Selector::Deref(_) | Selector::Index(_, _) => {
-                    // Pointer deref or array indexing: type info not tracked, bail out
+                Selector::Deref(_) => {
+                    // Pointer deref: type info not tracked, bail out
                     current = None;
+                }
+                Selector::Index(_, _) => {
+                    // Array indexing: resolve element type if tracked
+                    if i == 0 {
+                        // First selector is index on the base variable
+                        current = self.array_var_elem_types.get(&desig.ident.name).cloned();
+                    } else {
+                        // Nested index — bail
+                        current = None;
+                    }
                 }
             }
         }

@@ -1,0 +1,19 @@
+DEFINITION MODULE Keys;
+(* Module with a record field named "tag" that IS an ARRAY type.
+   This must NOT cause a same-named INTEGER field in another
+   module's record to be treated as an array (memcpy). *)
+
+CONST
+  TagLen = 16;
+
+TYPE
+  TagBuf = ARRAY [0..TagLen-1] OF CHAR;
+
+  KeyEntry = RECORD
+    tag:    TagBuf;     (* array field — this is the poison *)
+    active: BOOLEAN;
+  END;
+
+PROCEDURE InitEntry(VAR e: KeyEntry);
+
+END Keys.

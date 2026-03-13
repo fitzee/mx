@@ -49,6 +49,10 @@ PROCEDURE m2_lmdb_cursor_put(cur: ADDRESS;
                               val: ADDRESS; vlen: LONGCARD;
                               flags: CARDINAL): INTEGER;
 
+(* Statistics *)
+PROCEDURE m2_lmdb_dbi_stat_entries(txn: ADDRESS; dbi: CARDINAL;
+                                    VAR entries: LONGCARD): INTEGER;
+
 (* Error reporting *)
 PROCEDURE m2_lmdb_errmsg(code: INTEGER; buf: ADDRESS; bufLen: INTEGER);
 

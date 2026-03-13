@@ -1,0 +1,12 @@
+DEFINITION MODULE Service;
+(* Module that imports BOTH the def-only module and the library module.
+   Procedure signatures use types from the def-only module. *)
+
+FROM SharedTypes IMPORT Color, Coord, Status;
+FROM Backend IMPORT Handle;
+
+PROCEDURE Init(VAR h: Handle): Status;
+PROCEDURE SetColor(h: Handle; c: Color): Status;
+PROCEDURE GetCoord(h: Handle; VAR p: Coord): Status;
+
+END Service.
