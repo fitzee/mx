@@ -90,6 +90,7 @@ Each row shows: library name (for m2.toml `[deps]`), the module names you actual
 | **m2json** | Json | (none) | JSON parser/generator |
 | **m2lmdb** | Lmdb, LmdbBridge | (none) | LMDB key/value store; needs `-llmdb` |
 | **m2log** | Log, LogSinkFile, LogSinkMemory, LogSinkStream | (none) | Structured logging |
+| **m2metrics** | Metrics, MetricsBridge | (none) | System metrics: load avg, memory, CPU, RSS |
 | **m2oidc** | Oidc, Jwks, OidcBridge | m2auth, m2json, m2pthreads | OIDC/JWKS/RS256; needs `-lssl -lcrypto` |
 | **m2path** | Path | (none) | Path manipulation |
 | **m2pthreads** | Threads, ThreadsBridge | (none) | Pthreads wrapper (M2+) |

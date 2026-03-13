@@ -843,6 +843,21 @@ static inline int32_t m2_mod(int32_t a, int32_t b) {
     return r;
 }
 
+/* PIM4 DIV64: 64-bit floored division for LONGINT */
+static inline int64_t m2_div64(int64_t a, int64_t b) {
+    int64_t q = a / b;
+    int64_t r = a % b;
+    if ((r != 0) && ((r ^ b) < 0)) q--;
+    return q;
+}
+
+/* PIM4 MOD64: 64-bit modulo for LONGINT */
+static inline int64_t m2_mod64(int64_t a, int64_t b) {
+    int64_t r = a % b;
+    if (r < 0) r += (b > 0 ? b : -b);
+    return r;
+}
+
 /* ISO Modula-2 COMPLEX types */
 typedef struct { float re, im; } m2_COMPLEX;
 typedef struct { double re, im; } m2_LONGCOMPLEX;

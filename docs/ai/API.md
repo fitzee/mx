@@ -1,6 +1,6 @@
 # mx Library API Quick Reference
 
-Condensed procedure signatures for all 32 libraries. For detailed docs see `docs/libs/<library>/`.
+Condensed procedure signatures for all 33 libraries. For detailed docs see `docs/libs/<library>/`.
 
 Library name (for `m2.toml` `[deps]`) differs from module name (for `FROM ... IMPORT`).
 
@@ -530,6 +530,21 @@ m2sys_tar_extract(archivePath, destDir: ADDRESS): INTEGER
 
 (* Time *)
 m2sys_unix_time(): LONGINT
+```
+
+### m2metrics — Metrics, MetricsBridge
+
+System metrics: load average, memory, CPU time, RSS.
+
+```
+TYPE SysSnapshot = RECORD
+  load1, load5, load15: LONGINT;     (* load avg x 1000 *)
+  memTotalMB, memFreeMB: LONGINT;    (* RAM in MB *)
+  cpuUserUs, cpuSysUs: LONGINT;      (* CPU time in us *)
+  rssKB, maxRssKB: LONGINT;          (* process RSS in KB *)
+END;
+
+Snapshot(VAR snap: SysSnapshot)
 ```
 
 ---

@@ -26,6 +26,8 @@ struct VarTrackingScope {
     char_array_vars: HashSet<String>,
     set_vars: HashSet<String>,
     cardinal_vars: HashSet<String>,
+    longint_vars: HashSet<String>,
+    longcard_vars: HashSet<String>,
     complex_vars: HashSet<String>,
     longcomplex_vars: HashSet<String>,
     var_types: HashMap<String, String>,
@@ -101,6 +103,10 @@ pub struct CodeGen {
     set_vars: HashSet<String>,
     /// Variable names that are CARDINAL (unsigned) types
     cardinal_vars: HashSet<String>,
+    /// Variable names that are LONGINT (signed 64-bit) types
+    longint_vars: HashSet<String>,
+    /// Variable names that are LONGCARD (unsigned 64-bit) types
+    longcard_vars: HashSet<String>,
     /// Variable names that are COMPLEX type
     complex_vars: HashSet<String>,
     /// Variable names that are LONGCOMPLEX type
@@ -158,6 +164,8 @@ pub struct CodeGen {
     embedded_local_vars: HashSet<String>,
     /// All known type names (bare + module-prefixed) for type cast recognition
     known_type_names: HashSet<String>,
+    /// Type names that are aliases for unsigned types (CARDINAL, LONGCARD)
+    unsigned_type_aliases: HashSet<String>,
     /// Maps record field names → proc param info for fields with procedure types.
     /// Used as fallback for calls through complex designators (e.g. rec.field(args)).
     field_proc_params: HashMap<String, Vec<ParamCodegenInfo>>,
@@ -466,6 +474,8 @@ impl CodeGen {
             array_var_elem_types: HashMap::new(),
             set_vars: HashSet::new(),
             cardinal_vars: HashSet::new(),
+            longint_vars: HashSet::new(),
+            longcard_vars: HashSet::new(),
             complex_vars: HashSet::new(),
             longcomplex_vars: HashSet::new(),
             imported_modules: HashSet::new(),
@@ -495,6 +505,7 @@ impl CodeGen {
             embedded_local_procs: HashSet::new(),
             embedded_local_vars: HashSet::new(),
             known_type_names: HashSet::new(),
+            unsigned_type_aliases: HashSet::new(),
             field_proc_params: HashMap::new(),
             type_id_counter: 0,
             type_descs: Vec::new(),
@@ -2287,6 +2298,14 @@ impl CodeGen {
                     }
                 }
                 _ => {
+                    // Track type aliases that resolve to unsigned types
+                    if let TypeNode::Named(qi) = tn {
+                        if qi.name == "CARDINAL" || qi.name == "LONGCARD"
+                            || self.unsigned_type_aliases.contains(&qi.name) {
+                            self.unsigned_type_aliases.insert(t.name.clone());
+                            self.unsigned_type_aliases.insert(c_type_name.clone());
+                        }
+                    }
                     self.emit_indent();
                     let ctype = self.type_to_c(tn);
                     self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
@@ -2581,11 +2600,34 @@ impl CodeGen {
                 self.set_vars.insert(name.clone());
             }
         }
-        // Track CARDINAL variables for unsigned DIV/MOD
+        // Track CARDINAL/LONGCARD variables for unsigned DIV/MOD
         if matches!(&v.typ, TypeNode::Named(qi) if qi.name == "CARDINAL" || qi.name == "LONGCARD") {
             for name in &v.names {
                 self.cardinal_vars.insert(name.clone());
             }
+        }
+        // Track LONGINT variables for 64-bit signed DIV/MOD
+        if matches!(&v.typ, TypeNode::Named(qi) if qi.name == "LONGINT") {
+            for name in &v.names {
+                self.longint_vars.insert(name.clone());
+            }
+        }
+        // Track LONGCARD variables for 64-bit detection
+        if matches!(&v.typ, TypeNode::Named(qi) if qi.name == "LONGCARD") {
+            for name in &v.names {
+                self.longcard_vars.insert(name.clone());
+            }
+        }
+        // Track type aliases that resolve to LONGINT/LONGCARD
+        if let TypeNode::Named(qi) = &v.typ {
+            if self.unsigned_type_aliases.contains(&qi.name) {
+                for name in &v.names {
+                    self.cardinal_vars.insert(name.clone());
+                    self.longcard_vars.insert(name.clone());
+                }
+            }
+            // Check if it's an alias for LONGINT (signed 64-bit)
+            // We don't have a signed_type_aliases set, but we can check var_types later
         }
         // Track COMPLEX/LONGCOMPLEX variables
         if self.is_complex_type(&v.typ) {
@@ -2815,6 +2857,34 @@ impl CodeGen {
                 if qi.module.is_none() {
                     for name in &fp.names {
                         self.var_types.insert(name.clone(), qi.name.clone());
+                    }
+                }
+            }
+            // Track CARDINAL/LONGCARD params for unsigned DIV/MOD
+            if matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CARDINAL" || qi.name == "LONGCARD") {
+                for name in &fp.names {
+                    self.cardinal_vars.insert(name.clone());
+                }
+            }
+            // Track LONGINT params for 64-bit signed DIV/MOD
+            if matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "LONGINT") {
+                for name in &fp.names {
+                    self.longint_vars.insert(name.clone());
+                }
+            }
+            // Track LONGCARD params for 64-bit detection
+            if matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "LONGCARD") {
+                for name in &fp.names {
+                    self.longcard_vars.insert(name.clone());
+                }
+            }
+            // Also track params whose type aliases resolve to CARDINAL/LONGCARD
+            // (e.g. Timestamp = LONGCARD)
+            if let TypeNode::Named(qi) = &fp.typ {
+                if self.unsigned_type_aliases.contains(&qi.name) {
+                    for name in &fp.names {
+                        self.cardinal_vars.insert(name.clone());
+                        self.longcard_vars.insert(name.clone());
                     }
                 }
             }
@@ -3670,7 +3740,12 @@ impl CodeGen {
                         self.emit(")");
                     } else {
                         // PIM4 DIV: truncates toward negative infinity (floored division)
-                        self.emit("m2_div(");
+                        let func = if self.is_long_expr(left) || self.is_long_expr(right) {
+                            "m2_div64"
+                        } else {
+                            "m2_div"
+                        };
+                        self.emit(&format!("{}(", func));
                         self.gen_expr(left);
                         self.emit(", ");
                         self.gen_expr(right);
@@ -3695,7 +3770,12 @@ impl CodeGen {
                         self.emit(")");
                     } else {
                         // PIM4 MOD: result is always non-negative
-                        self.emit("m2_mod(");
+                        let func = if self.is_long_expr(left) || self.is_long_expr(right) {
+                            "m2_mod64"
+                        } else {
+                            "m2_mod"
+                        };
+                        self.emit(&format!("{}(", func));
                         self.gen_expr(left);
                         self.emit(", ");
                         self.gen_expr(right);
@@ -4756,6 +4836,8 @@ impl CodeGen {
             char_array_vars: self.char_array_vars.clone(),
             set_vars: self.set_vars.clone(),
             cardinal_vars: self.cardinal_vars.clone(),
+            longint_vars: self.longint_vars.clone(),
+            longcard_vars: self.longcard_vars.clone(),
             complex_vars: self.complex_vars.clone(),
             longcomplex_vars: self.longcomplex_vars.clone(),
             var_types: self.var_types.clone(),
@@ -4768,6 +4850,8 @@ impl CodeGen {
         self.char_array_vars = saved.char_array_vars;
         self.set_vars = saved.set_vars;
         self.cardinal_vars = saved.cardinal_vars;
+        self.longint_vars = saved.longint_vars;
+        self.longcard_vars = saved.longcard_vars;
         self.complex_vars = saved.complex_vars;
         self.longcomplex_vars = saved.longcomplex_vars;
         self.var_types = saved.var_types;
@@ -5079,16 +5163,91 @@ impl CodeGen {
         }
         match &expr.kind {
             ExprKind::Designator(d) => {
-                d.ident.module.is_none() && d.selectors.is_empty()
-                    && self.cardinal_vars.contains(&d.ident.name)
+                if d.selectors.is_empty() && d.ident.module.is_none() {
+                    if self.cardinal_vars.contains(&d.ident.name) {
+                        return true;
+                    }
+                    // Check if variable's type is a known unsigned alias
+                    if let Some(type_name) = self.var_types.get(&d.ident.name) {
+                        if self.unsigned_type_aliases.contains(type_name) {
+                            return true;
+                        }
+                    }
+                }
+                false
             }
-            ExprKind::FuncCall { desig, .. } => {
-                // CARDINAL(x) type transfer, ORD, HIGH, SHR, SHL, BAND, BOR, BXOR, BNOT
-                matches!(desig.ident.name.as_str(),
-                    "CARDINAL" | "ORD" | "HIGH" | "SHR" | "SHL" | "BAND" | "BOR" | "BXOR" | "BNOT" | "SHIFT" | "ROTATE")
+            ExprKind::FuncCall { desig, args } => {
+                // CARDINAL/LONGCARD type transfer, ORD, HIGH, SIZE, TSIZE, SHR, SHL, BAND, BOR, BXOR, BNOT
+                match desig.ident.name.as_str() {
+                    "CARDINAL" | "LONGCARD" | "ORD" | "HIGH" | "SIZE" | "TSIZE"
+                    | "SHR" | "SHL" | "BAND" | "BOR" | "BXOR" | "BNOT" | "SHIFT" | "ROTATE" => true,
+                    "VAL" => {
+                        // VAL(CARDINAL, x) or VAL(LONGCARD, x) is unsigned
+                        if let Some(first_arg) = args.first() {
+                            if let ExprKind::Designator(d) = &first_arg.kind {
+                                matches!(d.ident.name.as_str(), "CARDINAL" | "LONGCARD")
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            }
+            ExprKind::IntLit(n) => {
+                // Literals that exceed signed 32-bit range are unsigned
+                *n > i32::MAX as i64
             }
             ExprKind::BinaryOp { left, right, .. } => {
                 self.is_unsigned_expr(left) || self.is_unsigned_expr(right)
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns true if the expression is a 64-bit type (LONGINT, LONGCARD, or alias thereof).
+    /// Used to select m2_div64/m2_mod64 over the 32-bit versions.
+    fn is_long_expr(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Designator(d) => {
+                if d.selectors.is_empty() && d.ident.module.is_none() {
+                    if self.longint_vars.contains(&d.ident.name)
+                        || self.longcard_vars.contains(&d.ident.name) {
+                        return true;
+                    }
+                    if let Some(type_name) = self.var_types.get(&d.ident.name) {
+                        if type_name == "LONGINT" || type_name == "LONGCARD"
+                            || self.unsigned_type_aliases.contains(type_name) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            ExprKind::FuncCall { desig, args } => {
+                match desig.ident.name.as_str() {
+                    "LONGINT" | "LONGCARD" | "LONG" => true,
+                    "VAL" => {
+                        if let Some(first_arg) = args.first() {
+                            if let ExprKind::Designator(d) = &first_arg.kind {
+                                matches!(d.ident.name.as_str(), "LONGINT" | "LONGCARD")
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            }
+            ExprKind::IntLit(n) => {
+                *n > i32::MAX as i64 || *n < i32::MIN as i64
+            }
+            ExprKind::BinaryOp { left, right, .. } => {
+                self.is_long_expr(left) || self.is_long_expr(right)
             }
             _ => false,
         }

@@ -1,0 +1,11 @@
+DEFINITION MODULE FOR "C" MetricsBridge;
+
+(* FFI bridge to metrics_bridge.c — one function, one struct *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* Populate a m2_metrics_snapshot_t at the given address.
+   Returns 0 on success, -1 on error. *)
+PROCEDURE m2_metrics_snapshot(snap: ADDRESS): INTEGER;
+
+END MetricsBridge.

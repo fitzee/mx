@@ -784,6 +784,7 @@
 | m2log | Sys | m2sys_fclose | Close a file handle |
 | m2log | Sys | m2sys_fopen | Open a file with given path and mode |
 | m2log | Sys | m2sys_fwrite_str | Write a string to a file handle |
+| m2metrics | Metrics | Snapshot | Fill a SysSnapshot record with current system metrics (load, memory, CPU, RSS) |
 | m2path | Path | Extension | Return the file extension including leading dot |
 | m2path | Path | IsAbsolute | Return TRUE if path starts with "/" |
 | m2path | Path | Join | Join two path components with "/" |

@@ -235,7 +235,7 @@ Categorized `.mod` files in `examples/` compiled and executed. Each test has an 
 
 ### Adversarial tests (tests/adversarial/)
 
-883 tests across 8 compiler configurations (PIM4, M2+, optimized, with/without sanitizers). Tests are defined in `tests/adversarial/tests.json` and run via `run_adversarial.py`.
+900+ tests across 8 compiler configurations (PIM4, M2+, optimized, with/without sanitizers). Tests are defined in `tests/adversarial/tests.json` and run via `run_adversarial.py`.
 
 ### Conformance tests (tests/conformance.sh)
 
@@ -253,7 +253,7 @@ Categorized `.mod` files in `examples/` compiled and executed. Each test has an 
 cargo test                                              # 150 unit tests
 bash tests/run_all.sh                                   # integration tests
 bash tests/conformance.sh                               # conformance tests
-python3 tests/adversarial/run_adversarial.py --mode ci  # 883 adversarial tests
+python3 tests/adversarial/run_adversarial.py --mode ci  # 900+ adversarial tests
 ```
 
 ## File reference

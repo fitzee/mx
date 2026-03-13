@@ -1,6 +1,6 @@
 # Instructions for AI Coding Agents
 
-You are working with the **mx** Modula-2 compiler toolchain. mx compiles PIM4 Modula-2 (and Modula-2+ extensions) by transpiling to C, then invoking the system C compiler. It ships with 32 libraries (`m2*`), a package manager (`mxpkg`), an LSP server, and a VS Code extension. This file tells you how to write correct Modula-2 code and interact with the build system.
+You are working with the **mx** Modula-2 compiler toolchain. mx compiles PIM4 Modula-2 (and Modula-2+ extensions) by transpiling to C, then invoking the system C compiler. It ships with 33 libraries (`m2*`), a package manager (`mxpkg`), an LSP server, and a VS Code extension. This file tells you how to write correct Modula-2 code and interact with the build system.
 
 ---
 
@@ -13,7 +13,7 @@ Before writing any Modula-2 code, read these files in order:
 3. **IDIOMS.md** -- idiomatic patterns for common tasks. Use these as templates.
 4. **DEPENDENCIES.md** -- how modules are resolved, what libraries exist, and how to declare dependencies.
 5. **BUILD.md** -- how m2.toml works, transitive dependencies, incremental builds, debug builds.
-6. **API.md** -- procedure signatures for all 32 libraries. Use this to find the right procedure to call.
+6. **API.md** -- procedure signatures for all 33 libraries. Use this to find the right procedure to call.
 
 All files are in `docs/ai/`. The grammar is in `docs/lang/grammar.md`. Detailed library docs are in `docs/libs/<library>/`.
 

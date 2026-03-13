@@ -1,6 +1,6 @@
 [release]
-compiler = "1.0.4"
-date = "2026-03-13"
+compiler = "1.0.5"
+date = "2026-03-14"
 
 [tools]
 mxpkg0 = "0.1.0"

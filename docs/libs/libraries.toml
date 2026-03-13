@@ -94,6 +94,9 @@ category = "Database"
 [m2lmdb]
 category = "Database"
 
+[m2metrics]
+category = "Helpers"
+
 [m2ws]
 category = "Transport"
 

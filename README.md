@@ -2,7 +2,7 @@
 
 A Modula-2 compiler that transpiles to readable C, then invokes the system C compiler for native executables.
 
-mx targets **PIM4** (Programming in Modula-2, 4th Edition) and extends it with **Modula-2+** features — exceptions, reference types, objects, and concurrency — via the `--m2plus` flag. It ships with 32 libraries, a package manager, an LSP server, and a VS Code extension.
+mx targets **PIM4** (Programming in Modula-2, 4th Edition) and extends it with **Modula-2+** features — exceptions, reference types, objects, and concurrency — via the `--m2plus` flag. It ships with 33 libraries, a package manager, an LSP server, and a VS Code extension.
 
 ## Why Modula-2?
 
@@ -19,7 +19,7 @@ mx transpiles to C rather than compiling to native code directly. This means:
 - **FFI-friendly** — C interop is trivial. Bind to any C library with `DEFINITION MODULE FOR "C"`.
 - **Readable output** — the generated C is human-readable, so you can inspect exactly what the compiler produces.
 
-Beyond the compiler, mx is a complete toolchain: project builds (`mx build/run/test`), a self-hosted package manager (`mxpkg`), an LSP server with full IDE support, and 32 libraries covering networking, HTTP/2, TLS, async I/O, graphics, database, authentication, and more.
+Beyond the compiler, mx is a complete toolchain: project builds (`mx build/run/test`), a self-hosted package manager (`mxpkg`), an LSP server with full IDE support, and 33 libraries covering networking, HTTP/2, TLS, async I/O, graphics, database, authentication, and more.
 
 ## Install
 
@@ -78,7 +78,7 @@ To set up an AI coding agent for mx, point it at `docs/ai/`. The files there pro
 - **Syntax cheatsheet** — copy-paste patterns for every construct
 - **Idiomatic patterns** — templates for common tasks
 - **Module resolution** — how imports work, what libraries exist
-- **API reference** — procedure signatures for all 32 libraries
+- **API reference** — procedure signatures for all 33 libraries
 - **Build system** — project manifests, dependencies, debug builds
 
 See `docs/ai/CLAUDE.md` for the recommended reading order.
@@ -91,7 +91,7 @@ Full documentation is in [`docs/`](docs/README.md) — language reference, toolc
 
 ```
 src/           Compiler (Rust)
-libs/          32 libraries (Modula-2)
+libs/          33 libraries (Modula-2)
 tools/mxpkg/   Package manager (Modula-2+)
 tools/vscode-m2plus/  VS Code extension
 examples/      Categorized examples and demos
@@ -105,7 +105,7 @@ docs/          Documentation
 cargo test                                              # 150 unit tests
 bash tests/run_all.sh                                   # integration tests
 bash tests/conformance.sh                               # conformance tests
-python3 tests/adversarial/run_adversarial.py --mode ci  # 883 adversarial tests
+python3 tests/adversarial/run_adversarial.py --mode ci  # 900+ adversarial tests
 ```
 
 ## License

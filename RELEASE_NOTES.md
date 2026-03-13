@@ -1,42 +1,32 @@
 # Release Notes
 
-## 1.0.4 (2026-03-13)
+## 1.0.5 (2026-03-14)
 
 ### Bug fixes
 
-- **Def-only module types emitted before embedded implementations** — Definition modules with no matching implementation (pure type/constant modules) now have their types emitted in the C preamble before embedded modules, so dependent modules can reference them.
-- **Array-indexed field resolution uses type-aware lookup** — `arr[i].field` assignments now resolve the record type through tracked array element types, preventing false-positive memcpy generation when identically-named fields exist across records with different types.
+- **64-bit DIV/MOD truncation** — `m2_div`/`m2_mod` (int32_t) silently truncated LONGCARD/LONGINT operands. New `m2_div64`/`m2_mod64` helpers, plus type tracking for procedure parameters and type aliases, ensure correct width selection.
+- **Def-only module types emitted before embedded implementations** — Pure type/constant modules now emit types in the C preamble before embedded modules.
+- **Array-indexed field resolution** — `arr[i].field` assignments now resolve through tracked array element types.
+- **m2log 1.0.1** — Fix LogSinkStream importing from nonexistent `LogFmt` module.
+- **m2evloop 0.2.0** — Fix import shadowing of `Scheduler` type; timer ID wraps instead of overflowing.
+- **m2oidc 0.1.3** — Return `JkFull` on JWKS key array overflow.
+- **m2regex 0.1.1** — `FindAll` clamps output to caller's array capacity.
+- **Promise lifetime alignment** — m2tls 0.1.1, m2http 0.1.2, m2rpc 0.1.2, m2ws 0.1.2.
 
 ### Features
 
-- **m2lmdb 0.2.0** — New `DbiStatEntries` procedure to query entry count via `mdb_stat`.
+- **m2metrics 0.1.0** — New library: system metrics (load average, memory, CPU time, process RSS).
+- **m2lmdb 0.2.0** — New `DbiStatEntries` procedure.
+- **m2bytes 1.2.0** — `AppendByte`, `AppendChars`, `AppendView` now return `BOOLEAN`.
+- **m2stream 0.2.0** — Stream `.def` API updates.
 
 ### Test coverage
 
-- New adversarial regression test: `def_only_module` — verifies def-only module types are available to embedded modules.
-- New adversarial regression test: `array_field_name_collision` — verifies scalar field assignment through array indexing when another record has an array field with the same name.
+- New adversarial suites: `longcard_div_mod`, `longint_div_mod`, `def_only_module`, `array_field_name_collision`.
 
-## Library audit refactor (2026-03-13)
+### Documentation
 
-### Bug fixes
-
-- **m2log 1.0.1** — Fix LogSinkStream importing from nonexistent `LogFmt` module; correct `Level.TRACE` to bare `TRACE`.
-- **m2evloop 0.2.0** — Fix import shadowing of `Scheduler` type in Timers and EventLoop `.def`/`.mod` files, enabling qualified access (`Scheduler.Status`, `Scheduler.SchedulerEnqueue`).
-- **m2oidc 0.1.3** — Return `JkFull` when JWKS key array overflows instead of silently dropping keys and returning `JkOk`.
-
-### Features
-
-- **m2bytes 1.2.0** — `AppendByte`, `AppendChars`, `AppendView` now return `BOOLEAN` (FALSE on allocation failure). Backward-compatible under PIM4.
-- **m2stream 0.2.0** — Stream `.def` API updates.
-
-### Hardening
-
-- **m2evloop 0.2.0** — Timer ID counter wraps to 1 at `MAX(INTEGER)` instead of overflowing.
-- **m2regex 0.1.1** — `FindAll` clamps output to caller's `matches` array capacity, preventing buffer overrun.
-- **m2tls 0.1.1** — Promise lifetime alignment: `PromiseRelease` after every `Resolve`/`Reject`; consolidate settlement through `ResolveSess`/`RejectSess` helpers.
-- **m2http 0.1.2** — Promise lifetime alignment in DNS, HTTPClient, H2Client.
-- **m2rpc 0.1.2** — Promise lifetime alignment in RpcClient.
-- **m2ws 0.1.2** — Promise lifetime alignment in WebSocket.
+- m2metrics library docs, library count updated to 33 across all docs.
 
 ## m2futures 0.2.0 (2026-03-12)
 

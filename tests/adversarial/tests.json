@@ -1805,5 +1805,51 @@
       "ci"
     ],
     "_comment": "Matrix operations on multi-dimensional REAL arrays with constant bounds."
+  },
+  {
+    "name": "longcard_div_mod",
+    "category": "arithmetic",
+    "dir": "arithmetic/longcard_div_mod",
+    "main": "LongcardDivMod.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "bytes: 0 0 1 149 141 3 238 128\nroundtrip: PASS\nproc params: PASS\nalias params: PASS\nlarge div mod: PASS\nval cardinal: PASS\nall longcard div mod OK\n",
+    "c_scan": true,
+    "c_scan_patterns": {
+      "must_not_contain": ["m2_div(", "m2_mod("],
+      "must_contain": ["/ 256", "% 256", "/ 65536", "% 65536"],
+      "_note": "LONGCARD DIV/MOD must emit plain C / and %, never m2_div() or m2_mod() which truncate to int32_t"
+    },
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: m2_div(int32_t,int32_t) and m2_mod(int32_t,int32_t) were called with 64-bit LONGCARD operands, silently truncating values. LONGCARD DIV/MOD must emit plain C unsigned / and %."
+  },
+  {
+    "name": "longint_div_mod",
+    "category": "arithmetic",
+    "dir": "arithmetic/longint_div_mod",
+    "main": "LongintDivMod.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "large positive: PASS\nlarge non-exact: PASS\n(-7) DIV 2 = -4  MOD = 1\nfloor div small: PASS\nfloor div 64: PASS\nneg mod pos: PASS\nproc floor 64: PASS\nproc large pos: PASS\nall longint div mod OK\n",
+    "c_scan": true,
+    "c_scan_patterns": {
+      "must_not_contain": ["m2_div(", "m2_mod("],
+      "must_contain": ["m2_div64(", "m2_mod64("],
+      "_note": "LONGINT DIV/MOD must emit m2_div64/m2_mod64 (64-bit floored), never m2_div/m2_mod (32-bit truncation)"
+    },
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: m2_div(int32_t,int32_t) and m2_mod(int32_t,int32_t) were called with 64-bit LONGINT operands, silently truncating values. LONGINT DIV/MOD must emit m2_div64/m2_mod64 for correct PIM4 floored semantics."
   }
 ]

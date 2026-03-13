@@ -9,7 +9,7 @@
 
 ## Libraries
 
-32 libraries ship with the toolchain. Add them to your project via `m2.toml` deps or `-I` paths.
+33 libraries ship with the toolchain. Add them to your project via `m2.toml` deps or `-I` paths.
 
 ### Graphics
 
@@ -69,6 +69,7 @@
 - [m2text](libs/m2text/Text.md) — text analysis: UTF-8 validation, encoding detection, line endings, text-vs-binary
 - [m2tok](libs/m2tok/) — language-agnostic source tokenizer: strips strings/comments, yields identifiers
 - [m2zlib](libs/m2zlib/Zlib.md) — zlib compression/decompression: raw, zlib, and gzip formats
+- [m2metrics](libs/m2metrics/Metrics.md) — system metrics: load average, memory, CPU time, process RSS
 
 ## Reference
 
