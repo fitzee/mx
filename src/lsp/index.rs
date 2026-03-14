@@ -944,7 +944,7 @@ END Stack.
     #[test]
     fn test_index_from_analysis() {
         let source = "MODULE Test;\nVAR x: INTEGER;\nBEGIN\nEND Test.\n";
-        let result = crate::analyze::analyze_source(source, "test.mod", &[]);
+        let result = crate::analyze::analyze_source(source, "test.mod", false, &[]);
         let path = PathBuf::from("/tmp/m2_test_open/Test.mod");
 
         let mut idx = WorkspaceIndex::new();
@@ -1067,7 +1067,7 @@ END Stack.
     fn test_workspace_call_graph_same_module() {
         // Single module with Foo calling Bar — workspace index should capture the edge.
         let source = "MODULE M;\nPROCEDURE Bar;\nBEGIN END Bar;\nPROCEDURE Foo;\nBEGIN\n  Bar\nEND Foo;\nBEGIN\nEND M.\n";
-        let result = crate::analyze::analyze_source(source, "m.mod", &[]);
+        let result = crate::analyze::analyze_source(source, "m.mod", false, &[]);
 
         let mut idx = WorkspaceIndex::new();
         let path = PathBuf::from("/tmp/m2_wscg/M.mod");
@@ -1148,8 +1148,8 @@ END Stack.
         let source_v1 = "MODULE M;\nPROCEDURE Old;\nBEGIN END Old;\nPROCEDURE Caller;\nBEGIN\n  Old\nEND Caller;\nBEGIN\nEND M.\n";
         let source_v2 = "MODULE M;\nPROCEDURE New;\nBEGIN END New;\nPROCEDURE Caller;\nBEGIN\n  New\nEND Caller;\nBEGIN\nEND M.\n";
 
-        let result_v1 = crate::analyze::analyze_source(source_v1, "m.mod", &[]);
-        let result_v2 = crate::analyze::analyze_source(source_v2, "m.mod", &[]);
+        let result_v1 = crate::analyze::analyze_source(source_v1, "m.mod", false, &[]);
+        let result_v2 = crate::analyze::analyze_source(source_v2, "m.mod", false, &[]);
 
         let mut idx = WorkspaceIndex::new();
         let path = PathBuf::from("/tmp/m2_wscg_inc/M.mod");
@@ -1177,8 +1177,8 @@ END Stack.
         let source_root1 = "MODULE R1;\nPROCEDURE ProcY;\nBEGIN END ProcY;\nPROCEDURE ProcX;\nBEGIN\n  ProcY\nEND ProcX;\nBEGIN\nEND R1.\n";
         let source_root2 = "MODULE R2;\nPROCEDURE ProcY;\nBEGIN END ProcY;\nPROCEDURE ProcX;\nBEGIN\n  ProcY\nEND ProcX;\nBEGIN\nEND R2.\n";
 
-        let result1 = crate::analyze::analyze_source(source_root1, "r1.mod", &[]);
-        let result2 = crate::analyze::analyze_source(source_root2, "r2.mod", &[]);
+        let result1 = crate::analyze::analyze_source(source_root1, "r1.mod", false, &[]);
+        let result2 = crate::analyze::analyze_source(source_root2, "r2.mod", false, &[]);
 
         let mut idx = WorkspaceIndex::new();
         let path1 = PathBuf::from("/root1/R1.mod");
@@ -1210,7 +1210,7 @@ END Stack.
     fn test_workspace_call_graph_per_file_tracking() {
         // Verify file_call_edges is populated correctly.
         let source = "MODULE M;\nPROCEDURE Bar;\nBEGIN END Bar;\nPROCEDURE Foo;\nBEGIN\n  Bar\nEND Foo;\nBEGIN\nEND M.\n";
-        let result = crate::analyze::analyze_source(source, "m.mod", &[]);
+        let result = crate::analyze::analyze_source(source, "m.mod", false, &[]);
 
         let mut idx = WorkspaceIndex::new();
         let path = PathBuf::from("/tmp/m2_wscg_ft/M.mod");
@@ -1246,7 +1246,7 @@ END Outer2;
 BEGIN
 END M.
 ";
-        let result = crate::analyze::analyze_source(source, "m.mod", &[]);
+        let result = crate::analyze::analyze_source(source, "m.mod", false, &[]);
 
         let mut idx = WorkspaceIndex::new();
         let path = PathBuf::from("/tmp/m2_wscg_nest/M.mod");

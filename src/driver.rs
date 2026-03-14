@@ -589,13 +589,14 @@ fn handle_cc_failure(stderr: &[u8], is_link_phase: bool, diagnostics_json: bool)
 }
 
 /// Parse a source file and return the compilation unit
-fn parse_file(path: &Path, case_sensitive: bool, features: &[String]) -> CompileResult<CompilationUnit> {
+fn parse_file(path: &Path, case_sensitive: bool, m2plus: bool, features: &[String]) -> CompileResult<CompilationUnit> {
     let source = fs::read_to_string(path).map_err(|e| {
         CompileError::driver(format!("cannot read '{}': {}", path.display(), e))
     })?;
     let filename = path.to_string_lossy().to_string();
     let mut lexer = Lexer::new(&source, &filename);
     lexer.set_case_sensitive(case_sensitive);
+    lexer.set_m2plus(m2plus);
     if !features.is_empty() {
         lexer.set_features(features);
     }
@@ -629,6 +630,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     // Lex
     let mut lexer = Lexer::new(&source, &filename);
     lexer.set_case_sensitive(opts.case_sensitive);
+    lexer.set_m2plus(opts.m2plus);
     if !opts.features.is_empty() {
         lexer.set_features(&opts.features);
     }
@@ -673,7 +675,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("{}: found definition module: {}", identity::COMPILER_NAME, def_path.display());
             }
-            let def_unit = parse_file(&def_path, opts.case_sensitive, &opts.features)?;
+            let def_unit = parse_file(&def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
                 Some(def_mod)
             } else {
@@ -738,7 +740,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, mod_name, def_path.display());
             }
-            let def_unit = parse_file(&def_path, opts.case_sensitive, &opts.features)?;
+            let def_unit = parse_file(&def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
                 // Transitively discover imports of this def module
                 for imp in &def_mod.imports {
@@ -824,7 +826,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             if opts.verbose {
                 eprintln!("{}: trying implementation module for {}: {}", identity::COMPILER_NAME, mod_name, mod_path.display());
             }
-            let mod_unit = parse_file(mod_path, opts.case_sensitive, &opts.features)?;
+            let mod_unit = parse_file(mod_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
             if let CompilationUnit::ImplementationModule(imp) = mod_unit {
                 found_impl = Some(imp);
                 if opts.verbose {
@@ -844,7 +846,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                                 if opts.verbose {
                                     eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, from_mod, dep_def_path.display());
                                 }
-                                let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, &opts.features)?;
+                                let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
                                 if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
                                     codegen.register_def_module(&dep_def);
                                     registered_defs.insert(from_mod.clone());
@@ -864,7 +866,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                                     if opts.verbose {
                                         eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, n, dep_def_path.display());
                                     }
-                                    if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, &opts.features) {
+                                    if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features) {
                                         if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
                                             codegen.register_def_module(&dep_def);
                                             registered_defs.insert(n.clone());

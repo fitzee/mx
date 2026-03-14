@@ -65,24 +65,25 @@ impl DefCache {
 pub fn analyze(
     source: &str,
     filename: &str,
-    _m2plus: bool,
+    m2plus: bool,
     include_paths: &[PathBuf],
     def_cache: &mut DefCache,
 ) -> AnalysisResult {
     // Collect def modules for imports.
     // Reverse so transitive deps (discovered later by BFS) are registered
     // before the modules that depend on them — poor man's topo sort.
-    let mut def_modules = collect_def_modules(source, filename, include_paths, def_cache);
+    let mut def_modules = collect_def_modules(source, filename, m2plus, include_paths, def_cache);
     def_modules.reverse();
     let def_refs: Vec<&DefinitionModule> = def_modules.iter().collect();
 
-    analyze::analyze_source(source, filename, &def_refs)
+    analyze::analyze_source(source, filename, m2plus, &def_refs)
 }
 
 /// Pre-parse the source to extract imports, then load .def files from disk/cache.
 fn collect_def_modules(
     source: &str,
     filename: &str,
+    m2plus: bool,
     include_paths: &[PathBuf],
     def_cache: &mut DefCache,
 ) -> Vec<DefinitionModule> {
@@ -90,6 +91,7 @@ fn collect_def_modules(
 
     // Quick lex+parse just to get imports (reuse the parser)
     let mut lexer = Lexer::new(source, filename);
+    lexer.set_m2plus(m2plus);
     let tokens = match lexer.tokenize() {
         Ok(t) => t,
         Err(_) => return result,

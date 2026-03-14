@@ -10,6 +10,7 @@ pub struct Lexer {
     file: String,
     features: HashSet<String>,
     case_sensitive: bool,
+    m2plus: bool,
 }
 
 impl Lexer {
@@ -22,11 +23,16 @@ impl Lexer {
             file: file.to_string(),
             features: HashSet::new(),
             case_sensitive: true,
+            m2plus: false,
         }
     }
 
     pub fn set_case_sensitive(&mut self, val: bool) {
         self.case_sensitive = val;
+    }
+
+    pub fn set_m2plus(&mut self, val: bool) {
+        self.m2plus = val;
     }
 
     pub fn set_features(&mut self, features: &[String]) {
@@ -501,7 +507,7 @@ impl Lexer {
         // Identifiers: case-sensitive by default, uppercase if case_sensitive=false.
         let is_all_upper = name.bytes().all(|b| !b.is_ascii_lowercase());
         let kind = if is_all_upper {
-            if let Some(kw) = TokenKind::keyword_from_str(&name) {
+            if let Some(kw) = TokenKind::keyword_from_str(&name, self.m2plus) {
                 kw
             } else if self.case_sensitive {
                 TokenKind::Ident(name)

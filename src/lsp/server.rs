@@ -1206,7 +1206,8 @@ impl LspServer {
         if let Some(source) = self.docs.get(&uri).map(|s| s.to_string()) {
             if let Some(result) = self.get_analysis(&uri) {
                 let path = uri_to_path(&uri);
-                let data = super::semantic_tokens::collect_semantic_tokens(&source, &path, &result);
+                let m2plus = self.effective_m2plus(&uri);
+                let data = super::semantic_tokens::collect_semantic_tokens(&source, &path, m2plus, &result);
                 transport::send_response(id, super::semantic_tokens::semantic_tokens_response(data));
                 return;
             }

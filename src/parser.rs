@@ -1896,6 +1896,14 @@ mod tests {
         parser.parse_compilation_unit().unwrap()
     }
 
+    fn parse_m2plus(input: &str) -> CompilationUnit {
+        let mut lexer = Lexer::new(input, "test");
+        lexer.set_m2plus(true);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser.parse_compilation_unit().unwrap()
+    }
+
     #[test]
     fn test_empty_module() {
         let cu = parse("MODULE Test; END Test.");
@@ -1924,7 +1932,8 @@ mod tests {
 
     #[test]
     fn test_import_as_alias() {
-        let cu = parse("MODULE Test; FROM InOut IMPORT WriteString AS WS, WriteLn; BEGIN END Test.");
+        // AS alias is an M2+ extension — requires m2plus mode
+        let cu = parse_m2plus("MODULE Test; FROM InOut IMPORT WriteString AS WS, WriteLn; BEGIN END Test.");
         match cu {
             CompilationUnit::ProgramModule(m) => {
                 assert_eq!(m.imports.len(), 1);
@@ -1981,6 +1990,65 @@ END Stack.
                 assert!(m.export.is_some());
             }
             _ => panic!("expected definition module"),
+        }
+    }
+
+    // ── PIM4/M2+ gating tests ──────────────────────────────────────
+
+    #[test]
+    fn test_m2plus_keywords_are_identifiers_in_pim4() {
+        // M2+ keywords should be usable as identifiers in PIM4 mode
+        let cu = parse("MODULE Test; VAR object: INTEGER; BEGIN object := 1 END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert_eq!(m.block.decls.len(), 1);
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_try_rejected_in_pim4() {
+        // TRY is an identifier in PIM4 mode, not a keyword — so it should
+        // parse as a bare procedure call, not a TRY statement
+        let mut lexer = Lexer::new("MODULE Test; PROCEDURE TRY; BEGIN END TRY; BEGIN TRY END Test.", "test");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let cu = parser.parse_compilation_unit().unwrap();
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                // "TRY" parsed as a bare procedure call in PIM4 mode
+                let body = m.block.body.as_ref().unwrap();
+                assert_eq!(body.len(), 1);
+                assert!(matches!(&body[0].kind, StatementKind::ProcCall { .. }));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_try_accepted_in_m2plus() {
+        let cu = parse_m2plus(
+            "MODULE Test; BEGIN TRY EXCEPT END END Test.",
+        );
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                let body = m.block.body.as_ref().unwrap();
+                assert!(matches!(&body[0].kind, StatementKind::Try { .. }));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_as_is_identifier_in_pim4() {
+        // AS should not be recognized as keyword in PIM4 mode
+        let cu = parse("MODULE Test; VAR AS: INTEGER; BEGIN AS := 1 END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert_eq!(m.block.decls.len(), 1);
+            }
+            _ => panic!("expected program module"),
         }
     }
 }

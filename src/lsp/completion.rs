@@ -665,7 +665,7 @@ mod tests {
         // Resolve a builtin symbol — should get lang_docs documentation
         use crate::analyze;
         let source = "MODULE Test;\nFROM InOut IMPORT WriteString;\nBEGIN\n  WriteString(\"hi\");\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
 
         // Create a minimal completion item for "WriteString"
         let item = Json::obj(vec![
@@ -688,7 +688,7 @@ mod tests {
         // Resolve a keyword — no symtab entry, should get lang_docs
         use crate::analyze;
         let source = "MODULE Test;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
 
         let item = Json::obj(vec![
             ("label", Json::str_val("WHILE")),

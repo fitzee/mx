@@ -177,12 +177,14 @@ pub struct AnalysisResult {
 pub fn analyze_source(
     source: &str,
     filename: &str,
+    m2plus: bool,
     def_modules: &[&DefinitionModule],
 ) -> AnalysisResult {
     let mut diagnostics = Vec::new();
 
     // Lex
     let mut lexer = Lexer::new(source, filename);
+    lexer.set_m2plus(m2plus);
     let tokens = match lexer.tokenize() {
         Ok(t) => t,
         Err(e) => {
@@ -688,7 +690,7 @@ mod tests {
     #[test]
     fn test_analyze_source_ref_index() {
         let source = "MODULE Test;\nVAR x: INTEGER;\nBEGIN\n  x := 42\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", &[]);
+        let result = analyze_source(source, "test.mod", false, &[]);
         assert!(result.diagnostics.is_empty());
         // Should have at least a definition ref for x and a use ref for x
         let x_refs: Vec<_> = result.ref_index.refs().iter()
@@ -749,7 +751,7 @@ mod tests {
     #[test]
     fn test_analyze_source_basic() {
         let source = "MODULE Test;\nVAR x: INTEGER;\nBEGIN\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", &[]);
+        let result = analyze_source(source, "test.mod", false, &[]);
         assert!(result.ast.is_some());
         assert!(result.diagnostics.is_empty());
         assert!(result.symtab.lookup_all("x").is_some());
@@ -758,14 +760,14 @@ mod tests {
     #[test]
     fn test_analyze_source_with_error() {
         let source = "MODULE Broken;\nVAR x: ;\nBEGIN\nEND Broken.\n";
-        let result = analyze_source(source, "broken.mod", &[]);
+        let result = analyze_source(source, "broken.mod", false, &[]);
         assert!(!result.diagnostics.is_empty());
     }
 
     #[test]
     fn test_analyze_source_scope_map() {
         let source = "MODULE Test;\nPROCEDURE Foo;\nBEGIN\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", &[]);
+        let result = analyze_source(source, "test.mod", false, &[]);
         assert!(result.ast.is_some());
         assert!(result.scope_map.spans().len() >= 1);
     }
