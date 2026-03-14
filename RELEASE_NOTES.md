@@ -1,5 +1,23 @@
 # Release Notes
 
+## 1.1.0 (2026-03-14)
+
+### Features
+
+- **PIM4 strict keyword gating** — 18 M2+ keywords (TRY, EXCEPT, FINALLY, RAISE, RETRY, AS, BRANDED, EXCEPTION, LOCK, METHODS, OBJECT, OVERRIDE, REF, REFANY, REVEAL, SAFE, TYPECASE, UNSAFE) are now only recognized as keywords when `--m2plus` is enabled. In default PIM4 mode, they are valid identifiers.
+- **FOR control variable protection** — Assignment to a FOR loop control variable inside the loop body is now a semantic error, per PIM4 specification.
+- **RETURN validation** — Function procedures that omit the return expression, and proper procedures that include one, now produce semantic errors.
+- **Set constructor typing** — Typed set constructors (e.g., `CharSet{0C..37C}`) now resolve to their declared type instead of always defaulting to BITSET.
+
+### Documentation
+
+- **Grammar reference rewrite** — `docs/lang/grammar.md` restructured into three sections: PIM4 Core (with correct operator precedence, terminal definitions, and Definition production), mx Accepted Differences, and Modula-2+ Extensions.
+- **PIM4 conformance audit** — New `docs/PIM4_CONFORMANCE_AUDIT.md` with 27 findings covering parser, sema, type system, grammar doc, and extension gating.
+
+### Test coverage
+
+- 32 new unit tests covering: M2+ keyword-as-identifier in PIM4 mode, extension syntax rejection/acceptance, RETURN edge cases, FOR variable assignment, set constructor typing, and LSP/CLI parity.
+
 ## 1.0.6 (2026-03-14)
 
 ### Bug fixes
