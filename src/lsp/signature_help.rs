@@ -230,7 +230,7 @@ mod tests {
     fn test_multiline_signature_help() {
         // NOTE: avoid Rust \ line-continuation which eats leading whitespace.
         let source = "MODULE Test;\nPROCEDURE Foo(a: INTEGER; b: CARDINAL);\nBEGIN END Foo;\nBEGIN\n  Foo(\n    10,\n    20\n  );\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Line 5 = "    10," — cursor at col 5 (on '1')
         // Walking back: '(' is on line 4 col 5 but extraction needs name on same line.
         // '(' is at line 4 "  Foo(" col 5. Name extraction on same line: "Foo".
@@ -253,7 +253,7 @@ mod tests {
         let source = "MODULE Test;\nPROCEDURE Bar(x: INTEGER; y: INTEGER): INTEGER;\nBEGIN RETURN x + y END Bar;\nPROCEDURE Foo(a: INTEGER; b: INTEGER);\nBEGIN END Foo;\nBEGIN\n  Foo(Bar(1, 2), 3);\nEND Test.\n";
         // Line 6 = "  Foo(Bar(1, 2), 3);"
         // positions: 0=' ' 1=' ' 2='F' 3='o' 4='o' 5='(' 6='B' 7='a' 8='r' 9='(' 10='1' 11=',' 12=' ' 13='2' 14=')' 15=',' 16=' ' 17='3' 18=')' 19=';'
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
 
         // Cursor at col 11: include chars 0..10. '(' at col 9 is innermost unmatched → Bar.
         let sig = signature_help(source, 6, 11, &result.symtab, &result.types, &result.scope_map);
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn test_signature_help_single_line() {
         let source = "MODULE Test;\nPROCEDURE Add(a: INTEGER; b: INTEGER): INTEGER;\nBEGIN RETURN a + b END Add;\nBEGIN\n  Add(1, 2);\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Line 4 = "  Add(1, 2);"
         // col 7 → include chars 0..6 = "  Add(1". '(' at col 5. Name = "Add".
         let sig = signature_help(source, 4, 7, &result.symtab, &result.types, &result.scope_map);
@@ -311,7 +311,7 @@ mod tests {
     fn test_signature_help_builtin_doc() {
         // INC is a builtin procedure — should get lang_docs documentation
         let source = "MODULE Test;\nVAR n: INTEGER;\nBEGIN\n  INC(n);\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Line 3 = "  INC(n);" — cursor at col 6 (on 'n')
         let sig = signature_help(source, 3, 6, &result.symtab, &result.types, &result.scope_map);
         assert!(sig.is_some(), "expected signature help for INC");

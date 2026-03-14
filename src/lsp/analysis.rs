@@ -65,24 +65,25 @@ impl DefCache {
 pub fn analyze(
     source: &str,
     filename: &str,
-    _m2plus: bool,
+    m2plus: bool,
     include_paths: &[PathBuf],
     def_cache: &mut DefCache,
 ) -> AnalysisResult {
     // Collect def modules for imports.
     // Reverse so transitive deps (discovered later by BFS) are registered
     // before the modules that depend on them — poor man's topo sort.
-    let mut def_modules = collect_def_modules(source, filename, include_paths, def_cache);
+    let mut def_modules = collect_def_modules(source, filename, m2plus, include_paths, def_cache);
     def_modules.reverse();
     let def_refs: Vec<&DefinitionModule> = def_modules.iter().collect();
 
-    analyze::analyze_source(source, filename, &def_refs)
+    analyze::analyze_source(source, filename, m2plus, &def_refs)
 }
 
 /// Pre-parse the source to extract imports, then load .def files from disk/cache.
 fn collect_def_modules(
     source: &str,
     filename: &str,
+    m2plus: bool,
     include_paths: &[PathBuf],
     def_cache: &mut DefCache,
 ) -> Vec<DefinitionModule> {
@@ -90,6 +91,7 @@ fn collect_def_modules(
 
     // Quick lex+parse just to get imports (reuse the parser)
     let mut lexer = Lexer::new(source, filename);
+    lexer.set_m2plus(m2plus);
     let tokens = match lexer.tokenize() {
         Ok(t) => t,
         Err(_) => return result,
@@ -204,4 +206,47 @@ pub fn find_def_file(module_name: &str, input_path: &Path, include_paths: &[Path
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lsp_analyze_pim4_rejects_m2plus_syntax() {
+        // Through the LSP analysis path, M2+ syntax should produce parse errors
+        // in PIM4 mode (m2plus=false)
+        let source = "MODULE Test; EXCEPTION Foo; BEGIN RAISE Foo END Test.";
+        let mut def_cache = DefCache::new();
+        let result = analyze(source, "test.mod", false, &[], &mut def_cache);
+        // In PIM4 mode, EXCEPTION is an identifier — the parse should fail or
+        // produce diagnostics because "EXCEPTION Foo;" doesn't match any declaration
+        assert!(!result.diagnostics.is_empty(),
+            "M2+ syntax should produce diagnostics in PIM4 mode via LSP path");
+    }
+
+    #[test]
+    fn test_lsp_analyze_m2plus_accepts_m2plus_syntax() {
+        // Same source should parse clean in M2+ mode
+        let source = "MODULE Test; EXCEPTION Foo; BEGIN RAISE Foo END Test.";
+        let mut def_cache = DefCache::new();
+        let result = analyze(source, "test.mod", true, &[], &mut def_cache);
+        // Should parse successfully — EXCEPTION is a keyword, RAISE is a statement
+        let has_parse_error = result.diagnostics.iter().any(|e|
+            format!("{}", e).contains("expected") || format!("{}", e).contains("parse"));
+        assert!(!has_parse_error,
+            "M2+ syntax should parse cleanly in M2+ mode via LSP path, got: {:?}",
+            result.diagnostics);
+    }
+
+    #[test]
+    fn test_lsp_analyze_pim4_allows_m2plus_identifiers() {
+        // In PIM4 mode via LSP, M2+ keywords should work as identifiers
+        let source = "MODULE Test; VAR OBJECT: INTEGER; BEGIN OBJECT := 42 END Test.";
+        let mut def_cache = DefCache::new();
+        let result = analyze(source, "test.mod", false, &[], &mut def_cache);
+        assert!(result.diagnostics.is_empty(),
+            "M2+ keywords as identifiers should work in PIM4 LSP mode, got: {:?}",
+            result.diagnostics);
+    }
 }

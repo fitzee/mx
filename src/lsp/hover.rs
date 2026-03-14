@@ -151,7 +151,7 @@ mod tests {
     fn test_hover_builtin_type_doc() {
         // INTEGER is a builtin type with SourceLoc::default()
         let source = "MODULE Test;\nVAR x: INTEGER;\nBEGIN\n  x := 1;\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Hover over "INTEGER" at line 1, col 7
         let h = hover(source, 1, 8, &result.symtab, &result.types, &result.scope_map);
         assert!(h.is_some(), "expected hover for INTEGER");
@@ -170,7 +170,7 @@ mod tests {
         // MODULE is a keyword — not in symtab as a resolvable word at position
         // but we test with a word that IS a keyword and not a symbol
         let source = "MODULE Test;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Hover over "REPEAT" (not present in source but we can test lookup directly)
         // Instead test via lang_docs lookup
         let doc = super::super::lang_docs::lookup("WHILE");
@@ -183,7 +183,7 @@ mod tests {
     fn test_hover_user_symbol_not_overridden() {
         // A user-defined variable should show semantic info, not lang_docs
         let source = "MODULE Test;\nVAR x: INTEGER;\nBEGIN\n  x := 42;\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Hover over "x" at line 1, col 4
         let h = hover(source, 1, 4, &result.symtab, &result.types, &result.scope_map);
         assert!(h.is_some());
@@ -199,7 +199,7 @@ mod tests {
     fn test_hover_doc_comment() {
         // A procedure with a doc comment should show the doc comment in hover
         let source = "MODULE Test;\n(** Adds two integers. *)\nPROCEDURE Add(a, b: INTEGER): INTEGER;\nBEGIN\n  RETURN a + b;\nEND Add;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Hover over "Add" at line 2, col 10
         let h = hover(source, 2, 10, &result.symtab, &result.types, &result.scope_map);
         assert!(h.is_some(), "expected hover for Add");
@@ -225,7 +225,7 @@ mod tests {
     fn test_hover_stdlib_proc_doc() {
         // Stdlib procedures imported via FROM InOut IMPORT should show their doc strings
         let source = "MODULE Test;\nFROM InOut IMPORT WriteLn, WriteString;\nBEGIN\n  WriteString(\"hi\");\n  WriteLn;\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         // Hover over "WriteLn" at line 4, col 2
         let h = hover(source, 4, 3, &result.symtab, &result.types, &result.scope_map);
         assert!(h.is_some(), "expected hover for WriteLn");

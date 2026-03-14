@@ -177,12 +177,14 @@ pub struct AnalysisResult {
 pub fn analyze_source(
     source: &str,
     filename: &str,
+    m2plus: bool,
     def_modules: &[&DefinitionModule],
 ) -> AnalysisResult {
     let mut diagnostics = Vec::new();
 
     // Lex
     let mut lexer = Lexer::new(source, filename);
+    lexer.set_m2plus(m2plus);
     let tokens = match lexer.tokenize() {
         Ok(t) => t,
         Err(e) => {
@@ -688,7 +690,7 @@ mod tests {
     #[test]
     fn test_analyze_source_ref_index() {
         let source = "MODULE Test;\nVAR x: INTEGER;\nBEGIN\n  x := 42\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", &[]);
+        let result = analyze_source(source, "test.mod", false, &[]);
         assert!(result.diagnostics.is_empty());
         // Should have at least a definition ref for x and a use ref for x
         let x_refs: Vec<_> = result.ref_index.refs().iter()
@@ -749,7 +751,7 @@ mod tests {
     #[test]
     fn test_analyze_source_basic() {
         let source = "MODULE Test;\nVAR x: INTEGER;\nBEGIN\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", &[]);
+        let result = analyze_source(source, "test.mod", false, &[]);
         assert!(result.ast.is_some());
         assert!(result.diagnostics.is_empty());
         assert!(result.symtab.lookup_all("x").is_some());
@@ -758,15 +760,132 @@ mod tests {
     #[test]
     fn test_analyze_source_with_error() {
         let source = "MODULE Broken;\nVAR x: ;\nBEGIN\nEND Broken.\n";
-        let result = analyze_source(source, "broken.mod", &[]);
+        let result = analyze_source(source, "broken.mod", false, &[]);
         assert!(!result.diagnostics.is_empty());
     }
 
     #[test]
     fn test_analyze_source_scope_map() {
         let source = "MODULE Test;\nPROCEDURE Foo;\nBEGIN\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", &[]);
+        let result = analyze_source(source, "test.mod", false, &[]);
         assert!(result.ast.is_some());
         assert!(result.scope_map.spans().len() >= 1);
+    }
+
+    // ── RETURN validation tests ─────────────────────────────────────
+
+    fn has_error(result: &AnalysisResult, substring: &str) -> bool {
+        result.diagnostics.iter().any(|e| format!("{}", e).contains(substring))
+    }
+
+    #[test]
+    fn test_return_with_expr_in_function_procedure() {
+        // Function procedure with RETURN expr — should be fine
+        let source = "MODULE Test;\nPROCEDURE Add(a, b: INTEGER): INTEGER;\nBEGIN\n  RETURN a + b\nEND Add;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "RETURN"), "valid function RETURN should not error");
+    }
+
+    #[test]
+    fn test_bare_return_in_function_procedure() {
+        // Function procedure with bare RETURN — should error
+        let source = "MODULE Test;\nPROCEDURE GetVal(): INTEGER;\nBEGIN\n  RETURN\nEND GetVal;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_error(&result, "function procedure requires RETURN"),
+            "bare RETURN in function procedure should error, got: {:?}",
+            result.diagnostics);
+    }
+
+    #[test]
+    fn test_return_with_expr_in_proper_procedure() {
+        // Proper procedure with RETURN expr — should error
+        let source = "MODULE Test;\nPROCEDURE DoIt;\nBEGIN\n  RETURN 42\nEND DoIt;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_error(&result, "proper procedure must not return"),
+            "RETURN expr in proper procedure should error, got: {:?}",
+            result.diagnostics);
+    }
+
+    #[test]
+    fn test_bare_return_in_proper_procedure() {
+        // Proper procedure with bare RETURN — should be fine
+        let source = "MODULE Test;\nPROCEDURE DoIt;\nBEGIN\n  RETURN\nEND DoIt;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "RETURN"), "bare RETURN in proper procedure should be fine");
+    }
+
+    #[test]
+    fn test_return_at_module_level() {
+        // RETURN at module level (no expression) — should be fine
+        let source = "MODULE Test;\nBEGIN\n  RETURN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "RETURN"), "module-level RETURN should be fine");
+    }
+
+    // ── FOR variable assignment tests ───────────────────────────────
+
+    #[test]
+    fn test_for_variable_assignment_rejected() {
+        let source = "MODULE Test;\nVAR i: INTEGER;\nBEGIN\n  FOR i := 1 TO 10 DO\n    i := 5\n  END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_error(&result, "FOR control variable"),
+            "assignment to FOR variable should error, got: {:?}",
+            result.diagnostics);
+    }
+
+    #[test]
+    fn test_for_variable_read_ok() {
+        // Reading the FOR variable is fine, only assignment is forbidden
+        let source = "MODULE Test;\nVAR i, x: INTEGER;\nBEGIN\n  FOR i := 1 TO 10 DO\n    x := i\n  END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "FOR control variable"),
+            "reading FOR variable should be fine");
+    }
+
+    #[test]
+    fn test_for_variable_nested_different_var_ok() {
+        // Assigning a different variable inside FOR is fine
+        let source = "MODULE Test;\nVAR i, j: INTEGER;\nBEGIN\n  FOR i := 1 TO 10 DO\n    j := i\n  END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "FOR control variable"),
+            "assigning different variable in FOR should be fine");
+    }
+
+    // ── Set constructor typing tests ────────────────────────────────
+
+    #[test]
+    fn test_set_constructor_bare_is_bitset() {
+        // Bare {1, 2, 3} should type as BITSET
+        let source = "MODULE Test;\nVAR s: BITSET;\nBEGIN\n  s := {1, 2, 3}\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "incompatible"),
+            "bare set constructor should be BITSET-compatible");
+    }
+
+    #[test]
+    fn test_set_constructor_typed() {
+        // BITSET{1, 2} with explicit type
+        let source = "MODULE Test;\nVAR s: BITSET;\nBEGIN\n  s := BITSET{1, 2}\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "incompatible"),
+            "typed BITSET constructor should be compatible");
+    }
+
+    #[test]
+    fn test_set_constructor_with_range() {
+        // Set with range elements
+        let source = "MODULE Test;\nVAR s: BITSET;\nBEGIN\n  s := {0..7}\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "incompatible"),
+            "set constructor with range should work");
+    }
+
+    #[test]
+    fn test_set_constructor_empty() {
+        // Empty set {}
+        let source = "MODULE Test;\nVAR s: BITSET;\nBEGIN\n  s := {}\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_error(&result, "incompatible"),
+            "empty set constructor should be BITSET-compatible");
     }
 }

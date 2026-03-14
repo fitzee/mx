@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn test_call_graph_basic() {
         let source = "MODULE Test;\nPROCEDURE Bar;\nBEGIN END Bar;\nPROCEDURE Foo;\nBEGIN\n  Bar\nEND Foo;\nBEGIN\n  Foo\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         assert!(result.call_graph.contains_key("Foo"), "call_graph should contain Foo");
         let foo_calls = &result.call_graph["Foo"];
         assert!(foo_calls.iter().any(|e| e.callee == "Bar"), "Foo should call Bar");
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn test_incoming_calls_single_file() {
         let source = "MODULE Test;\nPROCEDURE Bar;\nBEGIN END Bar;\nPROCEDURE Foo;\nBEGIN\n  Bar\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         let callers = incoming_calls_ws("Bar", "", &WorkspaceIndex::new(), Some(&result), "file:///test.mod");
         assert!(!callers.is_empty(), "Bar should have incoming calls");
         let from = callers[0].get("from").unwrap();
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn test_outgoing_calls_single_file() {
         let source = "MODULE Test;\nPROCEDURE Bar;\nBEGIN END Bar;\nPROCEDURE Foo;\nBEGIN\n  Bar\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         let calls = outgoing_calls_ws("Foo", "", &WorkspaceIndex::new(), Some(&result), "file:///test.mod");
         assert!(!calls.is_empty(), "Foo should have outgoing calls");
         let to = calls[0].get("to").unwrap();
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn test_nested_calls() {
         let source = "MODULE Test;\nPROCEDURE A;\nBEGIN END A;\nPROCEDURE B;\nBEGIN\n  A\nEND B;\nPROCEDURE C;\nBEGIN\n  A;\n  B\nEND C;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         let c_calls = outgoing_calls_ws("C", "", &WorkspaceIndex::new(), Some(&result), "file:///test.mod");
         let callee_names: Vec<&str> = c_calls.iter()
             .filter_map(|c| c.get("to").and_then(|t| t.get("name")).and_then(|n| n.as_str()))
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn test_prepare_call_hierarchy() {
         let source = "MODULE Test;\nPROCEDURE Foo;\nBEGIN END Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
         let items = prepare_call_hierarchy(source, "file:///test.mod", 1, 10, &result);
         assert!(!items.is_empty(), "should find Foo at cursor");
         let name = items[0].get("name").and_then(|n| n.as_str()).unwrap();
@@ -420,8 +420,8 @@ mod tests {
         let source_a = "MODULE A;\nPROCEDURE CallFoo;\nBEGIN\n  Foo\nEND CallFoo;\nBEGIN\nEND A.\n";
         let source_b = "MODULE B;\nPROCEDURE Foo;\nBEGIN END Foo;\nBEGIN\nEND B.\n";
 
-        let result_a = analyze::analyze_source(source_a, "a.mod", &[]);
-        let result_b = analyze::analyze_source(source_b, "b.mod", &[]);
+        let result_a = analyze::analyze_source(source_a, "a.mod", false, &[]);
+        let result_b = analyze::analyze_source(source_b, "b.mod", false, &[]);
 
         let mut idx = WorkspaceIndex::new();
         let path_a = std::path::PathBuf::from("/tmp/m2_ch_test/A.mod");
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn test_workspace_outgoing_calls() {
         let source = "MODULE Test;\nPROCEDURE Bar;\nBEGIN END Bar;\nPROCEDURE Foo;\nBEGIN\n  Bar\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
 
         let mut idx = WorkspaceIndex::new();
         let path = std::path::PathBuf::from("/tmp/m2_ch_test2/Test.mod");

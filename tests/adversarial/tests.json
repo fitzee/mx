@@ -1707,7 +1707,7 @@
     "include_dirs": [
       "."
     ],
-    "m2plus": false,
+    "m2plus": true,
     "expected_exit": 0,
     "expected_stdout": "Hello via alias\nSum: 42\nDirect: 3\n",
     "tags": [
@@ -1722,7 +1722,7 @@
     "include_dirs": [
       "."
     ],
-    "m2plus": false,
+    "m2plus": true,
     "expected_exit": 0,
     "expected_stdout": "Hello from aliased import\n42\n",
     "tags": [
@@ -1737,7 +1737,7 @@
     "include_dirs": [
       "."
     ],
-    "m2plus": false,
+    "m2plus": true,
     "expected_exit": 0,
     "expected_stdout": "Length: 11\nDone\n",
     "tags": [

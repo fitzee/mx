@@ -29,10 +29,12 @@ pub fn token_types_legend() -> Vec<Json> {
 pub fn collect_semantic_tokens(
     source: &str,
     filename: &str,
+    m2plus: bool,
     result: &AnalysisResult,
 ) -> Vec<u32> {
     // Re-lex to get tokens with exact positions.
     let mut lexer = Lexer::new(source, filename);
+    lexer.set_m2plus(m2plus);
     let tokens = match lexer.tokenize() {
         Ok(t) => t,
         Err(_) => return Vec::new(),
@@ -318,8 +320,8 @@ mod tests {
     #[test]
     fn test_semantic_token_classification() {
         let source = "MODULE Test;\nVAR x: INTEGER;\nPROCEDURE Foo(a: INTEGER);\nBEGIN\n  x := a\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
-        let data = collect_semantic_tokens(source, "test.mod", &result);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
+        let data = collect_semantic_tokens(source, "test.mod", false, &result);
 
         // Verify we got some tokens
         assert!(!data.is_empty(), "expected non-empty semantic tokens");
@@ -335,8 +337,8 @@ mod tests {
     #[test]
     fn test_semantic_tokens_nested_scopes() {
         let source = "MODULE Test;\nPROCEDURE Outer;\n  VAR a: INTEGER;\n  PROCEDURE Inner;\n    VAR b: INTEGER;\n  BEGIN\n    b := 1\n  END Inner;\nBEGIN\n  a := 2\nEND Outer;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
-        let data = collect_semantic_tokens(source, "test.mod", &result);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
+        let data = collect_semantic_tokens(source, "test.mod", false, &result);
         assert!(!data.is_empty());
         assert_eq!(data.len() % 5, 0);
     }
@@ -344,17 +346,17 @@ mod tests {
     #[test]
     fn test_semantic_tokens_malformed() {
         let source = "MODULE Broken;\nVAR x: ;\nBEGIN\nEND Broken.\n";
-        let result = analyze::analyze_source(source, "broken.mod", &[]);
+        let result = analyze::analyze_source(source, "broken.mod", false, &[]);
         // Should not crash, may produce partial tokens
-        let data = collect_semantic_tokens(source, "broken.mod", &result);
+        let data = collect_semantic_tokens(source, "broken.mod", false, &result);
         assert_eq!(data.len() % 5, 0);
     }
 
     #[test]
     fn test_semantic_tokens_parameter_vs_variable() {
         let source = "MODULE Test;\nVAR g: INTEGER;\nPROCEDURE Foo(p: INTEGER);\nBEGIN\n  g := p\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
-        let data = collect_semantic_tokens(source, "test.mod", &result);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
+        let data = collect_semantic_tokens(source, "test.mod", false, &result);
 
         // Find tokens — decode to absolute positions for analysis
         let mut tokens_abs: Vec<(u32, u32, u32, u32)> = Vec::new(); // (line, col, len, type)
@@ -387,8 +389,8 @@ mod tests {
     fn test_semantic_tokens_multi_var_declaration() {
         // Multi-var: a, b: INTEGER should both be TT_VARIABLE
         let source = "MODULE Test;\nVAR\n  a, b: INTEGER;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
-        let data = collect_semantic_tokens(source, "test.mod", &result);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
+        let data = collect_semantic_tokens(source, "test.mod", false, &result);
 
         // Decode to absolute positions
         let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
@@ -430,8 +432,8 @@ mod tests {
     fn test_semantic_tokens_impl_module_multi_var() {
         // Replicate exact scenario: IMPLEMENTATION MODULE with module-level multi-var
         let source = "IMPLEMENTATION MODULE Scan;\n\nVAR\n  storeEntries: BOOLEAN;\n  skipVendored, skipGenerated: BOOLEAN;\n\nPROCEDURE Foo;\nBEGIN\n  skipVendored := TRUE;\n  skipGenerated := FALSE\nEND Foo;\n\nBEGIN\nEND Scan.\n";
-        let result = analyze::analyze_source(source, "Scan.mod", &[]);
-        let data = collect_semantic_tokens(source, "Scan.mod", &result);
+        let result = analyze::analyze_source(source, "Scan.mod", false, &[]);
+        let data = collect_semantic_tokens(source, "Scan.mod", false, &result);
 
         // Decode to absolute positions with names
         let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
@@ -482,8 +484,8 @@ mod tests {
     fn test_semantic_tokens_multi_var_in_procedure() {
         // Multi-var inside a procedure: both should be TT_VARIABLE, not TT_PARAMETER
         let source = "MODULE Test;\nPROCEDURE Foo;\nVAR\n  skipVendored, skipGenerated: BOOLEAN;\nBEGIN\n  skipVendored := TRUE;\n  skipGenerated := FALSE\nEND Foo;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
-        let data = collect_semantic_tokens(source, "test.mod", &result);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
+        let data = collect_semantic_tokens(source, "test.mod", false, &result);
 
         // Decode to absolute positions with names
         let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
@@ -534,8 +536,8 @@ mod tests {
         // Imported procedures should be classified as TT_FUNCTION at the import site,
         // not TT_VARIABLE (the default fallback).
         let source = "MODULE Test;\nFROM InOut IMPORT WriteString, WriteLn;\nBEGIN\n  WriteString(\"hi\");\n  WriteLn\nEND Test.\n";
-        let result = analyze::analyze_source(source, "test.mod", &[]);
-        let data = collect_semantic_tokens(source, "test.mod", &result);
+        let result = analyze::analyze_source(source, "test.mod", false, &[]);
+        let data = collect_semantic_tokens(source, "test.mod", false, &result);
 
         // Decode to absolute positions
         let mut tokens_abs: Vec<(u32, u32, u32, u32)> = Vec::new();
@@ -592,8 +594,8 @@ mod tests {
 
         // Analyze the main module with the .def pre-registered
         let main_src = "MODULE Test;\nFROM Gfx IMPORT Renderer, WIN_CENTERED, Init;\nBEGIN\nEND Test.\n";
-        let result = analyze::analyze_source(main_src, "test.mod", &[&gfx_def]);
-        let data = collect_semantic_tokens(main_src, "test.mod", &result);
+        let result = analyze::analyze_source(main_src, "test.mod", false, &[&gfx_def]);
+        let data = collect_semantic_tokens(main_src, "test.mod", false, &result);
 
         // Decode tokens
         let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
@@ -669,8 +671,8 @@ mod tests {
 
         // Analyze an IMPLEMENTATION MODULE that imports from Events
         let impl_src = "IMPLEMENTATION MODULE Keymap;\nFROM Events IMPORT KeyCode, KeyMod, KEYDOWN, QUIT_EVENT;\nBEGIN\nEND Keymap.\n";
-        let result = analyze::analyze_source(impl_src, "Keymap.mod", &[&keymap_def, &events_def]);
-        let data = collect_semantic_tokens(impl_src, "Keymap.mod", &result);
+        let result = analyze::analyze_source(impl_src, "Keymap.mod", false, &[&keymap_def, &events_def]);
+        let data = collect_semantic_tokens(impl_src, "Keymap.mod", false, &result);
 
         // Decode tokens
         let mut tokens_abs: Vec<(u32, u32, u32, u32, String)> = Vec::new();
