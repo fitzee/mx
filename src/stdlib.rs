@@ -988,13 +988,21 @@ static void m2_WriteRealOct(float r) { printf("%.8A", (double)r); }
 static void m2_ALLOCATE(void **p, uint32_t size) { *p = malloc(size); }
 static void m2_DEALLOCATE(void **p, uint32_t size) { free(*p); *p = NULL; (void)size; }
 
-/* Strings module — bounded, always NUL-terminates, truncates on overflow */
-static void m2_Strings_Assign(const char *src, char *dst, uint32_t dst_high) {
+/* Strings module — bounded, always NUL-terminates, truncates on overflow.
+   When both source length and capacity are compile-time constants (e.g. a
+   string literal assigned to a fixed-size array), the branch resolves at
+   compile time and the copy becomes a single memcpy/strcpy intrinsic that
+   downstream optimisations (constant-folding of strcmp, etc.) can see through. */
+static inline __attribute__((always_inline)) void m2_Strings_Assign(const char *src, char *dst, uint32_t dst_high) {
     size_t cap = (size_t)dst_high + 1;
-    size_t slen = strlen(src);
-    if (slen >= cap) slen = cap - 1;
-    memcpy(dst, src, slen);
-    dst[slen] = '\0';
+    size_t slen = __builtin_strlen(src);
+    if (__builtin_constant_p(slen) && __builtin_constant_p(cap) && slen < cap) {
+        __builtin_memcpy(dst, src, slen + 1);
+    } else {
+        if (slen >= cap) slen = cap - 1;
+        __builtin_memcpy(dst, src, slen);
+        dst[slen] = '\0';
+    }
 }
 static void m2_Strings_Insert(const char *sub, char *dst, uint32_t dst_high, uint32_t pos) {
     size_t cap = (size_t)dst_high + 1;

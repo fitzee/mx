@@ -1,12 +1,16 @@
 # Release Notes
 
-## 1.0.5 (2026-03-14)
+## 1.0.6 (2026-03-14)
 
 ### Bug fixes
 
 - **64-bit DIV/MOD truncation** — `m2_div`/`m2_mod` (int32_t) silently truncated LONGCARD/LONGINT operands. New `m2_div64`/`m2_mod64` helpers, plus type tracking for procedure parameters and type aliases, ensure correct width selection.
 - **Def-only module types emitted before embedded implementations** — Pure type/constant modules now emit types in the C preamble before embedded modules.
 - **Array-indexed field resolution** — `arr[i].field` assignments now resolve through tracked array element types.
+- **FOR loop bound expression precedence** — FOR loop start/end expressions now use `gen_expr_for_binop`, preventing incorrect C operator precedence when bounds contain binary operations.
+- **LSP transitive import resolution** — The language server now loads transitive `.def` dependencies (e.g., if module A imports B which imports C, C is now visible). Previously only direct imports were loaded, causing false "undefined type" diagnostics.
+- **LSP def module registration order** — Loaded `.def` modules are registered in dependency-first order so types from transitive imports resolve correctly during semantic analysis.
+- **Registry deps resolved in project resolver** — `DepSource::Registry` dependencies are now resolved via installed paths instead of being silently skipped, fixing include path resolution for registry-sourced packages.
 - **m2log 1.0.1** — Fix LogSinkStream importing from nonexistent `LogFmt` module.
 - **m2evloop 0.2.0** — Fix import shadowing of `Scheduler` type; timer ID wraps instead of overflowing.
 - **m2oidc 0.1.3** — Return `JkFull` on JWKS key array overflow.
@@ -19,6 +23,7 @@
 - **m2lmdb 0.2.0** — New `DbiStatEntries` procedure.
 - **m2bytes 1.2.0** — `AppendByte`, `AppendChars`, `AppendView` now return `BOOLEAN`.
 - **m2stream 0.2.0** — Stream `.def` API updates.
+- **Strings.Assign constant-folding** — `m2_Strings_Assign` is now `always_inline` with `__builtin_*` intrinsics, enabling compile-time constant folding when source length and destination capacity are known.
 
 ### Test coverage
 

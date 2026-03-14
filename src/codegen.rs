@@ -3392,9 +3392,9 @@ impl CodeGen {
                 let cmp_op = if is_downward { ">=" } else { "<=" };
                 let var_c = self.mangle(var);
                 self.emit(&format!("for ({} = ", var_c));
-                self.gen_expr(start);
+                self.gen_expr_for_binop(start);
                 self.emit(&format!("; {} {} ", var_c, cmp_op));
-                self.gen_expr(end);
+                self.gen_expr_for_binop(end);
                 self.emit(&format!("; {} += {}) {{\n", var_c, step_str));
                 self.indent += 1;
                 for s in body {

@@ -1851,5 +1851,23 @@
       "regression"
     ],
     "_comment": "Regression: m2_div(int32_t,int32_t) and m2_mod(int32_t,int32_t) were called with 64-bit LONGINT operands, silently truncating values. LONGINT DIV/MOD must emit m2_div64/m2_mod64 for correct PIM4 floored semantics."
+  },
+  {
+    "name": "for_char_literal",
+    "category": "codegen",
+    "dir": "codegen/for_char_literal",
+    "main": "ForCharLiteral.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "ABCDE\nalpha=26\nsingle=1\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: single-char string literals in FOR loop bounds were emitted as C string literals (char[2]) instead of char values, causing incompatible pointer-to-integer conversion."
   }
 ]

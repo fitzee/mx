@@ -1485,7 +1485,7 @@ class AdversarialRunner:
         std_categories = [
             "symbol_namespace", "semantics", "ub_sanitizer", "runtime",
             "resolution", "import_chain", "proc_values", "abi_layout",
-            "strict_ambiguity", "stream_stress",
+            "strict_ambiguity", "stream_stress", "codegen", "arithmetic",
         ]
         if any(should_run(c) for c in std_categories):
             std_tests = [

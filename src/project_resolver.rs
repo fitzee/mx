@@ -402,13 +402,12 @@ fn resolve_deps_from_manifest(
                     Err(_) => continue,
                 }
             }
-            DepSource::Installed => {
+            DepSource::Installed | DepSource::Registry(_) => {
                 match resolve_installed_dep(&dep.name) {
                     Some(p) => p,
                     None => continue,
                 }
             }
-            DepSource::Registry(_) => continue,
         };
         if !visited.insert(dep_root.clone()) {
             continue; // already visited, prevent cycles
@@ -441,13 +440,12 @@ fn collect_dep_cc(
                     Err(_) => continue,
                 }
             }
-            DepSource::Installed => {
+            DepSource::Installed | DepSource::Registry(_) => {
                 match resolve_installed_dep(&dep.name) {
                     Some(p) => p,
                     None => continue,
                 }
             }
-            DepSource::Registry(_) => continue,
         };
         {
             if !visited.insert(dep_root.clone()) {

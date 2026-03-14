@@ -69,8 +69,11 @@ pub fn analyze(
     include_paths: &[PathBuf],
     def_cache: &mut DefCache,
 ) -> AnalysisResult {
-    // Collect def modules for imports
-    let def_modules = collect_def_modules(source, filename, include_paths, def_cache);
+    // Collect def modules for imports.
+    // Reverse so transitive deps (discovered later by BFS) are registered
+    // before the modules that depend on them — poor man's topo sort.
+    let mut def_modules = collect_def_modules(source, filename, include_paths, def_cache);
+    def_modules.reverse();
     let def_refs: Vec<&DefinitionModule> = def_modules.iter().collect();
 
     analyze::analyze_source(source, filename, &def_refs)
@@ -122,31 +125,39 @@ fn collect_def_modules(
         }
     }
 
+    // Collect module names to process in a queue for transitive loading
+    let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     for imp in imports {
         if let Some(ref from_mod) = imp.from_module {
-            if !crate::stdlib::is_stdlib_module(from_mod) {
-                if let Some(def_path) = find_def_file(from_mod, input_path, include_paths) {
-                    let canon = def_path.canonicalize().unwrap_or(def_path.clone());
-                    if !loaded.contains(&canon) {
-                        if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
-                            loaded.insert(canon);
-                            result.push(def_mod.clone());
-                        }
-                    }
-                }
-            }
+            queue.push_back(from_mod.clone());
         } else {
             for mod_name in &imp.names {
-                if !crate::stdlib::is_stdlib_module(&mod_name.name) {
-                    if let Some(def_path) = find_def_file(&mod_name.name, input_path, include_paths) {
-                        let canon = def_path.canonicalize().unwrap_or(def_path.clone());
-                        if !loaded.contains(&canon) {
-                            if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
-                                loaded.insert(canon);
-                                result.push(def_mod.clone());
+                queue.push_back(mod_name.name.clone());
+            }
+        }
+    }
+
+    // Process the queue, transitively loading imports from each .def file
+    while let Some(mod_name) = queue.pop_front() {
+        if crate::stdlib::is_stdlib_module(&mod_name) {
+            continue;
+        }
+        if let Some(def_path) = find_def_file(&mod_name, input_path, include_paths) {
+            let canon = def_path.canonicalize().unwrap_or(def_path.clone());
+            if !loaded.contains(&canon) {
+                if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
+                    loaded.insert(canon);
+                    // Enqueue transitive imports from this .def
+                    for imp in &def_mod.imports {
+                        if let Some(ref from_mod) = imp.from_module {
+                            queue.push_back(from_mod.clone());
+                        } else {
+                            for name in &imp.names {
+                                queue.push_back(name.name.clone());
                             }
                         }
                     }
+                    result.push(def_mod.clone());
                 }
             }
         }
