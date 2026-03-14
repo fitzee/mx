@@ -25,6 +25,10 @@ pub struct SemanticAnalyzer {
     last_col: usize,
     /// Reference index: all symbol references with resolved identity.
     ref_index: ReferenceIndex,
+    /// Active FOR control variable names (assignment to these is forbidden).
+    for_vars: Vec<String>,
+    /// Whether we are currently inside a procedure body.
+    in_procedure: bool,
 }
 
 impl SemanticAnalyzer {
@@ -43,6 +47,8 @@ impl SemanticAnalyzer {
             last_line: 0,
             last_col: 0,
             ref_index: ReferenceIndex::new(),
+            for_vars: Vec::new(),
+            in_procedure: false,
         };
         sa.register_builtins();
         sa
@@ -573,7 +579,9 @@ impl SemanticAnalyzer {
 
                 // Analyze procedure body
                 let saved_return = self.current_proc_return;
+                let saved_in_procedure = self.in_procedure;
                 self.current_proc_return = ret;
+                self.in_procedure = true;
                 self.enter_scope_at(&p.heading.name, &p.loc);
 
                 // Define parameters as local variables
@@ -593,6 +601,7 @@ impl SemanticAnalyzer {
                 self.analyze_block(&p.block);
                 self.leave_scope_at();
                 self.current_proc_return = saved_return;
+                self.in_procedure = saved_in_procedure;
             }
             Declaration::Module(m) => {
                 self.analyze_program_module(m);
@@ -966,6 +975,18 @@ impl SemanticAnalyzer {
         match &stmt.kind {
             StatementKind::Empty => {}
             StatementKind::Assign { desig, expr } => {
+                // F18: forbid assignment to FOR control variable
+                if desig.selectors.is_empty() && desig.ident.module.is_none() {
+                    if self.for_vars.contains(&desig.ident.name) {
+                        self.error(
+                            &stmt.loc,
+                            format!(
+                                "assignment to FOR control variable '{}'",
+                                desig.ident.name
+                            ),
+                        );
+                    }
+                }
                 let lhs_type = self.analyze_designator(desig);
                 let rhs_type = self.analyze_expr(expr);
                 if lhs_type != TY_VOID
@@ -1093,9 +1114,11 @@ impl SemanticAnalyzer {
                 if let Some(s) = step {
                     self.analyze_expr(s);
                 }
+                self.for_vars.push(var.clone());
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.for_vars.pop();
             }
             StatementKind::Loop { body } => {
                 self.in_loop += 1;
@@ -1122,7 +1145,11 @@ impl SemanticAnalyzer {
                         if et != TY_VOID && !assignment_compatible(&self.types, ret_ty, et) {
                             self.error(&stmt.loc, "RETURN type mismatch");
                         }
+                    } else if self.in_procedure {
+                        self.error(&stmt.loc, "proper procedure must not return a value");
                     }
+                } else if self.current_proc_return.is_some() {
+                    self.error(&stmt.loc, "function procedure requires RETURN with expression");
                 }
             }
             StatementKind::Exit => {
@@ -1320,7 +1347,11 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
-                TY_BITSET
+                if let Some(qi) = base_type {
+                    self.resolve_named_type(qi)
+                } else {
+                    TY_BITSET
+                }
             }
         }
     }
