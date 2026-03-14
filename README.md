@@ -2,13 +2,11 @@
 
 A Modula-2 compiler that transpiles to readable C, then invokes the system C compiler for native executables.
 
-mx targets **PIM4** (Programming in Modula-2, 4th Edition) and extends it with **Modula-2+** features — exceptions, reference types, objects, and concurrency — via the `--m2plus` flag. It ships with 33 libraries, a package manager, an LSP server, and a VS Code extension.
+mx implements **PIM4** (Programming in Modula-2, 4th Edition) with optional **Modula-2+** extensions (exceptions, reference types, objects, concurrency) enabled via `--m2plus`. The toolchain includes 33 libraries, a package manager, an LSP server, and a VS Code extension.
 
 ## Why Modula-2?
 
-AI is now writing the majority of the code in a lot of shops, and the calculus around language choice is different. Take a complex language with a sprawling framework ecosystem and hand it to an LLM. The search space explodes. The model pulls in the wrong version of an API, hallucinates a method that doesn't exist, or produces something that compiles and appears to work on the surface. But do you actually know what it's doing? With 200 transitive dependencies and six layers of abstraction, probably not.
-
-Modula-2 was designed for modularity and safety. The grammar fits on a page. Every module has a clean separation between interface (`.def`) and implementation (`.mod`). There are no implicit conversions, no header file tangles, no undefined behavior traps hiding in innocent-looking code. When an LLM generates a Modula-2 module, you can read the whole thing. The compiler is strict enough to reject the mistakes that slip through in languages with more surface area.
+Modula-2 was designed for modularity and safety. The grammar fits on a page. Every module has a clean separation between interface (`.def`) and implementation (`.mod`). There are no implicit conversions, no header file tangles, and the type system catches errors that looser languages accept silently. The language is small enough that both humans and LLMs can produce auditable output — when an AI generates a Modula-2 module, you can read the whole thing and know what it does.
 
 ## Why mx?
 
@@ -19,7 +17,7 @@ mx transpiles to C rather than compiling to native code directly. This means:
 - **FFI-friendly** — C interop is trivial. Bind to any C library with `DEFINITION MODULE FOR "C"`.
 - **Readable output** — the generated C is human-readable, so you can inspect exactly what the compiler produces.
 
-Beyond the compiler, mx is a complete toolchain: project builds (`mx build/run/test`), a self-hosted package manager (`mxpkg`), an LSP server with full IDE support, and 33 libraries covering networking, HTTP/2, TLS, async I/O, graphics, database, authentication, and more.
+Beyond the compiler, mx includes project builds (`mx build/run/test`), a self-hosted package manager (`mxpkg`), an LSP server with IDE support, and 33 libraries covering networking, HTTP/2, TLS, async I/O, graphics, databases, and authentication.
 
 ## Install
 
@@ -68,9 +66,9 @@ code --install-extension tools/vscode-m2plus/m2plus-*.vsix
 
 ## AI-Assisted Development
 
-The mx libraries were built using AI coding agents with a human in the loop for architectural decisions. The strict compiler catches bad output that looser languages would silently accept.
+The mx libraries were built using AI coding agents with a human in the loop for architectural decisions. The compiler's strict type checking and explicit module interfaces help catch incorrect generated code early.
 
-You don't need to know Modula-2 to work this way. If you can read Pascal or Ada, you can already read it. If you can't, it takes about an hour. The language has roughly 40 reserved words. No operator overloads, no template metaprogramming, no lifetime annotations. A procedure does what its signature says. A module exports what its definition file lists.
+You don't need to know Modula-2 to work this way. If you can read Pascal or Ada, you can already read it. The language has roughly 40 reserved words — no operator overloads, no template metaprogramming, no lifetime annotations. A procedure does what its signature says. A module exports what its definition file lists.
 
 To set up an AI coding agent for mx, point it at `docs/ai/`. The files there provide:
 
@@ -102,10 +100,10 @@ docs/          Documentation
 ## Tests
 
 ```bash
-cargo test                                              # 150 unit tests
+cargo test                                              # unit tests
 bash tests/run_all.sh                                   # integration tests
 bash tests/conformance.sh                               # conformance tests
-python3 tests/adversarial/run_adversarial.py --mode ci  # 900+ adversarial tests
+python3 tests/adversarial/run_adversarial.py --mode ci  # adversarial tests
 ```
 
 ## License
