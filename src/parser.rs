@@ -2051,4 +2051,207 @@ END Stack.
             _ => panic!("expected program module"),
         }
     }
+
+    // ── Comprehensive M2+ keyword gating tests ──────────────────────
+
+    fn try_parse(input: &str) -> Result<CompilationUnit, CompileError> {
+        let mut lexer = Lexer::new(input, "test");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser.parse_compilation_unit()
+    }
+
+    fn try_parse_m2plus(input: &str) -> Result<CompilationUnit, CompileError> {
+        let mut lexer = Lexer::new(input, "test");
+        lexer.set_m2plus(true);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser.parse_compilation_unit()
+    }
+
+    #[test]
+    fn test_all_m2plus_keywords_as_pim4_identifiers() {
+        // Every M2+ keyword should be usable as a variable name in PIM4 mode
+        for kw in &[
+            "EXCEPT", "FINALLY", "RAISE", "RETRY", "AS",
+            "BRANDED", "EXCEPTION", "LOCK", "METHODS", "OBJECT",
+            "OVERRIDE", "REF", "REFANY", "REVEAL", "SAFE",
+            "TRY", "TYPECASE", "UNSAFE",
+        ] {
+            let src = format!("MODULE Test; VAR {}: INTEGER; BEGIN {} := 1 END Test.", kw, kw);
+            let result = try_parse(&src);
+            assert!(result.is_ok(), "M2+ keyword '{}' should be a valid identifier in PIM4 mode, but parse failed: {:?}", kw, result.err());
+        }
+    }
+
+    #[test]
+    fn test_m2plus_keywords_as_type_names_in_pim4() {
+        // Should be able to use M2+ keywords as type names
+        let cu = parse("MODULE Test; TYPE OBJECT = RECORD x: INTEGER END; VAR o: OBJECT; BEGIN o.x := 1 END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert_eq!(m.block.decls.len(), 2); // TYPE + VAR
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_m2plus_keywords_as_proc_names_in_pim4() {
+        let cu = parse("MODULE Test; PROCEDURE LOCK; BEGIN END LOCK; BEGIN LOCK END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert_eq!(m.block.decls.len(), 1);
+                let body = m.block.body.as_ref().unwrap();
+                assert!(matches!(&body[0].kind, StatementKind::ProcCall { .. }));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    // ── Extension syntax rejected in PIM4 mode ──────────────────────
+
+    #[test]
+    fn test_lock_rejected_in_pim4() {
+        // In PIM4 mode, LOCK is an identifier — "LOCK x DO ... END" won't parse
+        // as a LOCK statement. It will try to parse as a bare call then fail on DO.
+        let result = try_parse("MODULE Test; VAR x: INTEGER; BEGIN LOCK x DO x := 1 END END Test.");
+        assert!(result.is_err(), "LOCK statement should not parse in PIM4 mode");
+    }
+
+    #[test]
+    fn test_typecase_rejected_in_pim4() {
+        let result = try_parse("MODULE Test; BEGIN TYPECASE x OF END END Test.");
+        assert!(result.is_err(), "TYPECASE should not parse in PIM4 mode");
+    }
+
+    #[test]
+    fn test_raise_rejected_in_pim4() {
+        // RAISE is an identifier in PIM4, so "RAISE Foo" parses as proc call — that's OK.
+        // But the keyword-level behavior is gone.
+        let cu = parse("MODULE Test; PROCEDURE RAISE(x: INTEGER); BEGIN END RAISE; BEGIN RAISE(1) END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                let body = m.block.body.as_ref().unwrap();
+                assert!(matches!(&body[0].kind, StatementKind::ProcCall { .. }));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_exception_decl_rejected_in_pim4() {
+        // EXCEPTION is an identifier in PIM4 — "EXCEPTION Foo;" would try to parse
+        // as something else and fail
+        let result = try_parse("MODULE Test; EXCEPTION Foo; BEGIN END Test.");
+        assert!(result.is_err(), "EXCEPTION decl should not parse in PIM4 mode");
+    }
+
+    #[test]
+    fn test_ref_type_rejected_in_pim4() {
+        // REF is an identifier in PIM4 — "REF RECORD" won't parse as a REF type
+        let result = try_parse("MODULE Test; TYPE R = REF RECORD x: INTEGER END; BEGIN END Test.");
+        assert!(result.is_err(), "REF type should not parse in PIM4 mode");
+    }
+
+    #[test]
+    fn test_except_in_block_is_ident_in_pim4() {
+        // In PIM4 mode, EXCEPT is an identifier — "BEGIN EXCEPT END" parses EXCEPT
+        // as a bare procedure call, NOT as a Block exception clause
+        let cu = parse("MODULE Test; PROCEDURE EXCEPT; BEGIN END EXCEPT; BEGIN EXCEPT END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                // EXCEPT should be a proc call in the body, not a block clause
+                assert!(m.block.except.is_none(), "EXCEPT should not be parsed as block clause");
+                let body = m.block.body.as_ref().unwrap();
+                assert_eq!(body.len(), 1);
+                assert!(matches!(&body[0].kind, StatementKind::ProcCall { .. }));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_safe_module_rejected_in_pim4() {
+        // SAFE is an identifier in PIM4
+        let result = try_parse("SAFE MODULE Test; BEGIN END Test.");
+        assert!(result.is_err(), "SAFE MODULE should not parse in PIM4 mode");
+    }
+
+    // ── Same syntax accepted under --m2plus ──────────────────────────
+
+    #[test]
+    fn test_lock_accepted_in_m2plus() {
+        let cu = parse_m2plus("MODULE Test; VAR x: INTEGER; BEGIN LOCK x DO x := 1 END END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                let body = m.block.body.as_ref().unwrap();
+                assert!(matches!(&body[0].kind, StatementKind::Lock { .. }));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_typecase_accepted_in_m2plus() {
+        let result = try_parse_m2plus("MODULE Test; VAR x: INTEGER; BEGIN TYPECASE x OF ELSE END END Test.");
+        assert!(result.is_ok(), "TYPECASE should parse in M2+ mode");
+    }
+
+    #[test]
+    fn test_exception_decl_accepted_in_m2plus() {
+        let cu = parse_m2plus("MODULE Test; EXCEPTION Foo; BEGIN END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert_eq!(m.block.decls.len(), 1);
+                assert!(matches!(&m.block.decls[0], Declaration::Exception(_)));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_raise_accepted_in_m2plus() {
+        let cu = parse_m2plus("MODULE Test; EXCEPTION Foo; BEGIN RAISE Foo END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                let body = m.block.body.as_ref().unwrap();
+                assert!(matches!(&body[0].kind, StatementKind::Raise { .. }));
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_except_in_block_accepted_in_m2plus() {
+        let cu = parse_m2plus("MODULE Test; BEGIN EXCEPT END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert!(m.block.except.is_some());
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_safe_module_accepted_in_m2plus() {
+        let cu = parse_m2plus("SAFE MODULE Test; BEGIN END Test.");
+        match cu {
+            CompilationUnit::ProgramModule(m) => {
+                assert!(m.is_safe);
+            }
+            _ => panic!("expected program module"),
+        }
+    }
+
+    #[test]
+    fn test_import_as_rejected_in_pim4_accepted_in_m2plus() {
+        // PIM4: AS is an identifier, so "WriteString AS WS" fails (unexpected ident after ident)
+        let result = try_parse("MODULE Test; FROM InOut IMPORT WriteString AS WS; BEGIN END Test.");
+        assert!(result.is_err(), "import AS should not parse in PIM4 mode");
+
+        // M2+: works
+        let result = try_parse_m2plus("MODULE Test; FROM InOut IMPORT WriteString AS WS; BEGIN END Test.");
+        assert!(result.is_ok(), "import AS should parse in M2+ mode");
+    }
 }
