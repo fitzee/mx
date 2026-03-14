@@ -4,20 +4,22 @@ A Modula-2 compiler that transpiles to readable C, then invokes the system C com
 
 mx implements **PIM4** (Programming in Modula-2, 4th Edition) with optional **Modula-2+** extensions (exceptions, reference types, objects, concurrency) enabled via `--m2plus`. The toolchain includes 33 libraries, a package manager, an LSP server, and a VS Code extension.
 
+It is aimed at engineers building tooling, services, or systems software who want a small language, strict compilation, straightforward C interoperability, and a codebase that AI coding agents can reason about reliably.
+
 ## Why Modula-2?
 
-Modula-2 was designed for modularity and safety. The grammar fits on a page. Every module has a clean separation between interface (`.def`) and implementation (`.mod`). There are no implicit conversions, no header file tangles, and the type system catches errors that looser languages accept silently. The language is small enough that both humans and LLMs can produce auditable output — when an AI generates a Modula-2 module, you can read the whole thing and know what it does.
+Modula-2 was designed for modularity and safety. The grammar fits on a page. Every module has a clean separation between interface (`.def`) and implementation (`.mod`). There are no implicit conversions, no header file tangles, and the type system catches errors that looser languages accept silently. The language is small enough that both humans and LLMs produce auditable output — when an AI generates a module, you can read the whole thing.
 
 ## Why mx?
 
-mx transpiles to C rather than compiling to native code directly. This means:
+mx transpiles to C rather than emitting native code directly. This means:
 
 - **Portable** — any platform with a C compiler is a target. Cross-compile by setting `--cc`.
 - **Debuggable** — `#line` directives let you set breakpoints and step through `.mod` source in LLDB/GDB.
 - **FFI-friendly** — C interop is trivial. Bind to any C library with `DEFINITION MODULE FOR "C"`.
 - **Readable output** — the generated C is human-readable, so you can inspect exactly what the compiler produces.
 
-Beyond the compiler, mx includes project builds (`mx build/run/test`), a self-hosted package manager (`mxpkg`), an LSP server with IDE support, and 33 libraries covering networking, HTTP/2, TLS, async I/O, graphics, databases, and authentication.
+The toolchain also includes project builds (`mx build/run/test`), a self-hosted package manager (`mxpkg`), an LSP server, and 33 libraries covering networking, HTTP/2, TLS, async I/O, graphics, databases, and authentication.
 
 ## Install
 
@@ -66,7 +68,7 @@ code --install-extension tools/vscode-m2plus/m2plus-*.vsix
 
 ## AI-Assisted Development
 
-The mx libraries were built using AI coding agents with a human in the loop for architectural decisions. The compiler's strict type checking and explicit module interfaces help catch incorrect generated code early.
+The mx libraries were built using AI coding agents with human oversight for architecture. The compiler's strict type checking and explicit module interfaces catch incorrect generated code early.
 
 You don't need to know Modula-2 to work this way. If you can read Pascal or Ada, you can already read it. The language has roughly 40 reserved words — no operator overloads, no template metaprogramming, no lifetime annotations. A procedure does what its signature says. A module exports what its definition file lists.
 
