@@ -1,5 +1,19 @@
 # Release Notes
 
+## 1.1.1 (2026-03-15)
+
+### Bug fixes
+
+- **Enum-indexed array codegen** — `ARRAY EnumType OF T` declarations emitted zero-size C arrays, causing stack corruption. Now correctly emits `[m2_max_EnumName + 1]`.
+- **LSP def cache m2plus threading** — The LSP's definition file cache did not pass the `m2plus` flag to the lexer, causing false parse errors on `.def` files using M2+ syntax (e.g., import `AS` aliases) in M2+ projects.
+- **EXIT in all loop forms** — EXIT is now valid inside WHILE, REPEAT, and FOR loops, not just LOOP. Previously produced false "EXIT must be inside a LOOP" sema errors.
+
+### Features
+
+- **MathLib.Random** — New `Random(): REAL` returns a pseudo-random value in [0.0, 1.0).
+- **MathLib.Randomize** — New `Randomize(seed: CARDINAL)` seeds the PRNG.
+- **Strings.CAPS** — New `CAPS(VAR s: ARRAY OF CHAR)` converts a string to upper case in place.
+
 ## 1.1.0 (2026-03-14)
 
 ### Features
