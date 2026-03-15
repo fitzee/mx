@@ -4531,8 +4531,15 @@ impl CodeGen {
                 match qi.name.as_str() {
                     "BOOLEAN" => "[2]".to_string(),
                     "CHAR" => "[256]".to_string(),
-                    _ => "[/* size */]".to_string(),
+                    _ => {
+                        // Enum or other named ordinal type — use m2_max_Name + 1
+                        let c_name = self.qualident_to_c(qi);
+                        format!("[m2_max_{} + 1]", c_name)
+                    }
                 }
+            }
+            TypeNode::Enumeration { variants, .. } => {
+                format!("[{}]", variants.len())
             }
             _ => "[/* size */]".to_string(),
         }

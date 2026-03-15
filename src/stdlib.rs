@@ -171,6 +171,10 @@ fn register_mathlib(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: 
         Some("Return the largest integer not greater than `x` (floor)."));
     def_proc_doc(symtab, scope, "real", vec![p("x", TY_INTEGER, false)], Some(TY_REAL),
         Some("Convert an INTEGER value to REAL."));
+    def_proc_doc(symtab, scope, "Random", vec![], Some(TY_REAL),
+        Some("Return a pseudo-random REAL in [0.0, 1.0)."));
+    def_proc_doc(symtab, scope, "Randomize", vec![p("seed", TY_CARDINAL, false)], None,
+        Some("Seed the pseudo-random number generator."));
 }
 
 fn register_strings(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
@@ -213,6 +217,8 @@ fn register_strings(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: 
         p("s2", TY_STRING, false),
     ], Some(TY_INTEGER),
         Some("Compare strings `s1` and `s2`. Returns negative if s1 < s2, zero if equal, positive if s1 > s2."));
+    def_proc_doc(symtab, scope, "CAPS", vec![p("s", TY_STRING, true)], None,
+        Some("Convert all characters in `s` to upper case in place."));
 }
 
 fn register_storage(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: usize) {
@@ -984,6 +990,10 @@ static void m2_WriteReal(float r, int32_t w) { printf("%*g", (int)w, (double)r);
 static void m2_WriteFixPt(float r, int32_t w, int32_t d) { printf("%*.*f", (int)w, (int)d, (double)r); }
 static void m2_WriteRealOct(float r) { printf("%.8A", (double)r); }
 
+/* MathLib — Random/Randomize */
+static float m2_Random(void) { return (float)rand() / ((float)RAND_MAX + 1.0f); }
+static void m2_Randomize(uint32_t seed) { srand(seed); }
+
 /* Storage module */
 static void m2_ALLOCATE(void **p, uint32_t size) { *p = malloc(size); }
 static void m2_DEALLOCATE(void **p, uint32_t size) { free(*p); *p = NULL; (void)size; }
@@ -1054,6 +1064,7 @@ static void m2_Strings_Concat(const char *s1, const char *s2, char *dst, uint32_
     dst[len1 + len2] = '\0';
 }
 static int32_t m2_Strings_CompareStr(const char *s1, const char *s2) { return (int32_t)strcmp(s1, s2); }
+static void m2_Strings_CAPS(char *s, uint32_t s_high) { for (uint32_t i = 0; i <= s_high && s[i]; i++) s[i] = (char)toupper((unsigned char)s[i]); }
 
 /* Terminal module */
 static int m2_Terminal_Done = 1;
@@ -1288,6 +1299,8 @@ pub fn map_stdlib_call(module: &str, proc_name: &str) -> Option<String> {
         ("MATHLIB0" | "MATHLIB", "ARCTAN") => Some("atanf".to_string()),
         ("MATHLIB0" | "MATHLIB", "ENTIER") => Some("(int32_t)floorf".to_string()),
         ("MATHLIB0" | "MATHLIB", "REAL") => Some("(float)".to_string()),
+        ("MATHLIB0" | "MATHLIB", "RANDOM") => Some("m2_Random".to_string()),
+        ("MATHLIB0" | "MATHLIB", "RANDOMIZE") => Some("m2_Randomize".to_string()),
 
         // Strings
         ("STRINGS", "ASSIGN") => Some("m2_Strings_Assign".to_string()),
@@ -1298,6 +1311,7 @@ pub fn map_stdlib_call(module: &str, proc_name: &str) -> Option<String> {
         ("STRINGS", "COPY") => Some("m2_Strings_Copy".to_string()),
         ("STRINGS", "CONCAT") => Some("m2_Strings_Concat".to_string()),
         ("STRINGS", "COMPARESTR") => Some("m2_Strings_CompareStr".to_string()),
+        ("STRINGS", "CAPS") => Some("m2_Strings_CAPS".to_string()),
 
         // Terminal
         ("TERMINAL", "READ") => Some("m2_Terminal_Read".to_string()),
@@ -1545,6 +1559,8 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         ("MATHLIB0" | "MATHLIB", "SQRT" | "SIN" | "COS" | "ARCTAN" | "EXP" | "LN") => Some(vec![sp("x", false, false)]),
         ("MATHLIB0" | "MATHLIB", "ENTIER") => Some(vec![sp("x", false, false)]),
         ("MATHLIB0" | "MATHLIB", "REAL") => Some(vec![sp("x", false, false)]),
+        ("MATHLIB0" | "MATHLIB", "RANDOM") => Some(vec![]),
+        ("MATHLIB0" | "MATHLIB", "RANDOMIZE") => Some(vec![sp("seed", false, false)]),
 
         // Strings — destination params are is_open_array so codegen emits HIGH bound
         ("STRINGS", "ASSIGN") => Some(vec![sp("src", false, false), ("dst".to_string(), false, false, true)]),
@@ -1552,6 +1568,7 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         ("STRINGS", "DELETE") => Some(vec![("s".to_string(), false, false, true), sp("pos", false, false), sp("len", false, false)]),
         ("STRINGS", "POS") => Some(vec![sp("sub", false, false), sp("s", false, false)]),
         ("STRINGS", "LENGTH") => Some(vec![sp("s", false, false)]),
+        ("STRINGS", "CAPS") => Some(vec![("s".to_string(), false, false, true)]),
         ("STRINGS", "COPY") => Some(vec![sp("src", false, false), sp("pos", false, false), sp("len", false, false), ("dst".to_string(), false, false, true)]),
         ("STRINGS", "CONCAT") => Some(vec![sp("s1", false, false), sp("s2", false, false), ("dst".to_string(), false, false, true)]),
         ("STRINGS", "COMPARESTR") => Some(vec![sp("s1", false, false), sp("s2", false, false)]),
