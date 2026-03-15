@@ -26,7 +26,7 @@ impl DefCache {
         Self { entries: HashMap::new() }
     }
 
-    fn get_or_parse(&mut self, path: &Path) -> Option<&DefinitionModule> {
+    fn get_or_parse(&mut self, path: &Path, m2plus: bool) -> Option<&DefinitionModule> {
         // Canonicalize path for consistent cache keys
         let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
@@ -48,6 +48,7 @@ impl DefCache {
             let source = std::fs::read_to_string(&key).ok()?;
             let name = key.to_string_lossy().to_string();
             let mut lexer = Lexer::new(&source, &name);
+            lexer.set_m2plus(m2plus);
             let tokens = lexer.tokenize().ok()?;
             let mut parser = Parser::new(tokens);
             if let Ok(CompilationUnit::DefinitionModule(def_mod)) = parser.parse_compilation_unit() {
@@ -119,7 +120,7 @@ fn collect_def_modules(
     // same module name is a different module that happens to share the name.
     if let CompilationUnit::ImplementationModule(m) = &unit {
         if let Some(def_path) = find_def_file_same_dir(&m.name, input_path) {
-            if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
+            if let Some(def_mod) = def_cache.get_or_parse(&def_path, m2plus) {
                 let canon = def_path.canonicalize().unwrap_or(def_path.clone());
                 loaded.insert(canon);
                 result.push(def_mod.clone());
@@ -147,7 +148,7 @@ fn collect_def_modules(
         if let Some(def_path) = find_def_file(&mod_name, input_path, include_paths) {
             let canon = def_path.canonicalize().unwrap_or(def_path.clone());
             if !loaded.contains(&canon) {
-                if let Some(def_mod) = def_cache.get_or_parse(&def_path) {
+                if let Some(def_mod) = def_cache.get_or_parse(&def_path, m2plus) {
                     loaded.insert(canon);
                     // Enqueue transitive imports from this .def
                     for imp in &def_mod.imports {
