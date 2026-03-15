@@ -1079,14 +1079,18 @@ impl SemanticAnalyzer {
                 if ct != TY_VOID && ct != TY_BOOLEAN {
                     self.error(&stmt.loc, "WHILE condition must be BOOLEAN");
                 }
+                self.in_loop += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.in_loop -= 1;
             }
             StatementKind::Repeat { body, cond } => {
+                self.in_loop += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.in_loop -= 1;
                 let ct = self.analyze_expr(cond);
                 if ct != TY_VOID && ct != TY_BOOLEAN {
                     self.error(&stmt.loc, "UNTIL condition must be BOOLEAN");
@@ -1115,9 +1119,11 @@ impl SemanticAnalyzer {
                     self.analyze_expr(s);
                 }
                 self.for_vars.push(var.clone());
+                self.in_loop += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.in_loop -= 1;
                 self.for_vars.pop();
             }
             StatementKind::Loop { body } => {
