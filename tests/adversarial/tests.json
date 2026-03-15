@@ -1869,5 +1869,23 @@
       "regression"
     ],
     "_comment": "Regression: single-char string literals in FOR loop bounds were emitted as C string literals (char[2]) instead of char values, causing incompatible pointer-to-integer conversion."
+  },
+  {
+    "name": "enum_indexed_array",
+    "category": "codegen",
+    "dir": "codegen/enum_indexed_array",
+    "main": "EnumArray.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "red green blue \n0 180 90 270 \n111 222 333 444\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: ARRAY EnumType OF T emitted zero-size C arrays ([/* size */]) causing stack corruption. Now emits [m2_max_EnumName + 1]."
   }
 ]
