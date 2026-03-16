@@ -453,9 +453,9 @@ impl Lexer {
                             break;
                         }
                     }
-                    // Exponent
-                    if let Some('E') | Some('e') = self.peek() {
-                        digits.push('E');
+                    // Exponent: E/e for REAL, D/d for LONGREAL
+                    if let Some('E') | Some('e') | Some('D') | Some('d') = self.peek() {
+                        digits.push('E'); // normalize to E for f64 parsing
                         self.advance();
                         if let Some('+') | Some('-') = self.peek() {
                             digits.push(self.advance().unwrap());
