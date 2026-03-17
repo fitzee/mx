@@ -1887,5 +1887,22 @@
       "regression"
     ],
     "_comment": "Regression: ARRAY EnumType OF T emitted zero-size C arrays ([/* size */]) causing stack corruption. Now emits [m2_max_EnumName + 1]."
+  },
+  {
+    "name": "func_deref",
+    "category": "codegen",
+    "dir": "codegen/func_deref",
+    "main": "FuncDeref.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "basic: 10\nassign: 20\ndouble: 30\nexpr: 42\nelem0: 100\nelem2: 300\n",
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: Func(x)^ was a parse error. Tests basic deref, assign through deref, double deref (^^), deref in arithmetic, and array element deref via function."
   }
 ]
