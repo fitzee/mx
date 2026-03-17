@@ -822,35 +822,6 @@ mod tests {
         assert!(!has_error(&result, "RETURN"), "module-level RETURN should be fine");
     }
 
-    // ── FOR variable assignment tests ───────────────────────────────
-
-    #[test]
-    fn test_for_variable_assignment_rejected() {
-        let source = "MODULE Test;\nVAR i: INTEGER;\nBEGIN\n  FOR i := 1 TO 10 DO\n    i := 5\n  END\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", false, &[]);
-        assert!(has_error(&result, "FOR control variable"),
-            "assignment to FOR variable should error, got: {:?}",
-            result.diagnostics);
-    }
-
-    #[test]
-    fn test_for_variable_read_ok() {
-        // Reading the FOR variable is fine, only assignment is forbidden
-        let source = "MODULE Test;\nVAR i, x: INTEGER;\nBEGIN\n  FOR i := 1 TO 10 DO\n    x := i\n  END\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", false, &[]);
-        assert!(!has_error(&result, "FOR control variable"),
-            "reading FOR variable should be fine");
-    }
-
-    #[test]
-    fn test_for_variable_nested_different_var_ok() {
-        // Assigning a different variable inside FOR is fine
-        let source = "MODULE Test;\nVAR i, j: INTEGER;\nBEGIN\n  FOR i := 1 TO 10 DO\n    j := i\n  END\nEND Test.\n";
-        let result = analyze_source(source, "test.mod", false, &[]);
-        assert!(!has_error(&result, "FOR control variable"),
-            "assigning different variable in FOR should be fine");
-    }
-
     // ── Set constructor typing tests ────────────────────────────────
 
     #[test]

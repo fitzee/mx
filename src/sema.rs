@@ -25,8 +25,6 @@ pub struct SemanticAnalyzer {
     last_col: usize,
     /// Reference index: all symbol references with resolved identity.
     ref_index: ReferenceIndex,
-    /// Active FOR control variable names (assignment to these is forbidden).
-    for_vars: Vec<String>,
     /// Whether we are currently inside a procedure body.
     in_procedure: bool,
 }
@@ -47,7 +45,6 @@ impl SemanticAnalyzer {
             last_line: 0,
             last_col: 0,
             ref_index: ReferenceIndex::new(),
-            for_vars: Vec::new(),
             in_procedure: false,
         };
         sa.register_builtins();
@@ -975,18 +972,6 @@ impl SemanticAnalyzer {
         match &stmt.kind {
             StatementKind::Empty => {}
             StatementKind::Assign { desig, expr } => {
-                // F18: forbid assignment to FOR control variable
-                if desig.selectors.is_empty() && desig.ident.module.is_none() {
-                    if self.for_vars.contains(&desig.ident.name) {
-                        self.error(
-                            &stmt.loc,
-                            format!(
-                                "assignment to FOR control variable '{}'",
-                                desig.ident.name
-                            ),
-                        );
-                    }
-                }
                 let lhs_type = self.analyze_designator(desig);
                 let rhs_type = self.analyze_expr(expr);
                 if lhs_type != TY_VOID
@@ -1118,13 +1103,11 @@ impl SemanticAnalyzer {
                 if let Some(s) = step {
                     self.analyze_expr(s);
                 }
-                self.for_vars.push(var.clone());
                 self.in_loop += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
                 self.in_loop -= 1;
-                self.for_vars.pop();
             }
             StatementKind::Loop { body } => {
                 self.in_loop += 1;
