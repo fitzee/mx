@@ -431,6 +431,8 @@ pub enum ExprKind {
         elements: Vec<SetElement>,
     },
     Not(Box<Expr>),
+    /// Dereference of an expression result (e.g., Func(x)^)
+    Deref(Box<Expr>),
 }
 
 #[derive(Debug, Clone)]

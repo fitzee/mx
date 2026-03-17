@@ -1280,6 +1280,20 @@ impl SemanticAnalyzer {
                 }
                 TY_BOOLEAN
             }
+            ExprKind::Deref(operand) => {
+                let t = self.analyze_expr(operand);
+                if t != TY_VOID {
+                    match self.types.get(t) {
+                        Type::Pointer { base } => *base,
+                        _ => {
+                            self.error(&expr.loc, "dereference of non-pointer type");
+                            TY_VOID
+                        }
+                    }
+                } else {
+                    TY_VOID
+                }
+            }
             ExprKind::BinaryOp { op, left, right } => {
                 let lt = self.analyze_expr(left);
                 let rt = self.analyze_expr(right);

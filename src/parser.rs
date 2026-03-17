@@ -1619,10 +1619,20 @@ impl Parser {
                         }
                     }
                     self.expect(&TokenKind::RParen)?;
-                    Ok(Expr {
+                    let mut result = Expr {
                         kind: ExprKind::FuncCall { desig, args },
-                        loc,
-                    })
+                        loc: loc.clone(),
+                    };
+                    // Allow post-call dereference: Func(x)^
+                    while self.at(&TokenKind::Caret) {
+                        let dloc = self.loc();
+                        self.advance();
+                        result = Expr {
+                            kind: ExprKind::Deref(Box::new(result)),
+                            loc: dloc,
+                        };
+                    }
+                    Ok(result)
                 } else if self.at(&TokenKind::LBrace) {
                     // Set constructor with type: TypeName{...}
                     let qi = desig.ident.clone();

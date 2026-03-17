@@ -322,6 +322,7 @@ fn collect_refs_in_expr(expr: &Expr, out: &mut HashSet<String>) {
             }
         }
         ExprKind::Not(e) => collect_refs_in_expr(e, out),
+        ExprKind::Deref(e) => collect_refs_in_expr(e, out),
     }
 }
 
@@ -3712,6 +3713,11 @@ impl CodeGen {
                 self.gen_expr(operand);
                 self.emit(")");
             }
+            ExprKind::Deref(operand) => {
+                self.emit("(*");
+                self.gen_expr(operand);
+                self.emit(")");
+            }
             ExprKind::BinaryOp { op, left, right } => {
                 // Handle IN specially
                 if matches!(op, BinaryOp::In) {
@@ -4939,6 +4945,7 @@ impl CodeGen {
                 let v = self.try_eval_const_int(e)?;
                 Some(if v == 0 { 1 } else { 0 })
             }
+            ExprKind::Deref(_) => None,
             _ => None,
         }
     }
@@ -5038,7 +5045,7 @@ impl CodeGen {
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::NilLit => true,
-            ExprKind::BinaryOp { .. } | ExprKind::UnaryOp { .. } | ExprKind::Not(_) => true,
+            ExprKind::BinaryOp { .. } | ExprKind::UnaryOp { .. } | ExprKind::Not(_) | ExprKind::Deref(_) => true,
             ExprKind::Designator(d) => {
                 if d.selectors.is_empty() {
                     // Simple variable: scalar if not an array var
@@ -5146,6 +5153,7 @@ impl CodeGen {
                 self.is_set_expr(left) || self.is_set_expr(right)
             }
             ExprKind::Not(inner) => self.is_set_expr(inner),
+            ExprKind::Deref(_) => false,
             _ => false,
         }
     }
