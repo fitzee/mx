@@ -1,25 +1,24 @@
 # mx — Modula-2 Compiler
 
-A Modula-2 compiler that transpiles to readable C, then invokes the system C compiler for native executables.
-
-mx implements **PIM4** (Programming in Modula-2, 4th Edition) with optional **Modula-2+** extensions (exceptions, reference types, objects, concurrency) enabled via `--m2plus`. The toolchain includes 33 libraries, a package manager, an LSP server, and a VS Code extension.
-
-It is aimed at engineers building tooling, services, or systems software who want a small language, strict compilation, straightforward C interoperability, and a codebase that AI coding agents can reason about reliably.
+mx transpiles Modula-2 to C, then calls the system C compiler to produce native executables. It implements **PIM4** with optional **Modula-2+** extensions (exceptions, reference types, objects, concurrency) via `--m2plus`.
 
 ## Why Modula-2?
 
-Modula-2 was designed for modularity and safety. The grammar fits on a page. Every module has a clean separation between interface (`.def`) and implementation (`.mod`). There are no implicit conversions, no header file tangles, and the type system catches errors that looser languages accept silently. The language is small enough that both humans and LLMs produce auditable output — when an AI generates a module, you can read the whole thing.
+- Grammar fits on a page (~40 reserved words)
+- Separate interface (`.def`) and implementation (`.mod`) per module
+- No implicit conversions, no header file resolution order issues
+- Strict static type checking
 
 ## Why mx?
 
-mx transpiles to C rather than emitting native code directly. This means:
+Transpiling to C rather than emitting native code directly gives:
 
-- **Portable** — any platform with a C compiler is a target. Cross-compile by setting `--cc`.
-- **Debuggable** — `#line` directives let you set breakpoints and step through `.mod` source in LLDB/GDB.
-- **FFI-friendly** — C interop is trivial. Bind to any C library with `DEFINITION MODULE FOR "C"`.
-- **Readable output** — the generated C is human-readable, so you can inspect exactly what the compiler produces.
+- **Portability** — any platform with a C compiler is a target. Cross-compile by setting `--cc`.
+- **Source-level debugging** — `#line` directives map back to `.mod` source in LLDB/GDB.
+- **C FFI** — bind to any C library with `DEFINITION MODULE FOR "C"`.
+- **Inspectable output** — generated C is readable.
 
-The toolchain also includes project builds (`mx build/run/test`), a self-hosted package manager (`mxpkg`), an LSP server, and 33 libraries covering networking, HTTP/2, TLS, async I/O, graphics, databases, and authentication.
+The toolchain also includes a package manager (`mxpkg`), an LSP server, a VS Code extension, and 33 libraries (see `libs/`).
 
 ## Install
 
@@ -66,26 +65,21 @@ mx test      # run tests
 code --install-extension tools/vscode-m2plus/m2plus-*.vsix
 ```
 
-## AI-Assisted Development
+## Tooling
 
-The mx libraries were built using AI coding agents with human oversight for architecture. The compiler's strict type checking and explicit module interfaces catch incorrect generated code early.
+`docs/ai/` contains structured references for use with coding agents:
 
-You don't need to know Modula-2 to work this way. If you can read Pascal or Ada, you can already read it. The language has roughly 40 reserved words — no operator overloads, no template metaprogramming, no lifetime annotations. A procedure does what its signature says. A module exports what its definition file lists.
+- Language rules and compiler constraints
+- Syntax patterns and idiomatic templates
+- Module resolution and import mechanics
+- API signatures for all 33 libraries
+- Build system and project manifest format
 
-To set up an AI coding agent for mx, point it at `docs/ai/`. The files there provide:
-
-- **Language rules** — hard constraints the compiler enforces
-- **Syntax cheatsheet** — copy-paste patterns for every construct
-- **Idiomatic patterns** — templates for common tasks
-- **Module resolution** — how imports work, what libraries exist
-- **API reference** — procedure signatures for all 33 libraries
-- **Build system** — project manifests, dependencies, debug builds
-
-See `docs/ai/CLAUDE.md` for the recommended reading order.
+See `docs/ai/CLAUDE.md` for reading order.
 
 ## Documentation
 
-Full documentation is in [`docs/`](docs/README.md) — language reference, toolchain usage, library API docs, LSP configuration, VS Code integration, and contributor guides. See [release notes](RELEASE_NOTES.md) for version history.
+Language reference, library APIs, LSP configuration, and contributor guides are in [`docs/`](docs/README.md). Version history in [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ## Project Layout
 
