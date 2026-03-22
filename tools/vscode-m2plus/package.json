@@ -70,8 +70,8 @@
         },
         "mx.m2dapPath": {
           "type": "string",
-          "default": "m2dap",
-          "description": "Path to the m2dap debug adapter binary"
+          "default": "",
+          "description": "Path to the m2dap debug adapter binary. Empty = resolve next to mx."
         }
       }
     },

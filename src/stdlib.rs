@@ -2003,6 +2003,41 @@ pub fn map_stdlib_call(module: &str, proc_name: &str) -> Option<String> {
     }
 }
 
+/// Get the list of exported procedure names for a stdlib module.
+/// Used by the LLVM backend to declare all functions when a module is
+/// imported as a whole (IMPORT InOut) rather than selectively.
+pub fn get_stdlib_exports(module: &str) -> Vec<&'static str> {
+    let m = module.to_ascii_uppercase();
+    match m.as_str() {
+        "INOUT" => vec!["WriteString", "WriteLn", "WriteInt", "WriteCard",
+            "WriteHex", "WriteOct", "Write", "Read", "ReadString",
+            "ReadInt", "ReadCard", "OpenInput", "OpenOutput",
+            "CloseInput", "CloseOutput", "Done"],
+        "REALINOUT" => vec!["ReadReal", "WriteReal", "WriteFixPt",
+            "WriteRealOct", "Done"],
+        "STORAGE" => vec!["ALLOCATE", "DEALLOCATE"],
+        "MATHLIB0" | "MATHLIB" => vec!["sqrt", "sin", "cos", "exp", "ln",
+            "arctan", "entier", "Random", "Randomize"],
+        "STRINGS" => vec!["Assign", "Insert", "Delete", "Pos", "Length",
+            "Copy", "Concat", "CompareStr", "CAPS"],
+        "TERMINAL" => vec!["Read", "Write", "WriteString", "WriteLn", "Done"],
+        "FILESYSTEM" => vec!["Lookup", "Close", "ReadChar", "WriteChar", "Done"],
+        "STEXTIO" => vec!["WriteChar", "ReadChar", "WriteString", "ReadString",
+            "WriteLn", "SkipLine", "ReadToken"],
+        "SWHOLEIO" => vec!["WriteInt", "ReadInt", "WriteCard", "ReadCard"],
+        "SREALIO" => vec!["WriteFloat", "WriteFixed", "WriteReal", "ReadReal"],
+        "SLONGIO" => vec!["WriteFloat", "WriteFixed", "WriteLongReal", "ReadLongReal"],
+        "ARGS" => vec!["ArgCount", "GetArg"],
+        "BINARYIO" => vec!["OpenRead", "OpenWrite", "Close", "ReadByte",
+            "WriteByte", "ReadBytes", "WriteBytes", "FileSize", "Seek",
+            "Tell", "IsEOF", "Done"],
+        "THREAD" => vec!["Fork", "Join", "Self", "Alert", "TestAlert"],
+        "MUTEX" => vec!["New", "Lock", "Unlock", "Free"],
+        "CONDITION" => vec!["New", "Wait", "Signal", "Broadcast", "Free"],
+        _ => vec![],
+    }
+}
+
 /// Check if a module name is a standard library module (handled by runtime header)
 pub fn is_stdlib_module(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();

@@ -14,6 +14,8 @@ build: check-deps
 	cargo build --release --workspace
 	@echo "Bootstrapping mxpkg..."
 	@cd tools/mxpkg && ../../target/release/mxpkg0 build
+	@echo "Building m2dap..."
+	@cd tools/m2dap && ../../target/release/mx build
 
 check-deps:
 	@echo "Checking build prerequisites..."
@@ -86,6 +88,9 @@ install: build
 	@if [ -f tools/mxpkg/target/mxpkg ]; then \
 		cp tools/mxpkg/target/mxpkg "$(PREFIX)/bin/mxpkg"; \
 	fi
+	@if [ -f tools/m2dap/.mx/bin/m2dap ]; then \
+		cp tools/m2dap/.mx/bin/m2dap "$(PREFIX)/bin/m2dap"; \
+	fi
 	@# ── m2sys (C runtime shim) ──
 	@mkdir -p "$(PREFIX)/lib/m2sys"
 	@cp libs/m2sys/m2sys.c "$(PREFIX)/lib/m2sys/m2sys.c"
@@ -117,6 +122,9 @@ install: build
 	@if [ -f "$(PREFIX)/bin/mxpkg" ]; then \
 		echo "  mxpkg   — package manager"; \
 	fi
+	@if [ -f "$(PREFIX)/bin/m2dap" ]; then \
+		echo "  m2dap   — debug adapter (DAP server)"; \
+	fi
 	@echo ""
 	@echo "Add to your shell profile:"
 	@echo '  export PATH="$(PREFIX)/bin:$$PATH"'
@@ -142,3 +150,4 @@ uninstall:
 clean:
 	cargo clean
 	@rm -rf tools/mxpkg/target
+	@rm -rf tools/m2dap/.mx

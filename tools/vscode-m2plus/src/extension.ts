@@ -1,3 +1,4 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -15,7 +16,16 @@ class M2DapAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
     _executable: vscode.DebugAdapterExecutable | undefined
   ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
     const config = vscode.workspace.getConfiguration("mx");
-    const m2dapPath = config.get<string>("m2dapPath", "m2dap");
+    let m2dapPath = config.get<string>("m2dapPath", "");
+    if (!m2dapPath) {
+      // Resolve m2dap next to mx (e.g. ~/.mx/bin/mx → ~/.mx/bin/m2dap)
+      const serverPath = config.get<string>("serverPath", "mx");
+      if (serverPath.includes(path.sep)) {
+        m2dapPath = path.join(path.dirname(serverPath), "m2dap");
+      } else {
+        m2dapPath = "m2dap";
+      }
+    }
     return new vscode.DebugAdapterExecutable(m2dapPath);
   }
 }
