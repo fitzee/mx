@@ -428,6 +428,18 @@ impl LLVMCodeGen {
     /// Declare external functions needed by imported modules.
     pub(crate) fn declare_imports(&mut self, imports: &[Import]) {
         for imp in imports {
+            if imp.from_module.is_none() {
+                // Whole-module import: IMPORT InOut
+                // For stdlib modules, declare all exported functions
+                for iname in &imp.names {
+                    if stdlib::is_stdlib_module(&iname.name) {
+                        let exports = stdlib::get_stdlib_exports(&iname.name);
+                        for export in &exports {
+                            self.declare_stdlib_function(&iname.name, export);
+                        }
+                    }
+                }
+            }
             if let Some(ref from_mod) = imp.from_module {
                 if stdlib::is_stdlib_module(from_mod) {
                     for iname in &imp.names {

@@ -391,7 +391,6 @@ impl LLVMCodeGen {
                                 break;
                             }
                         }
-                        resolved = true;
                     }
 
                 }
