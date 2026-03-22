@@ -168,6 +168,13 @@ impl LLVMCodeGen {
                 Selector::Deref(_) | Selector::Field(_, _)));
         if has_deref_or_field {
             let fn_ptr = self.gen_designator_load(desig);
+            let call_target = if fn_ptr.ty != "ptr" {
+                let tmp = self.next_tmp();
+                self.emitln(&format!("  {} = inttoptr {} {} to ptr", tmp, fn_ptr.ty, fn_ptr.name));
+                tmp
+            } else {
+                fn_ptr.name.clone()
+            };
             let mut arg_strs = Vec::new();
             for arg in args {
                 if let ExprKind::Designator(d) = &arg.kind {
@@ -189,7 +196,7 @@ impl LLVMCodeGen {
             let args_str = arg_strs.join(", ");
             let ret_ty = "i32"; // default for indirect function calls
             let tmp = self.next_tmp();
-            self.emitln(&format!("  {} = call {} {}({})", tmp, ret_ty, fn_ptr.name, args_str));
+            self.emitln(&format!("  {} = call {} {}({})", tmp, ret_ty, call_target, args_str));
             return Val::new(tmp, ret_ty.to_string());
         }
 
