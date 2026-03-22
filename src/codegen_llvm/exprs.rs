@@ -160,6 +160,39 @@ impl LLVMCodeGen {
     }
 
     pub(crate) fn gen_func_call_expr(&mut self, desig: &Designator, args: &[Expr]) -> Val {
+        // Indirect call through pointer dereference or field access on non-module
+        // e.g. result := cp^.predFn(args)
+        let has_deref_or_field = !desig.selectors.is_empty()
+            && !self.imported_modules.contains(&desig.ident.name)
+            && desig.selectors.iter().any(|s| matches!(s,
+                Selector::Deref(_) | Selector::Field(_, _)));
+        if has_deref_or_field {
+            let fn_ptr = self.gen_designator_load(desig);
+            let mut arg_strs = Vec::new();
+            for arg in args {
+                if let ExprKind::Designator(d) = &arg.kind {
+                    let addr = self.gen_designator_addr(d);
+                    if addr.ty.starts_with('{') || addr.ty.starts_with('%') {
+                        arg_strs.push(format!("ptr {}", addr.name));
+                        continue;
+                    }
+                    if addr.ty.starts_with('[') {
+                        let high = self.get_array_high(&d.ident.name);
+                        arg_strs.push(format!("ptr {}", addr.name));
+                        arg_strs.push(format!("i32 {}", high));
+                        continue;
+                    }
+                }
+                let val = self.gen_expr(arg);
+                arg_strs.push(format!("{} {}", val.ty, val.name));
+            }
+            let args_str = arg_strs.join(", ");
+            let ret_ty = "i32"; // default for indirect function calls
+            let tmp = self.next_tmp();
+            self.emitln(&format!("  {} = call {} {}({})", tmp, ret_ty, fn_ptr.name, args_str));
+            return Val::new(tmp, ret_ty.to_string());
+        }
+
         let name = self.resolve_proc_name(desig);
         let actual_name = &desig.ident.name;
 
