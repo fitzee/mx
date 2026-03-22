@@ -366,6 +366,19 @@ impl LLVMCodeGen {
     }
 
     pub(crate) fn gen_proc_call_stmt(&mut self, desig: &Designator, args: &[Expr]) {
+        // Indirect call through pointer dereference or field access on non-module
+        // e.g. cp^.genFn(args), rec.callback(args)
+        // Must check BEFORE resolve_proc_name to avoid mangling local vars as procs
+        let has_deref_or_field = !desig.selectors.is_empty()
+            && !self.imported_modules.contains(&desig.ident.name)
+            && desig.selectors.iter().any(|s| matches!(s,
+                Selector::Deref(_) | Selector::Field(_, _)));
+        if has_deref_or_field {
+            let fn_ptr = self.gen_designator_load(desig);
+            self.gen_indirect_call(&fn_ptr, args);
+            return;
+        }
+
         let name = self.resolve_proc_name(desig);
 
         // Handle built-in procedures
@@ -397,55 +410,8 @@ impl LLVMCodeGen {
 
         if is_proc_var {
             let fn_ptr = self.gen_designator_load(desig);
-            let mut arg_strs = Vec::new();
-            for arg in args {
-                if let ExprKind::Designator(d) = &arg.kind {
-                    let addr = self.gen_designator_addr(d);
-                    // Struct/record args → pass as ptr (likely VAR params)
-                    if addr.ty.starts_with('{') || addr.ty.starts_with('%') {
-                        arg_strs.push(format!("ptr {}", addr.name));
-                        continue;
-                    }
-                    // Array args → pass as ptr + HIGH (open array convention)
-                    if addr.ty.starts_with('[') {
-                        let high = self.get_array_high(&d.ident.name);
-                        arg_strs.push(format!("ptr {}", addr.name));
-                        arg_strs.push(format!("i32 {}", high));
-                        continue;
-                    }
-                }
-                let val = self.gen_expr(arg);
-                arg_strs.push(format!("{} {}", val.ty, val.name));
-            }
-            let args_str = arg_strs.join(", ");
-            self.emitln(&format!("  call void {}({})", fn_ptr.name, args_str));
+            self.gen_indirect_call(&fn_ptr, args);
             return;
-        }
-
-        // Indirect call through function pointer (designator with selectors)
-        // But NOT for Module.Proc pattern (already resolved by resolve_proc_name)
-        let is_module_qualified = !desig.selectors.is_empty()
-            && self.imported_modules.contains(&desig.ident.name);
-        if !desig.selectors.is_empty() && !is_module_qualified {
-            let fn_ptr = self.gen_designator_load(desig);
-            if fn_ptr.ty == "ptr" {
-                let mut arg_strs = Vec::new();
-                for arg in args {
-                    // For struct/record args, pass as ptr (likely VAR params)
-                    if let ExprKind::Designator(d) = &arg.kind {
-                        let addr = self.gen_designator_addr(d);
-                        if addr.ty.starts_with('{') || addr.ty.starts_with('%') {
-                            arg_strs.push(format!("ptr {}", addr.name));
-                            continue;
-                        }
-                    }
-                    let val = self.gen_expr(arg);
-                    arg_strs.push(format!("{} {}", val.ty, val.name));
-                }
-                let args_str = arg_strs.join(", ");
-                self.emitln(&format!("  call void {}({})", fn_ptr.name, args_str));
-                return;
-            }
         }
 
         // Special handling for Strings module functions that need extra HIGH params
@@ -457,6 +423,29 @@ impl LLVMCodeGen {
         }
 
         self.gen_call(&name, args, "void");
+    }
+
+    fn gen_indirect_call(&mut self, fn_ptr: &Val, args: &[Expr]) {
+        let mut arg_strs = Vec::new();
+        for arg in args {
+            if let ExprKind::Designator(d) = &arg.kind {
+                let addr = self.gen_designator_addr(d);
+                if addr.ty.starts_with('{') || addr.ty.starts_with('%') {
+                    arg_strs.push(format!("ptr {}", addr.name));
+                    continue;
+                }
+                if addr.ty.starts_with('[') {
+                    let high = self.get_array_high(&d.ident.name);
+                    arg_strs.push(format!("ptr {}", addr.name));
+                    arg_strs.push(format!("i32 {}", high));
+                    continue;
+                }
+            }
+            let val = self.gen_expr(arg);
+            arg_strs.push(format!("{} {}", val.ty, val.name));
+        }
+        let args_str = arg_strs.join(", ");
+        self.emitln(&format!("  call void {}({})", fn_ptr.name, args_str));
     }
 
     // ── Control flow generation ─────────────────────────────────────
