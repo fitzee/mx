@@ -524,6 +524,7 @@ impl CodeGen {
 
     pub fn set_m2plus(&mut self, enabled: bool) {
         self.m2plus = enabled;
+        self.sema.m2plus = enabled;
     }
 
     pub fn set_debug(&mut self, enabled: bool) {
@@ -4229,16 +4230,25 @@ impl CodeGen {
                         }
                         if let Selector::Index(indices, _) = &sels[i + 1] {
                             // ptr^[i] — pointer to array, deref then index.
-                            // Two cases based on the C typedef shape:
-                            //   1. Flat pointer (POINTER TO ARRAY [0..N] OF T where
-                            //      the array is anonymous): typedef is T*, use ptr[i]
-                            //   2. Pointer to named array type (POINTER TO NamedArray):
-                            //      typedef is NamedArray*, use (*ptr)[i]
-                            let needs_deref = current_type.as_ref()
-                                .map(|t| self.ptr_to_named_array.contains(t))
+                            let is_address = current_type.as_ref()
+                                .map(|t| t == "ADDRESS")
                                 .unwrap_or(false);
-                            if needs_deref {
-                                result = format!("(*{})", result);
+                            if is_address {
+                                // ADDRESS^[i] — byte-level indexing (m2plus).
+                                // Cast void* to unsigned char* for valid C indexing.
+                                result = format!("((unsigned char*){})", result);
+                            } else {
+                                // Two cases based on the C typedef shape:
+                                //   1. Flat pointer (POINTER TO ARRAY [0..N] OF T where
+                                //      the array is anonymous): typedef is T*, use ptr[i]
+                                //   2. Pointer to named array type (POINTER TO NamedArray):
+                                //      typedef is NamedArray*, use (*ptr)[i]
+                                let needs_deref = current_type.as_ref()
+                                    .map(|t| self.ptr_to_named_array.contains(t))
+                                    .unwrap_or(false);
+                                if needs_deref {
+                                    result = format!("(*{})", result);
+                                }
                             }
                             for idx in indices {
                                 let idx_str = self.expr_to_char_string(idx);
@@ -4251,7 +4261,14 @@ impl CodeGen {
                         }
                     }
                     // Standalone deref: wrap with (*...)
-                    result = format!("(*{})", result);
+                    let is_address = current_type.as_ref()
+                        .map(|t| t == "ADDRESS")
+                        .unwrap_or(false);
+                    if is_address {
+                        result = format!("(*(unsigned char*){})", result);
+                    } else {
+                        result = format!("(*{})", result);
+                    }
                 }
             }
             i += 1;

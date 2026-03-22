@@ -6,9 +6,12 @@ target/
 .mx/
 *.o
 
-# Generated C output from mx compilation
+# Generated C/LLVM output from mx compilation
 libs/*/src/*.c
 examples/**/*.c
+examples/**/*.ll
+examples/**/hello
+examples/**/hello.*
 
 /.claude/
 /.github/

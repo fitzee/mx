@@ -1,0 +1,35 @@
+DEFINITION MODULE Vars;
+(* DAP variable reference ID allocation.
+   DAP requires integer reference IDs for scopes and expandable variables.
+   References are invalidated on each stop event. *)
+
+CONST
+  ScopeLocals = 0;
+  ScopeArgs   = 1;
+  ScopeGlobals = 2;
+
+(* Reset all references. Call on each stop event. *)
+PROCEDURE Reset;
+
+(* Allocate a reference ID for a scope (Locals/Args/Globals)
+   at the given frame index. Returns a positive integer. *)
+PROCEDURE AllocScopeRef(frameIdx: INTEGER;
+                        scopeKind: INTEGER): INTEGER;
+
+(* Allocate a reference ID for a structured variable
+   (record, array) that can be expanded. parentRef identifies
+   the parent scope/variable, childIdx is the index within it. *)
+PROCEDURE AllocVarRef(parentRef: INTEGER;
+                      childIdx: INTEGER): INTEGER;
+
+(* Look up what a reference points to.
+   For scope refs: frameIdx and scopeKind are set, isScope=TRUE.
+   For var refs: parentRef and childIdx are set, isScope=FALSE. *)
+PROCEDURE GetRefInfo(ref: INTEGER;
+                     VAR frameIdx: INTEGER;
+                     VAR scopeKind: INTEGER;
+                     VAR parentRef: INTEGER;
+                     VAR childIdx: INTEGER;
+                     VAR isScope: BOOLEAN);
+
+END Vars.

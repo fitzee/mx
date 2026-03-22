@@ -1,6 +1,6 @@
 # mx — Modula-2 Compiler
 
-mx transpiles Modula-2 to C, then calls the system C compiler to produce native executables. It implements **PIM4** with optional **Modula-2+** extensions (exceptions, reference types, objects, concurrency) via `--m2plus`.
+mx compiles Modula-2 to native executables via two backends: a **C backend** (transpile to C, then invoke the system C compiler) and an **LLVM backend** (emit LLVM IR, compile with clang). It implements **PIM4** with optional **Modula-2+** extensions (exceptions, reference types, objects, concurrency) via `--m2plus`.
 
 ## Why Modula-2?
 
@@ -11,12 +11,11 @@ mx transpiles Modula-2 to C, then calls the system C compiler to produce native 
 
 ## Why mx?
 
-Transpiling to C rather than emitting native code directly gives:
-
-- **Portability** — any platform with a C compiler is a target. Cross-compile by setting `--cc`.
-- **Source-level debugging** — `#line` directives map back to `.mod` source in LLDB/GDB.
+- **Two backends** — C backend for portability and inspectable output; LLVM backend for native DWARF debug info, LLVM-native exception handling, and RTTI.
+- **Source-level debugging** — C backend uses `#line` directives; LLVM backend emits full DWARF metadata. Both support breakpoints and stepping in LLDB/GDB.
 - **C FFI** — bind to any C library with `DEFINITION MODULE FOR "C"`.
-- **Inspectable output** — generated C is readable.
+- **Cross-compilation** — C backend: set `--cc` to a cross compiler. LLVM backend: set `--target`.
+- **m2dap** — a Modula-2 Debug Adapter Protocol server for IDE debugging with M2-idiomatic variable display.
 
 The toolchain also includes a package manager (`mxpkg`), an LSP server, a VS Code extension, and 33 libraries (see `libs/`).
 
@@ -84,8 +83,9 @@ Language reference, library APIs, LSP configuration, and contributor guides are 
 ## Project Layout
 
 ```
-src/           Compiler (Rust)
+src/           Compiler (Rust) — C and LLVM backends
 libs/          33 libraries (Modula-2)
+tools/m2dap/   Debug adapter server (Modula-2+)
 tools/mxpkg/   Package manager (Modula-2+)
 tools/vscode-m2plus/  VS Code extension
 examples/      Categorized examples and demos
@@ -99,7 +99,8 @@ docs/          Documentation
 cargo test                                              # unit tests
 bash tests/run_all.sh                                   # integration tests
 bash tests/conformance.sh                               # conformance tests
-python3 tests/adversarial/run_adversarial.py --mode ci  # adversarial tests
+python3 tests/adversarial/run_adversarial.py --mode ci  # adversarial tests (C)
+python3 tests/adversarial/run_adversarial.py --backend all  # adversarial tests (C + LLVM)
 ```
 
 ## License

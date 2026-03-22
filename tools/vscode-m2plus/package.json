@@ -2,7 +2,7 @@
   "name": "m2plus",
   "displayName": "Modula-2+ (mx)",
   "description": "Modula-2 / Modula-2+ language support powered by mx",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "mx",
   "license": "MIT",
   "engines": {
@@ -13,7 +13,8 @@
   ],
   "activationEvents": [
     "onLanguage:modula2",
-    "onView:mxDocsBrowser"
+    "onView:mxDocsBrowser",
+    "onDebugResolve:m2dap"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -66,6 +67,11 @@
           "type": "number",
           "default": 250,
           "description": "Diagnostics debounce delay in milliseconds"
+        },
+        "mx.m2dapPath": {
+          "type": "string",
+          "default": "m2dap",
+          "description": "Path to the m2dap debug adapter binary"
         }
       }
     },
@@ -148,6 +154,56 @@
     "breakpoints": [
       {
         "language": "modula2"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "m2dap",
+        "label": "Modula-2 Debug",
+        "languages": ["modula2"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the compiled M2 binary"
+              },
+              "args": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Command line arguments",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory",
+                "default": "${workspaceFolder}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Break at program entry",
+                "default": false
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "Modula-2: Debug (m2dap)",
+            "description": "Debug a Modula-2 program with m2dap",
+            "body": {
+              "name": "Debug (m2dap)",
+              "type": "m2dap",
+              "request": "launch",
+              "program": "^\"\\${workspaceFolder}/.mx/bin/${1:program}\"",
+              "args": [],
+              "cwd": "${workspaceFolder}",
+              "stopOnEntry": false,
+              "preLaunchTask": "mx: build debug"
+            }
+          }
+        ]
       }
     ],
     "problemMatchers": [

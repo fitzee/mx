@@ -76,4 +76,10 @@ int64_t m2sys_unix_time(void);
 int64_t m2sys_file_mtime(void *path);
 int32_t m2sys_is_symlink(void *path);
 
+/* Pipes */
+int32_t m2sys_pipe(int *fds);
+int32_t m2sys_write_byte(int fd);
+int32_t m2sys_read_byte(int fd);
+int32_t m2sys_set_nonblock(int fd);
+
 #endif

@@ -1,0 +1,25 @@
+DEFINITION MODULE M2Format;
+(* M2-specific type formatting and symbol demangling.
+   Converts LLVM/C representations to idiomatic Modula-2 display. *)
+
+(* Format a value for display in the variables panel.
+   typeName: the type as reported by lldb (e.g. "BOOLEAN", "CHAR")
+   rawValue: the raw value string from lldb
+   out: receives the formatted M2 representation
+   Returns TRUE if formatting was applied, FALSE if passed through. *)
+PROCEDURE FormatValue(VAR typeName: ARRAY OF CHAR;
+                      VAR rawValue: ARRAY OF CHAR;
+                      VAR out: ARRAY OF CHAR): BOOLEAN;
+
+(* Demangle a symbol name from Module_Proc to Module.Proc format.
+   src: the mangled name (e.g. "MyModule_MyProc")
+   out: receives demangled name (e.g. "MyModule.MyProc") *)
+PROCEDURE Demangle(VAR src: ARRAY OF CHAR;
+                   VAR out: ARRAY OF CHAR);
+
+(* Format a type name for display.
+   Strips compiler prefixes, normalises pointer/array notation. *)
+PROCEDURE FormatType(VAR typeName: ARRAY OF CHAR;
+                     VAR out: ARRAY OF CHAR);
+
+END M2Format.

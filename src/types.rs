@@ -46,6 +46,10 @@ impl TypeRegistry {
     pub fn get_mut(&mut self, id: TypeId) -> &mut Type {
         &mut self.types[id]
     }
+
+    pub fn len(&self) -> usize {
+        self.types.len()
+    }
 }
 
 // Well-known type IDs

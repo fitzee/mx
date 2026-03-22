@@ -4,6 +4,7 @@ use std::process::Command;
 
 use crate::ast::CompilationUnit;
 use crate::codegen::CodeGen;
+use crate::codegen_llvm::LLVMCodeGen;
 use crate::errors::{CompileError, CompileResult};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -47,6 +48,10 @@ pub struct CompileOptions {
     pub case_sensitive: bool,
     /// Compile with debug info (-g -O0) and emit #line directives in generated C
     pub debug: bool,
+    /// Emit LLVM IR text only (like --emit-c for C backend)
+    pub emit_llvm: bool,
+    /// Full LLVM compilation to binary (--llvm)
+    pub use_llvm: bool,
     /// Emit per-module C files for multi-TU compilation
     pub emit_per_module: bool,
     /// Output directory for per-module C files (required when emit_per_module is true)
@@ -60,6 +65,8 @@ impl Default for CompileOptions {
             output: None,
             compile_only: false,
             emit_c: false,
+            emit_llvm: false,
+            use_llvm: false,
             include_paths: Vec::new(),
             opt_level: 0,
             verbose: false,
@@ -884,6 +891,352 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
     }
 
+    // ── LLVM IR backend ──────────────────────────────────────────────
+    if opts.emit_llvm {
+        let mut llvm_codegen = LLVMCodeGen::new();
+        llvm_codegen.set_m2plus(opts.m2plus);
+        llvm_codegen.set_debug(opts.debug);
+
+        // Re-register def modules with the LLVM backend
+        // Re-parse and register all definition modules that the C codegen registered
+        let mut ll_registered = std::collections::HashSet::new();
+        let mut ll_def_queue: Vec<String> = all_imported_modules.clone();
+        let mut ll_parsed_defs: std::collections::HashMap<String, crate::ast::DefinitionModule> = std::collections::HashMap::new();
+        if let Some(ref def_mod) = own_def {
+            for imp in &def_mod.imports {
+                if let Some(ref from_mod) = imp.from_module {
+                    ll_def_queue.push(from_mod.clone());
+                } else {
+                    for name in &imp.names {
+                        ll_def_queue.push(name.name.clone());
+                    }
+                }
+            }
+            ll_parsed_defs.insert(def_mod.name.clone(), def_mod.clone());
+        }
+        while let Some(mod_name) = ll_def_queue.pop() {
+            if crate::stdlib::is_stdlib_module(&mod_name) || ll_registered.contains(&mod_name) || ll_parsed_defs.contains_key(&mod_name) {
+                continue;
+            }
+            if let Some(def_path) = find_def_file(&mod_name, &opts.input, &opts.include_paths) {
+                let def_unit = parse_file(&def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
+                if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
+                    for imp in &def_mod.imports {
+                        if let Some(ref from_mod) = imp.from_module {
+                            if !ll_registered.contains(from_mod) && !ll_parsed_defs.contains_key(from_mod) {
+                                ll_def_queue.push(from_mod.clone());
+                            }
+                        } else {
+                            for name in &imp.names {
+                                if !ll_registered.contains(&name.name) && !ll_parsed_defs.contains_key(&name.name) {
+                                    ll_def_queue.push(name.name.clone());
+                                }
+                            }
+                        }
+                    }
+                    ll_parsed_defs.insert(mod_name.clone(), def_mod);
+                }
+            }
+        }
+        // Topological sort and register
+        {
+            let mut sorted = Vec::new();
+            let mut visited = std::collections::HashSet::new();
+            fn ll_topo_visit(
+                name: &str,
+                parsed: &std::collections::HashMap<String, crate::ast::DefinitionModule>,
+                visited: &mut std::collections::HashSet<String>,
+                sorted: &mut Vec<String>,
+                registered: &std::collections::HashSet<String>,
+            ) {
+                if visited.contains(name) || registered.contains(name) { return; }
+                visited.insert(name.to_string());
+                if let Some(def) = parsed.get(name) {
+                    for imp in &def.imports {
+                        if let Some(ref from_mod) = imp.from_module {
+                            ll_topo_visit(from_mod, parsed, visited, sorted, registered);
+                        } else {
+                            for n in &imp.names {
+                                ll_topo_visit(&n.name, parsed, visited, sorted, registered);
+                            }
+                        }
+                    }
+                }
+                sorted.push(name.to_string());
+            }
+            let names: Vec<String> = ll_parsed_defs.keys().cloned().collect();
+            for name in &names {
+                ll_topo_visit(name, &ll_parsed_defs, &mut visited, &mut sorted, &ll_registered);
+            }
+            for name in &sorted {
+                if let Some(def_mod) = ll_parsed_defs.remove(name) {
+                    llvm_codegen.register_def_module(&def_mod);
+                    ll_registered.insert(name.clone());
+                }
+            }
+        }
+
+        // Load implementation modules
+        let mut ll_loaded = std::collections::HashSet::new();
+        let mut ll_mod_queue: Vec<String> = all_imported_modules.clone();
+        while let Some(mod_name) = ll_mod_queue.pop() {
+            if crate::stdlib::is_stdlib_module(&mod_name) || ll_loaded.contains(&mod_name) { continue; }
+            if llvm_codegen.is_foreign_module(&mod_name) {
+                ll_loaded.insert(mod_name.clone());
+                continue;
+            }
+            let mod_candidates = find_mod_file_candidates(&mod_name, &opts.input, &opts.include_paths);
+            let mut found_impl = None;
+            for mod_path in &mod_candidates {
+                let mod_unit = parse_file(mod_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
+                if let CompilationUnit::ImplementationModule(imp) = mod_unit {
+                    found_impl = Some(imp);
+                    break;
+                }
+            }
+            if let Some(imp_mod) = found_impl {
+                for imp in &imp_mod.imports {
+                    if let Some(ref from_mod) = imp.from_module {
+                        if !ll_loaded.contains(from_mod) {
+                            if !ll_registered.contains(from_mod) && !crate::stdlib::is_stdlib_module(from_mod) {
+                                if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
+                                    let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
+                                    if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
+                                        llvm_codegen.register_def_module(&dep_def);
+                                        ll_registered.insert(from_mod.clone());
+                                    }
+                                }
+                            }
+                            ll_mod_queue.push(from_mod.clone());
+                        }
+                    } else {
+                        for name in &imp.names {
+                            let n = &name.name;
+                            if !ll_loaded.contains(n) {
+                                if !ll_registered.contains(n) && !crate::stdlib::is_stdlib_module(n) {
+                                    if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
+                                        if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features) {
+                                            if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
+                                                llvm_codegen.register_def_module(&dep_def);
+                                                ll_registered.insert(n.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                ll_mod_queue.push(n.clone());
+                            }
+                        }
+                    }
+                }
+                llvm_codegen.add_imported_module(imp_mod);
+                ll_loaded.insert(mod_name.clone());
+            }
+        }
+
+        // Generate LLVM IR
+        let ll_code = if opts.diagnostics_json {
+            match llvm_codegen.generate_or_errors(&unit) {
+                Ok(code) => code,
+                Err(errors) => {
+                    emit_diagnostics_jsonl(&errors);
+                    return Err(CompileError::codegen(
+                        errors.first().map(|e| e.loc.clone()).unwrap_or_else(|| {
+                            crate::errors::SourceLoc::new("<codegen>", 0, 0)
+                        }),
+                        errors.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join("\n"),
+                    ));
+                }
+            }
+        } else {
+            llvm_codegen.generate(&unit)?
+        };
+
+        if opts.verbose {
+            eprintln!("{}: LLVM IR generated ({} bytes)", identity::COMPILER_NAME, ll_code.len());
+        }
+
+        let stem = opts.input.file_stem().unwrap_or_default().to_string_lossy();
+        let parent_dir = opts.input.parent().unwrap_or(Path::new("."));
+        let ll_file = parent_dir.join(format!("{}.ll", stem));
+
+        if !opts.use_llvm {
+            // --emit-llvm without --llvm: just write the .ll file
+            let out_path = opts.output.clone().unwrap_or(ll_file);
+            fs::write(&out_path, &ll_code).map_err(|e| {
+                CompileError::driver(format!("cannot write '{}': {}", out_path.display(), e))
+            })?;
+            if opts.verbose {
+                eprintln!("{}: wrote {}", identity::COMPILER_NAME, out_path.display());
+            }
+            return Ok(());
+        }
+
+        // Full compilation: .ll + runtime.c → executable via clang
+        fs::write(&ll_file, &ll_code).map_err(|e| {
+            CompileError::driver(format!("cannot write '{}': {}", ll_file.display(), e))
+        })?;
+
+        // Write standalone runtime C file
+        let runtime_c = parent_dir.join(format!("{}_rt.c", stem));
+        let runtime_code = crate::stdlib::generate_llvm_runtime_c();
+        fs::write(&runtime_c, &runtime_code).map_err(|e| {
+            CompileError::driver(format!("cannot write runtime '{}': {}", runtime_c.display(), e))
+        })?;
+
+        let exe_file = opts.output.clone().unwrap_or_else(|| parent_dir.join(&*stem));
+
+        // Compile with clang: ll + runtime.c → executable
+        if opts.debug {
+            // Debug mode: two-step compile+link so .o stays for DWARF
+            let obj_file = ll_file.with_extension("o");
+
+            // Step 1: compile .ll → .o
+            let mut compile_cmd = Command::new("clang");
+            compile_cmd.arg("-c").arg("-o").arg(&obj_file)
+                .arg(&ll_file)
+                .args(["-g", "-O0"])
+                .args(["-ffunction-sections", "-fdata-sections"])
+                .arg("-w");
+            if opts.verbose {
+                eprintln!("{}: {:?}", identity::COMPILER_NAME, compile_cmd);
+            }
+            let output = compile_cmd.output().map_err(|e| {
+                CompileError::driver(format!("failed to run clang: {}", e))
+            })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(CompileError::driver(format!("clang compile failed:\n{}", stderr)));
+            }
+
+            // Step 2: compile runtime .c → .o
+            let rt_obj = runtime_c.with_extension("o");
+            let mut rt_cmd = Command::new("clang");
+            rt_cmd.arg("-c").arg("-o").arg(&rt_obj)
+                .arg(&runtime_c)
+                .args(["-g", "-O0"])
+                .arg("-w");
+            let output = rt_cmd.output().map_err(|e| {
+                CompileError::driver(format!("failed to compile runtime: {}", e))
+            })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(CompileError::driver(format!("runtime compile failed:\n{}", stderr)));
+            }
+
+            // Step 3: link .o files → executable
+            let mut link_cmd = Command::new("clang");
+            link_cmd.arg("-o").arg(&exe_file)
+                .arg(&obj_file)
+                .arg(&rt_obj)
+                .arg("-g")
+                .arg("-lm");
+            for extra in &opts.extra_c_files {
+                link_cmd.arg(extra);
+            }
+            for path in &opts.link_paths {
+                link_cmd.arg(format!("-L{}", path));
+            }
+            for lib in &opts.link_libs {
+                link_cmd.arg(format!("-l{}", lib));
+            }
+            for flag in &opts.extra_cflags {
+                link_cmd.arg(flag);
+            }
+            if cfg!(target_os = "macos") {
+                link_cmd.arg("-Wl,-dead_strip");
+                for fw in &opts.frameworks {
+                    link_cmd.arg("-framework");
+                    link_cmd.arg(fw);
+                }
+            } else {
+                link_cmd.arg("-Wl,--gc-sections");
+            }
+            if opts.verbose {
+                eprintln!("{}: {:?}", identity::COMPILER_NAME, link_cmd);
+            }
+            let output = link_cmd.output().map_err(|e| {
+                CompileError::driver(format!("failed to link: {}", e))
+            })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(CompileError::driver(format!("link failed:\n{}", stderr)));
+            }
+            // Clean up runtime object (keep .ll and main .o for DWARF)
+            let _ = fs::remove_file(&rt_obj);
+        } else {
+            // Release mode: single-step compile+link
+            let mut cmd = Command::new("clang");
+            cmd.arg("-o").arg(&exe_file)
+                .arg(&ll_file)
+                .arg(&runtime_c)
+                .arg("-lm")
+                .arg("-w")
+                .args(["-ffunction-sections", "-fdata-sections"]);
+
+            if opts.opt_level > 0 {
+                cmd.arg(format!("-O{}", opts.opt_level));
+            }
+
+            for extra in &opts.extra_c_files {
+                cmd.arg(extra);
+            }
+            for path in &opts.link_paths {
+                cmd.arg(format!("-L{}", path));
+            }
+            for lib in &opts.link_libs {
+                cmd.arg(format!("-l{}", lib));
+            }
+            for flag in &opts.extra_cflags {
+                cmd.arg(flag);
+            }
+
+            if cfg!(target_os = "macos") {
+                cmd.arg("-Wl,-dead_strip");
+                for fw in &opts.frameworks {
+                    cmd.arg("-framework");
+                    cmd.arg(fw);
+                }
+            } else {
+                cmd.arg("-Wl,--gc-sections");
+            }
+
+            if opts.verbose {
+                eprintln!("{}: {:?}", identity::COMPILER_NAME, cmd);
+            }
+
+            let output = cmd.output().map_err(|e| {
+                CompileError::driver(format!("failed to run clang: {}", e))
+            })?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(CompileError::driver(format!("clang failed:\n{}", stderr)));
+            }
+        } // end release mode else
+
+        // Clean up temp files (keep .ll in debug mode for source mapping)
+        if !opts.debug {
+            let _ = fs::remove_file(&ll_file);
+        }
+        let _ = fs::remove_file(&runtime_c);
+
+        // Generate dSYM bundle on macOS in debug mode
+        if opts.debug && cfg!(target_os = "macos") {
+            let mut dsym_cmd = Command::new("dsymutil");
+            dsym_cmd.arg(&exe_file);
+            if opts.verbose {
+                eprintln!("{}: {:?}", identity::COMPILER_NAME, dsym_cmd);
+            }
+            let _ = dsym_cmd.output(); // best-effort
+        }
+
+        if opts.verbose {
+            eprintln!("{}: wrote {}", identity::COMPILER_NAME, exe_file.display());
+        }
+        return Ok(());
+    }
+
+    // ── C backend (default) ─────────────────────────────────────────
     let c_code = if opts.diagnostics_json {
         match codegen.generate_or_errors(&unit) {
             Ok(code) => code,

@@ -1,5 +1,48 @@
 # Release Notes
 
+## 1.2.0 (2026-03-23)
+
+### Features
+
+- **LLVM backend** — New `--llvm` flag emits LLVM IR and compiles with clang. Native DWARF debug info with M2 type names, full variable inspection in lldb. Set `backend=llvm` in `m2.toml` for project builds.
+- **`--emit-llvm`** — Emit `.ll` text files without compiling. Separate from `--llvm` which does the full compile+link.
+- **LLVM-native exception handling** — TRY/EXCEPT/FINALLY uses `invoke`/`landingpad` with a custom `m2_eh_personality` function. Full LSDA parsing (call site table, action table, type table) in the C runtime. Nested TRY blocks in the same function propagate correctly via `_Unwind_Resume`.
+- **SjLj exception handling** — ISO procedure-level and module-body EXCEPT uses setjmp/longjmp. Coexists with native EH: RAISE inside a SjLj-guarded procedure uses `m2_raise`, inside TRY uses `m2_eh_throw`.
+- **RTTI** — `M2_TypeDesc` globals for REF/OBJECT types, `M2_RefHeader` prepended to typed allocations, `M2_ISA` for TYPECASE runtime type checking, `M2_ref_alloc`/`M2_ref_free` for typed allocation.
+- **ADDRESS^[i] byte-level indexing** — m2plus extension: dereference ADDRESS and index as `ARRAY OF CHAR`. C backend emits `((unsigned char*)ptr)[i]`, LLVM backend emits GEP on i8.
+- **m2dap 0.1.0** — Modula-2 Debug Adapter Protocol server. Wraps lldb as a subprocess, translates DAP messages, formats variables with M2 type names and values (TRUE/FALSE, NIL, CHR(N), demangled procedure names).
+- **VS Code m2dap integration** — New `m2dap` debug adapter type in the extension. `mx.m2dapPath` setting. "Create Debug Configuration" generates both m2dap and CodeLLDB launch configs.
+- **Canonical Sys.def** — m2sys now ships a `DEFINITION MODULE FOR "C" Sys` with all FFI bindings. Libraries use `m2sys` as a dependency instead of copying Sys.def and linking m2sys.c directly.
+- **Function call dereference** — `Func(x)^` now parses and codegens correctly. Previously rejected by the parser.
+- **LONGREAL D/d exponent** — The lexer accepts `D` and `d` as exponent suffixes for LONGREAL literals (e.g., `1.0D2`).
+
+### Bug fixes
+
+- **FOR control variable assignment** — Removed the restriction preventing assignment to FOR control variables inside the loop body. The PIM4 spec does not mandate this check, and it broke valid programs.
+- **Nested TRY propagation** — Inner TRY with no matching handler now resumes to outer TRY via a `try.nomatch` label with `_Unwind_Resume`, instead of falling through to normal execution.
+- **FINALLY cleanup landing pads** — FINALLY-only TRY blocks use `catch ptr null` (catch-all) so the search phase finds a handler. Previously cleanup-only landing pads were skipped, causing "Unhandled exception" for same-function nested TRY.
+- **Personality function declaration** — `@m2_eh_personality` is now declared eagerly when m2plus adds the personality attribute to a function, instead of waiting for a TRY statement.
+- **DWARF debug records** — Switched from deprecated `call @llvm.dbg.declare` to LLVM 19+ `#dbg_declare` records. Variables now appear in lldb `frame variable`.
+- **DWARF language tag** — Changed from `DW_LANG_Modula2` to `DW_LANG_C99` so lldb's C type system can inspect variables (lldb has no Modula-2 language plugin).
+- **m2http H2Client/HTTPClient** — Fixed `WritePreface` to use `AppendChars` instead of byte-by-byte `AppendByte`.
+
+### Tooling
+
+- **mxpkg 0.1.1** — Builder.mod rewritten as a thin wrapper around `mx build`/`mx run`, replacing ~580 lines of duplicated build logic.
+- **Adversarial test runner** — New `--backend c,llvm,all` flag. LLVM tests compile with `mx --llvm`, support `skip_llvm` and extra C files. 1100+ tests across both backends.
+
+### Test coverage
+
+- New adversarial suites: `address_index`, `cross_module_name_clash`, `param_entry_clash`, `record_cross_module`, `record_param_cross`, `stdlib_args`, `try_except_basic`, `try_except_nested`, `typecase_basic`, `typecase_object`, `except_handler`, `finally_cleanup`.
+
+### Documentation
+
+- README updated for dual-backend architecture and m2dap.
+- `docs/architecture.md` — LLVM backend pipeline, codegen_llvm module table, design decisions.
+- `docs/toolchain.md` — `--llvm`/`--emit-llvm` flags, backend comparison table, m2dap section.
+- `docs/vscode.md` — m2dap vs CodeLLDB comparison, `mx.m2dapPath` setting, updated debugging guide.
+- `docs/faq.md` — "Why two backends?" replaces "Why transpile to C?", new m2dap FAQ entry.
+
 ## 1.1.1 (2026-03-15)
 
 ### Bug fixes

@@ -1,0 +1,69 @@
+DEFINITION MODULE LLDBDriver;
+(* Translates DAP operations into lldb CLI commands and parses responses. *)
+
+(* Start a debug session: spawn lldb, load target binary.
+   Returns TRUE on success. *)
+PROCEDURE StartSession(VAR targetPath: ARRAY OF CHAR): BOOLEAN;
+
+(* Set a breakpoint at file:line. Returns lldb breakpoint ID, or -1. *)
+PROCEDURE SetBreakpoint(VAR file: ARRAY OF CHAR;
+                        line: INTEGER): INTEGER;
+
+(* Remove a breakpoint by lldb ID. *)
+PROCEDURE RemoveBreakpoint(id: INTEGER);
+
+(* Launch the target process. stopOnEntry=TRUE to break at main.
+   Returns TRUE on success. *)
+PROCEDURE Launch(VAR args: ARRAY OF CHAR;
+                 stopOnEntry: BOOLEAN): BOOLEAN;
+
+(* Continue execution. Blocks until stop.
+   Returns TRUE on success. *)
+PROCEDURE Continue(): BOOLEAN;
+
+(* Step over one source line. *)
+PROCEDURE StepOver(): BOOLEAN;
+
+(* Step into a function call. *)
+PROCEDURE StepIn(): BOOLEAN;
+
+(* Step out of the current function. *)
+PROCEDURE StepOut(): BOOLEAN;
+
+(* Pause the running process. *)
+PROCEDURE Pause(): BOOLEAN;
+
+(* Get the stop reason after a stop event.
+   reason: "breakpoint", "step", "exception", etc.
+   threadId, line are set from lldb output. *)
+PROCEDURE GetStopInfo(VAR reason: ARRAY OF CHAR;
+                      VAR threadId: INTEGER;
+                      VAR file: ARRAY OF CHAR;
+                      VAR line: INTEGER);
+
+(* Get thread list. buf receives lldb "thread list" output.
+   Returns number of threads found. *)
+PROCEDURE GetThreads(VAR buf: ARRAY OF CHAR;
+                     VAR len: CARDINAL): INTEGER;
+
+(* Get backtrace for current thread.
+   buf receives lldb "thread backtrace" output. *)
+PROCEDURE GetBacktrace(VAR buf: ARRAY OF CHAR;
+                       VAR len: CARDINAL);
+
+(* Select a frame and get its variables.
+   buf receives lldb "frame variable" output. *)
+PROCEDURE GetFrameVars(frameIdx: INTEGER;
+                       VAR buf: ARRAY OF CHAR;
+                       VAR len: CARDINAL);
+
+(* Get DWARF type names for variables in the current frame.
+   buf receives "image lookup -a $pc -v" output containing
+   Variable: name = "x", type = "INTEGER", etc. lines. *)
+PROCEDURE GetVarTypes(VAR buf: ARRAY OF CHAR;
+                      VAR len: CARDINAL);
+
+(* End debug session: kill process and lldb. *)
+PROCEDURE EndSession;
+
+END LLDBDriver.

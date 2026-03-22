@@ -90,12 +90,53 @@ impl SymbolTable {
         id
     }
 
+    /// Push a scope with an explicit parent (not the current scope).
+    /// Used for isolated scopes that should not inherit from the
+    /// current scope chain.
+    pub fn push_scope_with_parent(&mut self, name: &str, parent: usize) -> usize {
+        let id = self.scopes.len();
+        self.scopes.push(Scope {
+            symbols: HashMap::new(),
+            parent: Some(parent),
+            name: name.to_string(),
+        });
+        self.scope_stack.push(id);
+        id
+    }
+
     pub fn pop_scope(&mut self) -> usize {
         let current = self.current_scope();
         if self.scope_stack.len() > 1 {
             self.scope_stack.pop();
         }
         current
+    }
+
+    /// Look up a Type symbol by name, searching ONLY scopes belonging to
+    /// the given module (the module scope and its children).
+    /// Returns the TypeId if found. Ignores export status.
+    pub fn find_type_in_module(&self, module: &str, type_name: &str) -> Option<TypeId> {
+        // Search all scopes named after this module for a Type symbol.
+        // Scopes are named by enter_scope(module_name) during .def and .mod
+        // analysis, so both the .def scope and .mod scope share the name.
+        for scope in &self.scopes {
+            if scope.name == module {
+                if let Some(sym) = scope.symbols.get(type_name) {
+                    if matches!(sym.kind, SymbolKind::Type) {
+                        return Some(sym.typ);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Clear all symbols from a scope. Used to clean up temporary scopes
+    /// that should not be visible to later lookups.
+    pub fn clear_scope(&mut self, scope_id: usize) {
+        if scope_id < self.scopes.len() {
+            self.scopes[scope_id].symbols.clear();
+        }
     }
 
     pub fn define(&mut self, scope_id: usize, sym: Symbol) -> Result<(), String> {
@@ -152,15 +193,34 @@ impl SymbolTable {
         None
     }
 
+    /// Look up a symbol by searching scopes in reverse (innermost first).
+    /// This finds the most local binding, avoiding false matches from
+    /// outer/global scopes that shadow the intended local.
+    pub fn lookup_innermost(&self, name: &str) -> Option<&Symbol> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(sym) = scope.symbols.get(name) {
+                return Some(sym);
+            }
+        }
+        None
+    }
+
     pub fn lookup_qualified(&self, module: &str, name: &str) -> Option<&Symbol> {
-        // Find the module symbol, get its scope, look up name there
-        if let Some(sym) = self.lookup(module) {
-            if let SymbolKind::Module { scope_id } = &sym.kind {
-                let scope = &self.scopes[*scope_id];
-                if let Some(s) = scope.symbols.get(name) {
-                    if s.exported {
-                        return Some(s);
-                    }
+        // Find the module's scope by scanning ALL scopes for the Module symbol.
+        // This is scope-independent — it does not depend on current_scope.
+        let module_scope = self.scopes.iter()
+            .find_map(|scope| {
+                scope.symbols.get(module)
+                    .and_then(|sym| match &sym.kind {
+                        SymbolKind::Module { scope_id } => Some(*scope_id),
+                        _ => None,
+                    })
+            });
+        if let Some(scope_id) = module_scope {
+            let scope = &self.scopes[scope_id];
+            if let Some(s) = scope.symbols.get(name) {
+                if s.exported {
+                    return Some(s);
                 }
             }
         }
@@ -169,6 +229,32 @@ impl SymbolTable {
 
     pub fn scope_symbols(&self, scope_id: usize) -> impl Iterator<Item = &Symbol> {
         self.scopes[scope_id].symbols.values()
+    }
+
+    /// Update a procedure symbol's parameter types and return type in a specific scope.
+    /// Used to propagate correctly-resolved types from .mod back to .def scope.
+    pub fn update_procedure(&mut self, scope_id: usize, name: &str,
+                            params: Vec<ParamInfo>, return_type: Option<TypeId>) {
+        if let Some(sym) = self.scopes[scope_id].symbols.get_mut(name) {
+            if let SymbolKind::Procedure { params: ref mut p, return_type: ref mut r, .. } = sym.kind {
+                *p = params;
+                *r = return_type;
+            }
+        }
+    }
+
+    /// Search all scopes for a Type symbol with the given name.
+    /// Unlike lookup_any, this skips non-Type symbols (e.g. Module symbols
+    /// that share a name with a type they export).
+    pub fn find_type(&self, name: &str) -> Option<TypeId> {
+        for scope in &self.scopes {
+            if let Some(sym) = scope.symbols.get(name) {
+                if matches!(sym.kind, SymbolKind::Type) {
+                    return Some(sym.typ);
+                }
+            }
+        }
+        None
     }
 
     /// Search all scopes for a symbol by name. Returns the first match found.
@@ -196,19 +282,12 @@ impl SymbolTable {
     /// This bypasses the normal scope chain to handle cases where a type import shadows
     /// the module symbol (e.g., FROM Promise IMPORT Promise where Promise is both module and type).
     pub fn lookup_module_scope(&self, name: &str) -> Option<usize> {
-        // Walk scope chain from current scope first
-        let mut sid = self.current_scope();
-        loop {
-            let scope = &self.scopes[sid];
+        // Scan all scopes for a Module symbol — scope-independent.
+        for scope in &self.scopes {
             if let Some(sym) = scope.symbols.get(name) {
                 if let SymbolKind::Module { scope_id } = &sym.kind {
                     return Some(*scope_id);
                 }
-            }
-            if let Some(parent) = scope.parent {
-                sid = parent;
-            } else {
-                break;
             }
         }
         None
@@ -221,6 +300,11 @@ impl SymbolTable {
                 sym.exported = exported;
             }
         }
+    }
+
+    /// Iterate scopes as (name, symbols) pairs.
+    pub fn scopes_iter(&self) -> impl Iterator<Item = (&str, &HashMap<String, Symbol>)> {
+        self.scopes.iter().map(|s| (s.name.as_str(), &s.symbols))
     }
 
     /// Return the name of a scope (e.g. procedure name for a procedure body scope).

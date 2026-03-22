@@ -4,7 +4,8 @@ FROM SYSTEM IMPORT ADDRESS, ADR, LONGCARD, TSIZE;
 FROM Storage IMPORT ALLOCATE, DEALLOCATE;
 FROM Scheduler IMPORT Scheduler;
 FROM Promise IMPORT Future, Value,
-                    PromiseCreate, PromiseRelease, Resolve, Reject,
+                    PromiseCreate, PromiseRelease, FutureRelease,
+                    Resolve, Reject,
                     GetResultIfSettled, Result;
 IMPORT Promise;
 FROM Poller IMPORT EvRead, EvWrite;
@@ -243,7 +244,8 @@ BEGIN
   e.code := code;
   e.ptr := NIL;
   dummy := Reject(c^.promise, e);
-  PromiseRelease(c^.promise); c^.promise := NIL;
+  (* Do NOT release — caller owns the future (same state, refcount=1) *)
+  c^.promise := NIL;
   c^.state := StError;
   (* Free response if promise rejected *)
   IF c^.resp # NIL THEN
@@ -269,7 +271,8 @@ BEGIN
   v.tag := 0;
   v.ptr := c^.resp;
   dummy := Resolve(c^.promise, v);
-  PromiseRelease(c^.promise); c^.promise := NIL;
+  (* Do NOT release — caller owns the future (same state, refcount=1) *)
+  c^.promise := NIL;
   c^.state := StDone;
   c^.resp := NIL;
   DEALLOCATE(c, TSIZE(ConnRec))
@@ -868,9 +871,11 @@ BEGIN
   IF dst # DNS.OK THEN RETURN DNSFailed END;
   pst := GetResultIfSettled(dnsFuture, dnsSettled, dnsResult);
   IF (NOT dnsSettled) OR (NOT dnsResult.isOk) THEN
+    FutureRelease(dnsFuture);
     RETURN DNSFailed
   END;
   ap := dnsResult.v.ptr;
+  FutureRelease(dnsFuture);
 
   (* 2. Allocate connection context *)
   ALLOCATE(c, TSIZE(ConnRec));
@@ -1051,9 +1056,11 @@ BEGIN
   IF dst # DNS.OK THEN RETURN DNSFailed END;
   pst := GetResultIfSettled(dnsFuture, dnsSettled, dnsResult);
   IF (NOT dnsSettled) OR (NOT dnsResult.isOk) THEN
+    FutureRelease(dnsFuture);
     RETURN DNSFailed
   END;
   ap := dnsResult.v.ptr;
+  FutureRelease(dnsFuture);
 
   (* 2. Allocate connection context *)
   ALLOCATE(c, TSIZE(ConnRec));
@@ -1297,9 +1304,11 @@ BEGIN
   IF dst # DNS.OK THEN RETURN DNSFailed END;
   pst := GetResultIfSettled(dnsFuture, dnsSettled, dnsResult);
   IF (NOT dnsSettled) OR (NOT dnsResult.isOk) THEN
+    FutureRelease(dnsFuture);
     RETURN DNSFailed
   END;
   ap := dnsResult.v.ptr;
+  FutureRelease(dnsFuture);
 
   ALLOCATE(c, TSIZE(ConnRec));
   IF c = NIL THEN
@@ -1516,9 +1525,11 @@ BEGIN
   IF dst # DNS.OK THEN RETURN DNSFailed END;
   pst := GetResultIfSettled(dnsFuture, dnsSettled, dnsResult);
   IF (NOT dnsSettled) OR (NOT dnsResult.isOk) THEN
+    FutureRelease(dnsFuture);
     RETURN DNSFailed
   END;
   ap := dnsResult.v.ptr;
+  FutureRelease(dnsFuture);
 
   ALLOCATE(c, TSIZE(ConnRec));
   IF c = NIL THEN

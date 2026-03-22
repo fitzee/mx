@@ -5,8 +5,11 @@
 ### Basic compilation
 
 ```bash
-# Compile a module to an executable
+# Compile a module to an executable (C backend, default)
 mx hello.mod -o hello
+
+# Compile with LLVM backend
+mx --llvm hello.mod -o hello
 
 # Compile with Modula-2+ extensions (exceptions, REF types, objects)
 mx --m2plus program.mod -o program
@@ -14,8 +17,26 @@ mx --m2plus program.mod -o program
 # Emit C only (no compilation)
 mx --emit-c program.mod -o program.c
 
+# Emit LLVM IR only (no compilation)
+mx --emit-llvm program.mod
+
 # Compile only (produce .o, no linking)
 mx -c module.mod
+```
+
+### Backend selection
+
+mx has two compilation backends:
+
+| Backend | Flag | Compiler | Debug info | Exception handling |
+|---------|------|----------|-----------|-------------------|
+| C (default) | _(none)_ | system `cc` | `#line` directives | setjmp/longjmp |
+| LLVM | `--llvm` | `clang` | Native DWARF | LLVM-native (`invoke`/`landingpad`) + SjLj for ISO EXCEPT |
+
+Set the backend in `m2.toml` for project builds:
+
+```ini
+backend=llvm
 ```
 
 ### Include paths
@@ -45,30 +66,67 @@ mx -g program.mod -o program
 mx build -g
 ```
 
-Debug mode enables source-level debugging of Modula-2 programs. The compiler:
+Debug mode enables source-level debugging of Modula-2 programs.
+
+**C backend** (`-g`):
 
 1. Emits C `#line` directives mapping generated C back to `.mod` source lines
 2. Uses a two-step compile: `.c` -> `.o` (kept on disk) -> executable
 3. Runs `dsymutil` on macOS to create a `.dSYM` debug symbol bundle
 4. Sets stdout to unbuffered for immediate I/O when stepping in a debugger
 
-The C compiler flags used in debug mode:
+The C compiler flags used in debug mode: `-g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info`
 
-```
--g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info
-```
+**LLVM backend** (`--llvm -g` or `--llvm --debug`):
 
-The `.c` and `.o` files are preserved next to the source for DWARF debug info. `-gno-column-info` suppresses C-level column positions so debuggers highlight whole `.mod` lines.
+1. Emits native DWARF metadata (`DICompileUnit`, `DISubprogram`, `DILocalVariable`, `DIGlobalVariable`)
+2. Variables are visible in lldb with their M2 names and types
+3. Full `#dbg_declare` records for local variables and parameters
+4. Runs `dsymutil` on macOS for `.dSYM` bundles
 
 ```bash
-# Example LLDB session
+# C backend debugging
 mx -g hello.mod -o hello
+lldb ./hello
+
+# LLVM backend debugging (native DWARF, variable inspection)
+mx --llvm -g hello.mod -o hello
 lldb ./hello
 (lldb) breakpoint set -f hello.mod -l 7
 (lldb) run
+(lldb) frame variable -T
 ```
 
-For VS Code debugging with breakpoints, stepping, and variable inspection, see [VS Code integration -- Debugging](vscode.md#debugging).
+For IDE debugging with M2-idiomatic variable display, see [m2dap](#m2dap-debug-adapter) and [VS Code integration -- Debugging](vscode.md#debugging).
+
+### m2dap debug adapter
+
+m2dap is a Modula-2 Debug Adapter Protocol (DAP) server that wraps lldb and provides M2-idiomatic debugging in IDEs. It translates DAP messages to lldb CLI commands and formats variables with M2 type names.
+
+```
+IDE (VS Code / Zed)
+  ↕ DAP (JSON over stdio)
+m2dap
+  ↕ lldb CLI (bidirectional pipes)
+lldb
+  ↕ DWARF
+M2 binary (mx --llvm -g)
+```
+
+Features:
+- Breakpoints, stepping (over/into/out), continue, pause
+- Stack traces with demangled M2 procedure names (`Module.Proc`)
+- Variable inspection with DWARF type names (`BOOLEAN`, `INTEGER`, `CHAR`, etc.)
+- M2 value formatting: `TRUE`/`FALSE`, character literals, `NIL` for null pointers
+- Record and array display
+
+Build m2dap:
+
+```bash
+cd tools/m2dap && mx build
+```
+
+See [VS Code integration](vscode.md#debugging) for IDE setup.
 
 ### Linking
 

@@ -1,0 +1,107 @@
+DEFINITION MODULE FOR "C" Sys;
+(* Canonical FFI bindings for m2sys — portable OS interface.
+   All path/string parameters are ADDRESS (NUL-terminated C strings).
+   File handles are small non-negative integers indexing an internal
+   FILE* table (max 32 handles).  -1 signals error. *)
+
+FROM SYSTEM IMPORT ADDRESS;
+
+(* ── File I/O (handle-based) ─────────────────────────── *)
+
+PROCEDURE m2sys_fopen(path: ADDRESS; mode: ADDRESS): INTEGER;
+PROCEDURE m2sys_fclose(handle: INTEGER): INTEGER;
+PROCEDURE m2sys_fread_line(handle: INTEGER; buf: ADDRESS;
+                           bufSize: INTEGER): INTEGER;
+PROCEDURE m2sys_fwrite_str(handle: INTEGER; data: ADDRESS): INTEGER;
+PROCEDURE m2sys_fwrite_bytes(handle: INTEGER; data: ADDRESS;
+                             len: INTEGER): INTEGER;
+PROCEDURE m2sys_fread_bytes(handle: INTEGER; buf: ADDRESS;
+                            maxLen: INTEGER): INTEGER;
+PROCEDURE m2sys_fseek(handle: INTEGER; offset: LONGINT;
+                      whence: INTEGER): INTEGER;
+
+(* ── File locking (advisory, POSIX flock) ────────────── *)
+
+PROCEDURE m2sys_flock(handle: INTEGER; exclusive: INTEGER): INTEGER;
+PROCEDURE m2sys_funlock(handle: INTEGER): INTEGER;
+
+(* ── File system ─────────────────────────────────────── *)
+
+PROCEDURE m2sys_file_exists(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_is_dir(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_is_symlink(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_mkdir_p(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_remove_file(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_rmdir_r(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_file_size(path: ADDRESS): LONGINT;
+PROCEDURE m2sys_file_mtime(path: ADDRESS): LONGINT;
+PROCEDURE m2sys_copy_file(src: ADDRESS; dst: ADDRESS): INTEGER;
+PROCEDURE m2sys_rename(oldPath: ADDRESS; newPath: ADDRESS): INTEGER;
+
+(* ── Directory listing ───────────────────────────────── *)
+
+PROCEDURE m2sys_list_dir(dir: ADDRESS; buf: ADDRESS;
+                         bufSize: INTEGER): INTEGER;
+
+(* ── Path utilities ──────────────────────────────────── *)
+
+PROCEDURE m2sys_join_path(a: ADDRESS; b: ADDRESS;
+                          outBuf: ADDRESS; outSize: INTEGER);
+PROCEDURE m2sys_home_dir(outBuf: ADDRESS; outSize: INTEGER);
+PROCEDURE m2sys_getcwd(outBuf: ADDRESS; outSize: INTEGER);
+PROCEDURE m2sys_chdir(path: ADDRESS): INTEGER;
+PROCEDURE m2sys_basename(path: ADDRESS; outBuf: ADDRESS;
+                         outSize: INTEGER);
+PROCEDURE m2sys_dirname(path: ADDRESS; outBuf: ADDRESS;
+                        outSize: INTEGER);
+
+(* ── Environment ─────────────────────────────────────── *)
+
+PROCEDURE m2sys_getenv(name: ADDRESS; outBuf: ADDRESS;
+                       outSize: INTEGER);
+
+(* ── String utilities ────────────────────────────────── *)
+
+PROCEDURE m2sys_strlen(s: ADDRESS): INTEGER;
+PROCEDURE m2sys_str_eq(a: ADDRESS; b: ADDRESS): INTEGER;
+PROCEDURE m2sys_str_starts_with(s: ADDRESS; prefix: ADDRESS): INTEGER;
+PROCEDURE m2sys_str_append(dst: ADDRESS; dstSize: INTEGER;
+                           src: ADDRESS): INTEGER;
+PROCEDURE m2sys_str_contains_ci(haystack: ADDRESS;
+                                needle: ADDRESS): INTEGER;
+
+(* ── Process ─────────────────────────────────────────── *)
+
+PROCEDURE m2sys_exec(cmdline: ADDRESS): INTEGER;
+PROCEDURE m2sys_exec_output(cmdline: ADDRESS; outBuf: ADDRESS;
+                            outSize: INTEGER): INTEGER;
+PROCEDURE m2sys_exit(code: INTEGER);
+
+(* ── Pipes ───────────────────────────────────────────── *)
+
+PROCEDURE m2sys_pipe(fds: ADDRESS): INTEGER;
+PROCEDURE m2sys_write_byte(fd: INTEGER): INTEGER;
+PROCEDURE m2sys_read_byte(fd: INTEGER): INTEGER;
+PROCEDURE m2sys_set_nonblock(fd: INTEGER): INTEGER;
+
+(* ── SHA-256 ─────────────────────────────────────────── *)
+
+PROCEDURE m2sys_sha256_str(data: ADDRESS; len: INTEGER;
+                           hexOut: ADDRESS);
+PROCEDURE m2sys_sha256_file(path: ADDRESS; hexOut: ADDRESS): INTEGER;
+
+(* ── Tar (POSIX ustar, no compression) ───────────────── *)
+
+PROCEDURE m2sys_tar_create(archivePath: ADDRESS;
+                           baseDir: ADDRESS): INTEGER;
+PROCEDURE m2sys_tar_create_ex(archivePath: ADDRESS;
+                              baseDir: ADDRESS;
+                              excludePattern: ADDRESS): INTEGER;
+PROCEDURE m2sys_tar_extract(archivePath: ADDRESS;
+                            destDir: ADDRESS): INTEGER;
+
+(* ── Time ────────────────────────────────────────────── *)
+
+PROCEDURE m2sys_unix_time(): LONGINT;
+
+END Sys.

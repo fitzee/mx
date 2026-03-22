@@ -6,12 +6,19 @@ This document covers the internal architecture of mx for contributors.
 
 ```
 Source (.mod/.def)
-  -> Lexer (src/lexer.rs)      tokenize into TokenKind stream
-  -> Parser (src/parser.rs)    recursive-descent -> AST
-  -> Sema (src/sema.rs)        type checking, scope resolution, symbol table
-  -> CodeGen (src/codegen.rs)  AST -> C source string
-  -> Driver (src/driver.rs)    write C to temp file, invoke cc, link
+  -> Lexer (src/lexer.rs)         tokenize into TokenKind stream
+  -> Parser (src/parser.rs)       recursive-descent -> AST
+  -> Sema (src/sema.rs)           type checking, scope resolution, symbol table
+  -> CodeGen:
+       C backend (src/codegen.rs)       AST -> C source string
+       LLVM backend (src/codegen_llvm/) AST -> LLVM IR text (.ll)
+  -> Driver (src/driver.rs)       invoke cc/clang, link
 ```
+
+The compiler has two backends selected at compile time:
+
+- **C backend** (default): emits C source with `#line` directives for debugging. Invokes the system C compiler.
+- **LLVM backend** (`--llvm`): emits LLVM IR text (`.ll`), compiled by clang. Produces native DWARF debug info, LLVM-native exception handling, and RTTI for TYPECASE/REF/OBJECT types.
 
 ### Lexer
 
@@ -42,7 +49,7 @@ The parser handles:
 
 The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested scope management. Each scope has a parent, enabling walk-up lookup.
 
-### Code generation
+### Code generation — C backend
 
 `CodeGen` (in `src/codegen.rs`) walks the AST and emits C code as a string. Key design decisions:
 
@@ -53,6 +60,34 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 - **Record types**: Emitted as `struct` with `typedef struct X X;` forward declarations.
 - **Open arrays**: Passed as pointer + high-bound pair.
 - **VAR parameters**: Passed as pointers.
+- **Exception handling**: setjmp/longjmp for both ISO EXCEPT and m2plus TRY/EXCEPT.
+
+### Code generation — LLVM backend
+
+`src/codegen_llvm/` emits LLVM IR as text (`.ll` files). Key modules:
+
+| File | Purpose |
+|------|---------|
+| `mod.rs` | Core struct, Val representation, semantic type queries |
+| `modules.rs` | Module-level codegen, `main()` entry, embedded impl modules |
+| `decls.rs` | Procedure and variable declarations, debug info |
+| `stmts.rs` | Statement generation, TRY/EXCEPT/FINALLY, RAISE, TYPECASE |
+| `exprs.rs` | Expression generation, function calls, NEW/DISPOSE |
+| `designators.rs` | Designator load/address with TypeId tracking |
+| `types.rs` | TypeNode → TypeId resolution, module-scoped lookup |
+| `type_lowering.rs` | M2 types → LLVM IR types |
+| `llvm_types.rs` | LLVM type representation and IR emission |
+| `stdlib_sigs.rs` | Standard library call signatures |
+| `debug_info.rs` | DWARF metadata (DICompileUnit, DISubprogram, DILocalVariable) |
+
+Key design decisions:
+
+- **Val carries TypeId**: Every codegen result is `{name, ty, type_id}` where `type_id` tracks the semantic identity from sema, enabling correct aggregate handling and cross-module type disambiguation.
+- **Aggregate invariant**: Records and arrays stay as addresses (pointers) in `gen_designator_load`. Callers that need values (return, struct-by-value) load explicitly. This prevents invalid SSA loads of aggregate types.
+- **Sema-driven types**: All semantic questions (is this a pointer? what are the record fields?) are answered from the sema TypeRegistry, not LLVM type strings.
+- **LLVM-native exception handling**: Custom `m2_eh_personality` function, `invoke`/`landingpad` for TRY/EXCEPT, LSDA parsing in the runtime. ISO procedure-level EXCEPT uses SjLj (setjmp/longjmp) as a separate mechanism.
+- **RTTI**: `M2_TypeDesc` globals for REF/OBJECT types, `M2_RefHeader` prepended to allocations, `M2_ISA` for TYPECASE runtime type checking.
+- **DWARF debug info**: `DW_LANG_C99` (for lldb compatibility), `#dbg_declare` records (LLVM 19+ format), full DILocalVariable/DIGlobalVariable metadata.
 
 ### Driver
 
@@ -60,12 +95,12 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 
 1. Read source file
 2. Find and parse all transitively imported `.def` and `.mod` files
-3. Run lexer -> parser -> codegen
-4. Write generated C to a file
-5. Invoke the system C compiler (`cc` by default)
+3. Run lexer -> parser -> codegen (C or LLVM backend)
+4. Write generated output (`.c` or `.ll`) to a file
+5. Invoke the system compiler (`cc` for C backend, `clang` for LLVM backend)
 6. Link and produce the final binary
 
-The driver handles include path resolution, finding `.def`/`.mod` files, and constructing the C compiler command line.
+The driver handles include path resolution, finding `.def`/`.mod` files, and constructing the compiler command line. The LLVM backend is selected with `--llvm` (full compilation) or `--emit-llvm` (emit `.ll` text only).
 
 **Debug mode** (`-g`): The driver uses a two-step compile (`.c` -> `.o` -> executable) so the `.o` file stays on disk for DWARF debug info. On macOS, `dsymutil` creates a `.dSYM` bundle after linking. The codegen emits `#line` directives and `setvbuf(stdout, NULL, _IONBF, 0)` for unbuffered I/O. The C compiler receives `-g -O0 -fno-omit-frame-pointer -fno-inline -gno-column-info`.
 
@@ -235,7 +270,7 @@ Categorized `.mod` files in `examples/` compiled and executed. Each test has an 
 
 ### Adversarial tests (tests/adversarial/)
 
-900+ tests across 8 compiler configurations (PIM4, M2+, optimized, with/without sanitizers). Tests are defined in `tests/adversarial/tests.json` and run via `run_adversarial.py`.
+1100+ tests across multiple compiler configurations (PIM4, M2+, optimized, with/without sanitizers, C/LLVM backends). Tests are defined in `tests/adversarial/tests.json` and run via `run_adversarial.py`. Use `--backend all` to test both C and LLVM backends.
 
 ### Conformance tests (tests/conformance.sh)
 
@@ -253,7 +288,8 @@ Categorized `.mod` files in `examples/` compiled and executed. Each test has an 
 cargo test                                              # 150 unit tests
 bash tests/run_all.sh                                   # integration tests
 bash tests/conformance.sh                               # conformance tests
-python3 tests/adversarial/run_adversarial.py --mode ci  # 900+ adversarial tests
+python3 tests/adversarial/run_adversarial.py --mode ci  # adversarial tests (C backend)
+python3 tests/adversarial/run_adversarial.py --backend all  # adversarial tests (C + LLVM)
 ```
 
 ## File reference
@@ -266,6 +302,7 @@ python3 tests/adversarial/run_adversarial.py --mode ci  # 900+ adversarial tests
 | `src/ast.rs` | AST node types |
 | `src/sema.rs` | Semantic analysis |
 | `src/codegen.rs` | C code generation |
+| `src/codegen_llvm/` | LLVM IR code generation (11 modules) |
 | `src/driver.rs` | Compilation orchestration |
 | `src/build.rs` | Project build system |
 | `src/analyze.rs` | Analysis-only path for LSP |

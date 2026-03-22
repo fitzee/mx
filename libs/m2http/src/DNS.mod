@@ -76,7 +76,7 @@ BEGIN
     e.code := 2;
     e.ptr := NIL;
     dummy := Reject(slots[callbackId].promise, e);
-    PromiseRelease(slots[callbackId].promise);
+    (* Do NOT release — the caller's future aliases this state *)
     slots[callbackId].promise := NIL;
     slots[callbackId].inUse := FALSE;
     RETURN
@@ -93,7 +93,6 @@ BEGIN
   v.tag := 0;
   v.ptr := ap;
   dummy := Resolve(slots[callbackId].promise, v);
-  PromiseRelease(slots[callbackId].promise);
   slots[callbackId].promise := NIL;
   slots[callbackId].inUse := FALSE
 END AsyncCallback;
@@ -126,7 +125,8 @@ BEGIN
     e.code := 1;
     e.ptr := NIL;
     dummy := Reject(p, e);
-    PromiseRelease(p); p := NIL;
+    (* Do NOT release p here — p and f alias the same state with
+       refcount=1.  The caller owns f and will call FutureRelease. *)
     outFuture := f;
     RETURN OutOfMemory
   END;
@@ -139,7 +139,6 @@ BEGIN
     e.code := 2;
     e.ptr := NIL;
     dummy := Reject(p, e);
-    PromiseRelease(p); p := NIL;
     outFuture := f;
     RETURN ResolveFailed
   END;
@@ -148,7 +147,6 @@ BEGIN
   v.tag := 0;
   v.ptr := ap;
   dummy := Resolve(p, v);
-  PromiseRelease(p); p := NIL;
   outFuture := f;
   RETURN OK
 END ResolveA;
@@ -186,7 +184,7 @@ BEGIN
     e.code := 1;
     e.ptr := NIL;
     dummy := Reject(p, e);
-    PromiseRelease(p); p := NIL;
+    (* Do NOT release p — caller owns f (same state, refcount=1) *)
     slots[id].inUse := FALSE;
     outFuture := f;
     RETURN OutOfMemory

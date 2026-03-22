@@ -1,0 +1,33 @@
+DEFINITION MODULE FOR "C" ProcessBridge;
+FROM SYSTEM IMPORT ADDRESS;
+
+(* Spawn a subprocess with bidirectional pipes.
+   Returns PID on success, -1 on failure.
+   stdinFd, stdoutFd, stderrFd are set on success. *)
+PROCEDURE m2dap_spawn(program: ADDRESS; args: ADDRESS;
+                      VAR stdinFd: INTEGER; VAR stdoutFd: INTEGER;
+                      VAR stderrFd: INTEGER): INTEGER;
+
+(* Read up to max bytes from fd. Returns bytes read, 0 on EOF, -1 on error. *)
+PROCEDURE m2dap_read(fd: INTEGER; buf: ADDRESS; max: INTEGER): INTEGER;
+
+(* Write len bytes to fd. Returns bytes written or -1 on error. *)
+PROCEDURE m2dap_write(fd: INTEGER; buf: ADDRESS; len: INTEGER): INTEGER;
+
+(* Close a file descriptor. *)
+PROCEDURE m2dap_close(fd: INTEGER);
+
+(* Wait for process. block=1 for blocking.
+   Returns exit status or -1 if not exited yet. *)
+PROCEDURE m2dap_waitpid(pid: INTEGER; block: INTEGER): INTEGER;
+
+(* Send signal to process. *)
+PROCEDURE m2dap_kill(pid: INTEGER; sig: INTEGER): INTEGER;
+
+(* Raw read from stdin (fd 0), bypassing stdio buffering. *)
+PROCEDURE m2dap_read_stdin(buf: ADDRESS; max: INTEGER): INTEGER;
+
+(* Raw write to stdout (fd 1), bypassing stdio buffering. *)
+PROCEDURE m2dap_write_stdout(buf: ADDRESS; len: INTEGER): INTEGER;
+
+END ProcessBridge.

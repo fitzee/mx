@@ -1,0 +1,14 @@
+DEFINITION MODULE NetB;
+(* Re-exports NetA.Status — tests cross-module enum re-export *)
+FROM NetA IMPORT Status;
+
+TYPE
+  Endpoint = RECORD
+    host: ARRAY [0..31] OF CHAR;
+    port: INTEGER;
+    status: Status;
+  END;
+
+PROCEDURE Connect(VAR ep: Endpoint): Status;
+
+END NetB.

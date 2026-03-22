@@ -13,9 +13,9 @@ entry=src/Log.mod
 includes=src
 
 [deps]
+m2sys=path:../m2sys
 
 [test]
 entry=tests/log_tests.mod
 
 [cc]
-extra-c=../m2sys/m2sys.c
