@@ -1257,242 +1257,38 @@ static int m2_BinaryIO_IsEOF(uint32_t fh) {
 }
 
 /// Generate a standalone C runtime file for linking with LLVM IR output.
-/// All functions have external linkage (no `static`) so they can be called
-/// from LLVM-generated code.
+/// Derives from the embedded header (generate_runtime_header) with `static`
+/// stripped so all functions have external linkage. Appends LLVM-specific
+/// extras (native EH personality, _Unwind-based throw).
 pub fn generate_llvm_runtime_c() -> String {
-    r#"/* Modula-2 LLVM Runtime Support — standalone linkable version */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <stdint.h>
-#include <ctype.h>
-#include <limits.h>
-#include <float.h>
-
-/* Command-line argument storage */
-int m2_argc = 0;
-char **m2_argv = NULL;
-
-/* PIM4 floored DIV and MOD */
-int32_t m2_div(int32_t a, int32_t b) {
-    int32_t q = a / b;
-    if ((a % b != 0) && ((a ^ b) < 0)) q--;
-    return q;
-}
-int32_t m2_mod(int32_t a, int32_t b) {
-    int32_t r = a % b;
-    if (r < 0) r += (b > 0 ? b : -b);
-    return r;
-}
-int64_t m2_div64(int64_t a, int64_t b) {
-    int64_t q = a / b;
-    if ((a % b != 0) && ((a ^ b) < 0)) q--;
-    return q;
-}
-int64_t m2_mod64(int64_t a, int64_t b) {
-    int64_t r = a % b;
-    if (r < 0) r += (b > 0 ? b : -b);
-    return r;
-}
-
-/* SHIFT / ROTATE */
-uint32_t m2_shift(uint32_t val, int32_t n) {
-    if (n == 0) return val;
-    if (n > 0) return (n >= 32) ? 0u : (val << n);
-    n = -n;
-    return (n >= 32) ? 0u : (val >> n);
-}
-uint32_t m2_rotate(uint32_t val, int32_t n) {
-    n = n % 32;
-    if (n < 0) n += 32;
-    if (n == 0) return val;
-    return (val << n) | (val >> (32 - n));
-}
-
-/* InOut module */
-int m2_InOut_Done = 1;
-void m2_WriteString(const char *s) { printf("%s", s); }
-void m2_WriteLn(void) { printf("\n"); }
-void m2_WriteInt(int32_t n, int32_t w) { printf("%*d", (int)w, (int)n); }
-void m2_WriteCard(uint32_t n, int32_t w) { printf("%*u", (int)w, (unsigned)n); }
-void m2_WriteHex(uint32_t n, int32_t w) { printf("%*X", (int)w, (unsigned)n); }
-void m2_WriteOct(uint32_t n, int32_t w) { printf("%*o", (int)w, (unsigned)n); }
-void m2_Write(char ch) { putchar(ch); }
-void m2_Read(char *ch) { int c = getchar(); *ch = (c == EOF) ? '\0' : (char)c; m2_InOut_Done = (c != EOF); }
-void m2_ReadString(char *s) { m2_InOut_Done = (scanf("%s", s) == 1); }
-void m2_ReadInt(int32_t *n) { m2_InOut_Done = (scanf("%d", n) == 1); }
-void m2_ReadCard(uint32_t *n) { m2_InOut_Done = (scanf("%u", n) == 1); }
-
-static FILE *m2_InFile = NULL;
-static FILE *m2_OutFile = NULL;
-void m2_OpenInput(const char *ext) {
-    char name[256];
-    printf("Input file: "); scanf("%255s", name);
-    if (ext && ext[0]) { strcat(name, "."); strcat(name, ext); }
-    m2_InFile = fopen(name, "r");
-    m2_InOut_Done = (m2_InFile != NULL);
-}
-void m2_OpenOutput(const char *ext) {
-    char name[256];
-    printf("Output file: "); scanf("%255s", name);
-    if (ext && ext[0]) { strcat(name, "."); strcat(name, ext); }
-    m2_OutFile = fopen(name, "w");
-    m2_InOut_Done = (m2_OutFile != NULL);
-}
-void m2_CloseInput(void) { if (m2_InFile) { fclose(m2_InFile); m2_InFile = NULL; } }
-void m2_CloseOutput(void) { if (m2_OutFile) { fclose(m2_OutFile); m2_OutFile = NULL; } }
-
-/* RealInOut module */
-int m2_RealInOut_Done = 1;
-void m2_ReadReal(float *r) { m2_RealInOut_Done = (scanf("%f", r) == 1); }
-void m2_WriteReal(float r, int32_t w) { printf("%*g", (int)w, (double)r); }
-void m2_WriteFixPt(float r, int32_t w, int32_t d) { printf("%*.*f", (int)w, (int)d, (double)r); }
-void m2_WriteRealOct(float r) { printf("%.8A", (double)r); }
-void m2_WriteLongReal(double r, int32_t w) { printf("%*g", (int)w, r); }
-void m2_ReadLongReal(double *r) { m2_RealInOut_Done = (scanf("%lf", r) == 1); }
-
-/* MathLib — Random/Randomize */
-float m2_Random(void) { return (float)rand() / ((float)RAND_MAX + 1.0f); }
-void m2_Randomize(uint32_t seed) { srand(seed); }
-
-/* Storage module */
-void m2_ALLOCATE(void **p, uint32_t size) { *p = malloc(size); }
-void m2_DEALLOCATE(void **p, uint32_t size) { free(*p); *p = NULL; (void)size; }
-
-/* Strings module */
-void m2_Strings_Assign(const char *src, char *dst, uint32_t dst_high) {
-    size_t cap = (size_t)dst_high + 1;
-    size_t slen = strlen(src);
-    if (slen >= cap) slen = cap - 1;
-    memcpy(dst, src, slen);
-    dst[slen] = '\0';
-}
-void m2_Strings_Insert(const char *sub, char *dst, uint32_t dst_high, uint32_t pos) {
-    size_t cap = (size_t)dst_high + 1;
-    size_t slen = strlen(sub), dlen = strlen(dst);
-    if (pos > dlen) pos = (uint32_t)dlen;
-    size_t new_len = dlen + slen;
-    if (new_len >= cap) new_len = cap - 1;
-    if (pos + slen <= new_len) {
-        memmove(dst + pos + slen, dst + pos, dlen - pos);
+    // Start with the full embedded runtime, strip static linkage so all
+    // functions/variables have external linkage for LLVM IR to reference.
+    let mut base = generate_runtime_header();
+    // Strip all forms of static linkage
+    base = base.replace("static inline __attribute__((always_inline)) ", "");
+    base = base.replace("static inline ", "");
+    base = base.replace("static __thread ", "__thread ");
+    base = base.replace("\nstatic ", "\n");
+    // The first line may also start with static (after includes)
+    if base.contains("static int m2_argc") {
+        base = base.replace("static int m2_argc", "int m2_argc");
     }
-    size_t copy_len = slen;
-    if (pos + copy_len > new_len) copy_len = new_len - pos;
-    memcpy(dst + pos, sub, copy_len);
-    dst[new_len] = '\0';
-}
-void m2_Strings_Delete(char *s, uint32_t s_high, uint32_t pos, uint32_t len) {
-    (void)s_high;
-    size_t slen = strlen(s);
-    if (pos >= slen) return;
-    if (pos + len >= slen) { s[pos] = '\0'; return; }
-    memmove(s + pos, s + pos + len, slen - pos - len + 1);
-}
-uint32_t m2_Strings_Pos(const char *sub, const char *s) {
-    const char *p = strstr(s, sub);
-    if (!p) return (uint32_t)-1;
-    return (uint32_t)(p - s);
-}
-void m2_Strings_Copy(const char *src, uint32_t pos, uint32_t len, char *dst, uint32_t dst_high) {
-    size_t cap = (size_t)dst_high + 1;
-    size_t slen = strlen(src);
-    if (pos >= slen) { dst[0] = '\0'; return; }
-    size_t avail = slen - pos;
-    if (len > avail) len = (uint32_t)avail;
-    if (len >= cap) len = (uint32_t)(cap - 1);
-    memcpy(dst, src + pos, len);
-    dst[len] = '\0';
-}
-void m2_Strings_Concat(const char *a, const char *b, char *dst, uint32_t dst_high) {
-    size_t cap = (size_t)dst_high + 1;
-    size_t alen = strlen(a), blen = strlen(b);
-    size_t total = alen + blen;
-    if (total >= cap) {
-        if (alen >= cap) alen = cap - 1;
-        blen = cap - 1 - alen;
-        total = alen + blen;
+    if base.contains("static char **m2_argv") {
+        base = base.replace("static char **m2_argv", "char **m2_argv");
     }
-    memcpy(dst, a, alen);
-    memcpy(dst + alen, b, blen);
-    dst[total] = '\0';
-}
-uint32_t m2_Strings_Length(const char *s) { return (uint32_t)strlen(s); }
-int32_t m2_Strings_CompareStr(const char *a, const char *b) { return (int32_t)strcmp(a, b); }
 
-/* Args module */
-uint32_t m2_Args_ArgCount(void) { return (uint32_t)m2_argc; }
-void m2_Args_GetArg(uint32_t n, char *buf, uint32_t buf_high) {
-    size_t cap = (size_t)buf_high + 1;
-    if ((int)n < m2_argc) {
-        size_t len = strlen(m2_argv[n]);
-        if (len >= cap) len = cap - 1;
-        memcpy(buf, m2_argv[n], len);
-        buf[len] = '\0';
-    } else {
-        buf[0] = '\0';
-    }
+    // Append LLVM-native exception handling (not in the C backend header)
+    let llvm_extras = generate_llvm_eh_runtime();
+
+    format!("{}\n{}", base, llvm_extras)
 }
 
-/* Terminal module (aliases to InOut) */
-void m2_Terminal_Write(char ch) { putchar(ch); }
-void m2_Terminal_WriteLn(void) { printf("\n"); }
-void m2_Terminal_WriteString(const char *s) { printf("%s", s); }
-void m2_Terminal_Read(char *ch) { int c = getchar(); *ch = (c == EOF) ? '\0' : (char)c; }
-
-/* ── Exception handling (SjLj — temporary parity with C backend) ──
-   Target design: LLVM-native EH with invoke/landingpad/personality.
-   This SjLj implementation reuses the C backend's runtime for parity. */
-#include <setjmp.h>
-
-typedef struct m2_ExcFrame {
-    jmp_buf buf;
-    struct m2_ExcFrame *prev;
-    int exception_id;
-    const char *exception_name;
-    void *exception_arg;
-} m2_ExcFrame;
-
-static __thread m2_ExcFrame *m2_exc_stack = NULL;
-
-void m2_exc_push(m2_ExcFrame *frame) {
-    frame->prev = m2_exc_stack;
-    frame->exception_id = 0;
-    frame->exception_name = NULL;
-    frame->exception_arg = NULL;
-    m2_exc_stack = frame;
-}
-
-void m2_exc_pop(m2_ExcFrame *frame) {
-    m2_exc_stack = frame->prev;
-}
-
-void m2_raise(int id, const char *name, void *arg) {
-    if (m2_exc_stack) {
-        m2_exc_stack->exception_id = id;
-        m2_exc_stack->exception_name = name;
-        m2_exc_stack->exception_arg = arg;
-        longjmp(m2_exc_stack->buf, id ? id : 1);
-    }
-    fprintf(stderr, "Unhandled exception: %s (id=%d)\n", name ? name : "unknown", id);
-    exit(1);
-}
-
-/* Runtime type info (for TYPECASE) */
-typedef struct M2_TypeDesc {
-    uint32_t   type_id;
-    const char *type_name;
-    struct M2_TypeDesc *parent;
-    uint32_t   depth;
-} M2_TypeDesc;
-
-int32_t m2_exc_get_id(m2_ExcFrame *frame) { return frame->exception_id; }
-const char *m2_exc_get_name(m2_ExcFrame *frame) { return frame->exception_name; }
-void *m2_exc_get_arg(m2_ExcFrame *frame) { return frame->exception_arg; }
-void m2_exc_reraise(m2_ExcFrame *frame) {
-    m2_raise(frame->exception_id, frame->exception_name, frame->exception_arg);
-}
-
+/// LLVM-native exception handling runtime (personality function, throw).
+/// This is NOT in the C backend header — only used by LLVM codegen.
+fn generate_llvm_eh_runtime() -> String {
+    // Content: only LLVM-specific EH code (personality, throw, unwind).
+    // All standard stdlib functions come from generate_runtime_header().
+    r#"
 /* ── LLVM-native exception handling ────────────────────────────────
    Uses the Itanium C++ ABI unwinder (_Unwind_RaiseException) with a
    custom personality function (m2_eh_personality).
@@ -1819,134 +1615,6 @@ _Unwind_Reason_Code m2_eh_personality(
                   (uintptr_t)selector);
     _Unwind_SetIP(context, landingPad);
     return _URC_INSTALL_CONTEXT;
-}
-
-/* REF/OBJECT allocation with RTTI header */
-typedef struct M2_RefHeader {
-    M2_TypeDesc *td;
-} M2_RefHeader;
-
-void *M2_ref_alloc(size_t payload_size, M2_TypeDesc *td) {
-    M2_RefHeader *hdr = (M2_RefHeader *)malloc(sizeof(M2_RefHeader) + payload_size);
-    if (!hdr) { fprintf(stderr, "M2_ref_alloc: out of memory\n"); exit(1); }
-    memset(hdr, 0, sizeof(M2_RefHeader) + payload_size);
-    hdr->td = td;
-    return (void *)(hdr + 1);
-}
-
-M2_TypeDesc *M2_TYPEOF(void *ref) {
-    if (!ref) return NULL;
-    M2_RefHeader *hdr = ((M2_RefHeader *)ref) - 1;
-    return hdr->td;
-}
-
-int32_t M2_ISA(void *payload, M2_TypeDesc *target) {
-    M2_TypeDesc *td = M2_TYPEOF(payload);
-    if (!td || !target) return 0;
-    while (td) {
-        if (td == target) return 1;
-        td = td->parent;
-    }
-    return 0;
-}
-
-void M2_ref_free(void *payload) {
-    if (!payload) return;
-    M2_RefHeader *hdr = ((M2_RefHeader *)payload) - 1;
-    free(hdr);
-}
-
-/* ── BinaryIO module ────────────────────────────────────────── */
-#define M2_MAX_FILES 32
-static FILE *m2_bio_files[M2_MAX_FILES];
-static int m2_bio_init = 0;
-int m2_BinaryIO_Done = 1;
-
-static void m2_bio_ensure_init(void) {
-    if (!m2_bio_init) {
-        for (int i = 0; i < M2_MAX_FILES; i++) m2_bio_files[i] = NULL;
-        m2_bio_init = 1;
-    }
-}
-static int m2_bio_alloc(void) {
-    m2_bio_ensure_init();
-    for (int i = 0; i < M2_MAX_FILES; i++) {
-        if (m2_bio_files[i] == NULL) return i;
-    }
-    return -1;
-}
-void m2_BinaryIO_OpenRead(const char *name, uint32_t *fh) {
-    int slot = m2_bio_alloc();
-    if (slot < 0) { m2_BinaryIO_Done = 0; *fh = 0; return; }
-    m2_bio_files[slot] = fopen(name, "rb");
-    if (m2_bio_files[slot]) { *fh = (uint32_t)(slot + 1); m2_BinaryIO_Done = 1; }
-    else { *fh = 0; m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_OpenWrite(const char *name, uint32_t *fh) {
-    int slot = m2_bio_alloc();
-    if (slot < 0) { m2_BinaryIO_Done = 0; *fh = 0; return; }
-    m2_bio_files[slot] = fopen(name, "wb");
-    if (m2_bio_files[slot]) { *fh = (uint32_t)(slot + 1); m2_BinaryIO_Done = 1; }
-    else { *fh = 0; m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_Close(uint32_t fh) {
-    m2_bio_ensure_init();
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        fclose(m2_bio_files[fh-1]);
-        m2_bio_files[fh-1] = NULL;
-    }
-}
-void m2_BinaryIO_ReadByte(uint32_t fh, uint32_t *b) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        int c = fgetc(m2_bio_files[fh-1]);
-        if (c == EOF) { *b = 0; m2_BinaryIO_Done = 0; }
-        else { *b = (uint32_t)(unsigned char)c; m2_BinaryIO_Done = 1; }
-    } else { *b = 0; m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_WriteByte(uint32_t fh, uint32_t b) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        fputc((unsigned char)(b & 0xFF), m2_bio_files[fh-1]);
-        m2_BinaryIO_Done = 1;
-    } else { m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_ReadBytes(uint32_t fh, char *buf, uint32_t n, uint32_t *actual) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        *actual = (uint32_t)fread(buf, 1, n, m2_bio_files[fh-1]);
-        m2_BinaryIO_Done = (*actual > 0) ? 1 : 0;
-    } else { *actual = 0; m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_WriteBytes(uint32_t fh, const char *buf, uint32_t n) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        fwrite(buf, 1, n, m2_bio_files[fh-1]);
-        m2_BinaryIO_Done = 1;
-    } else { m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_FileSize(uint32_t fh, uint32_t *size) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        long cur = ftell(m2_bio_files[fh-1]);
-        fseek(m2_bio_files[fh-1], 0, SEEK_END);
-        *size = (uint32_t)ftell(m2_bio_files[fh-1]);
-        fseek(m2_bio_files[fh-1], cur, SEEK_SET);
-        m2_BinaryIO_Done = 1;
-    } else { *size = 0; m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_Seek(uint32_t fh, uint32_t pos) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        fseek(m2_bio_files[fh-1], (long)pos, SEEK_SET);
-        m2_BinaryIO_Done = 1;
-    } else { m2_BinaryIO_Done = 0; }
-}
-void m2_BinaryIO_Tell(uint32_t fh, uint32_t *pos) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        *pos = (uint32_t)ftell(m2_bio_files[fh-1]);
-        m2_BinaryIO_Done = 1;
-    } else { *pos = 0; m2_BinaryIO_Done = 0; }
-}
-int m2_BinaryIO_IsEOF(uint32_t fh) {
-    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
-        return feof(m2_bio_files[fh-1]) ? 1 : 0;
-    }
-    return 1;
 }
 "#
     .to_string()
