@@ -1855,6 +1855,99 @@ void M2_ref_free(void *payload) {
     M2_RefHeader *hdr = ((M2_RefHeader *)payload) - 1;
     free(hdr);
 }
+
+/* ── BinaryIO module ────────────────────────────────────────── */
+#define M2_MAX_FILES 32
+static FILE *m2_bio_files[M2_MAX_FILES];
+static int m2_bio_init = 0;
+int m2_BinaryIO_Done = 1;
+
+static void m2_bio_ensure_init(void) {
+    if (!m2_bio_init) {
+        for (int i = 0; i < M2_MAX_FILES; i++) m2_bio_files[i] = NULL;
+        m2_bio_init = 1;
+    }
+}
+static int m2_bio_alloc(void) {
+    m2_bio_ensure_init();
+    for (int i = 0; i < M2_MAX_FILES; i++) {
+        if (m2_bio_files[i] == NULL) return i;
+    }
+    return -1;
+}
+void m2_BinaryIO_OpenRead(const char *name, uint32_t *fh) {
+    int slot = m2_bio_alloc();
+    if (slot < 0) { m2_BinaryIO_Done = 0; *fh = 0; return; }
+    m2_bio_files[slot] = fopen(name, "rb");
+    if (m2_bio_files[slot]) { *fh = (uint32_t)(slot + 1); m2_BinaryIO_Done = 1; }
+    else { *fh = 0; m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_OpenWrite(const char *name, uint32_t *fh) {
+    int slot = m2_bio_alloc();
+    if (slot < 0) { m2_BinaryIO_Done = 0; *fh = 0; return; }
+    m2_bio_files[slot] = fopen(name, "wb");
+    if (m2_bio_files[slot]) { *fh = (uint32_t)(slot + 1); m2_BinaryIO_Done = 1; }
+    else { *fh = 0; m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_Close(uint32_t fh) {
+    m2_bio_ensure_init();
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        fclose(m2_bio_files[fh-1]);
+        m2_bio_files[fh-1] = NULL;
+    }
+}
+void m2_BinaryIO_ReadByte(uint32_t fh, uint32_t *b) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        int c = fgetc(m2_bio_files[fh-1]);
+        if (c == EOF) { *b = 0; m2_BinaryIO_Done = 0; }
+        else { *b = (uint32_t)(unsigned char)c; m2_BinaryIO_Done = 1; }
+    } else { *b = 0; m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_WriteByte(uint32_t fh, uint32_t b) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        fputc((unsigned char)(b & 0xFF), m2_bio_files[fh-1]);
+        m2_BinaryIO_Done = 1;
+    } else { m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_ReadBytes(uint32_t fh, char *buf, uint32_t n, uint32_t *actual) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        *actual = (uint32_t)fread(buf, 1, n, m2_bio_files[fh-1]);
+        m2_BinaryIO_Done = (*actual > 0) ? 1 : 0;
+    } else { *actual = 0; m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_WriteBytes(uint32_t fh, const char *buf, uint32_t n) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        fwrite(buf, 1, n, m2_bio_files[fh-1]);
+        m2_BinaryIO_Done = 1;
+    } else { m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_FileSize(uint32_t fh, uint32_t *size) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        long cur = ftell(m2_bio_files[fh-1]);
+        fseek(m2_bio_files[fh-1], 0, SEEK_END);
+        *size = (uint32_t)ftell(m2_bio_files[fh-1]);
+        fseek(m2_bio_files[fh-1], cur, SEEK_SET);
+        m2_BinaryIO_Done = 1;
+    } else { *size = 0; m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_Seek(uint32_t fh, uint32_t pos) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        fseek(m2_bio_files[fh-1], (long)pos, SEEK_SET);
+        m2_BinaryIO_Done = 1;
+    } else { m2_BinaryIO_Done = 0; }
+}
+void m2_BinaryIO_Tell(uint32_t fh, uint32_t *pos) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        *pos = (uint32_t)ftell(m2_bio_files[fh-1]);
+        m2_BinaryIO_Done = 1;
+    } else { *pos = 0; m2_BinaryIO_Done = 0; }
+}
+int m2_BinaryIO_IsEOF(uint32_t fh) {
+    if (fh >= 1 && fh <= M2_MAX_FILES && m2_bio_files[fh-1]) {
+        return feof(m2_bio_files[fh-1]) ? 1 : 0;
+    }
+    return 1;
+}
 "#
     .to_string()
 }

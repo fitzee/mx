@@ -426,6 +426,14 @@ impl LLVMCodeGen {
     }
 
     fn gen_indirect_call(&mut self, fn_ptr: &Val, args: &[Expr]) {
+        // Ensure fn_ptr is a ptr (proc type fields may load as i32 etc.)
+        let call_target = if fn_ptr.ty != "ptr" {
+            let tmp = self.next_tmp();
+            self.emitln(&format!("  {} = inttoptr {} {} to ptr", tmp, fn_ptr.ty, fn_ptr.name));
+            tmp
+        } else {
+            fn_ptr.name.clone()
+        };
         let mut arg_strs = Vec::new();
         for arg in args {
             if let ExprKind::Designator(d) = &arg.kind {
@@ -445,7 +453,7 @@ impl LLVMCodeGen {
             arg_strs.push(format!("{} {}", val.ty, val.name));
         }
         let args_str = arg_strs.join(", ");
-        self.emitln(&format!("  call void {}({})", fn_ptr.name, args_str));
+        self.emitln(&format!("  call void {}({})", call_target, args_str));
     }
 
     // ── Control flow generation ─────────────────────────────────────

@@ -2025,5 +2025,21 @@
       "regression"
     ],
     "_comment": "Regression: two modules with same impl-only type names (ConnRec/ConnPtr), nested deref chains (c^.resp^.headerCount), re-exported enums (NetB re-exports NetA.Status), INC on deeply nested fields. Tests LLVM backend type disambiguation and enum variant resolution."
+  },
+  {
+    "name": "proc_field_call",
+    "category": "codegen",
+    "dir": "codegen/proc_field_call",
+    "main": "ProcFieldCall.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "double=14\ntriple=15\ndone\n",
+    "tags": [
+      "ci"
+    ],
+    "_comment": "Indirect call through procedure-type field in record via pointer dereference."
   }
 ]
