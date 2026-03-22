@@ -689,6 +689,9 @@ class AdversarialRunner:
             for name in self.compilers:
                 self.sanitizer_support[name] = False
 
+        # Backend config
+        self.test_llvm_backend = getattr(args, 'backend', 'c') in ('llvm', 'all')
+
         # Multi-TU config
         self.link_mode = args.link_mode
         self.multi_tu_supported = self.config.get("multi_tu_supported", False)
@@ -1114,7 +1117,70 @@ class AdversarialRunner:
                         )
                         results.append(r)
 
+        # ── Phase 4: LLVM backend compile + run ──
+        skip_llvm = test_def.get("skip_llvm", False)
+        if getattr(self, 'test_llvm_backend', False) and not expect_fail and not skip_llvm:
+            variant = "llvm"
+            r = TestResult(name, category, variant)
+            llvm_exe = test_out / "exe_llvm"
+
+            t0 = time.time()
+            ok, stderr = self._compile_llvm(test_def, test_dir, llvm_exe)
+            r.duration_ms = (time.time() - t0) * 1000
+
+            if not ok:
+                r.phase = "compile"
+                r.error = f"LLVM compile failed: {stderr[:300]}"
+                r.stderr = stderr
+            else:
+                exit_code, stdout, run_stderr = self.run_exe(llvm_exe)
+                r.exit_code = exit_code
+                r.stdout = stdout
+                r.stderr = run_stderr
+
+                if exit_code != expected_exit:
+                    r.phase = "check"
+                    r.error = f"Exit {exit_code}, expected {expected_exit}"
+                elif expected_stdout is not None and stdout != expected_stdout:
+                    r.phase = "check"
+                    r.error = f"Stdout mismatch:\n  expected: {expected_stdout!r}\n  actual:   {stdout!r}"
+                elif expected_contains:
+                    contains_list = expected_contains if isinstance(expected_contains, list) else [expected_contains]
+                    missing = [c for c in contains_list if c not in stdout]
+                    if missing:
+                        r.phase = "check"
+                        r.error = f"Stdout missing: {missing!r}"
+                    else:
+                        r.passed = True
+                else:
+                    r.passed = True
+
+            results.append(r)
+
         return results
+
+    def _compile_llvm(self, test_def: dict, test_dir: Path, out_exe: Path) -> Tuple[bool, str]:
+        """Run mx --llvm to produce a binary directly. Returns (success, stderr)."""
+        main_file = test_dir / test_def["main"]
+        cmd = list(self.mx_cmd)
+        cmd.append("--llvm")
+
+        if test_def.get("m2plus", False):
+            cmd.append("--m2plus")
+
+        for inc in test_def.get("include_dirs", ["."]):
+            cmd.extend(["-I", self.resolve_path(test_dir, inc)])
+
+        cmd.append(str(main_file))
+
+        # Extra C files (for FFI tests)
+        for f in test_def.get("extra_c_files", []):
+            cmd.append(self.resolve_path(test_dir, f))
+
+        cmd.extend(["-o", str(out_exe)])
+
+        rc, stdout, stderr = run_cmd(cmd, timeout=60, cwd=str(self.project_root))
+        return rc == 0, stderr
 
     def _compile_and_run(
         self, name, category, variant, cc_path, opt, use_san,
@@ -1626,6 +1692,10 @@ Examples:
     parser.add_argument(
         "--compiler", choices=["clang", "gcc", "all"], default="all",
         help="Which C compiler(s) to use (default: all available)",
+    )
+    parser.add_argument(
+        "--backend", choices=["c", "llvm", "all"], default="all",
+        help="Which mx backend(s) to test: c, llvm, or all (default: all)",
     )
     parser.add_argument(
         "--sanitizers", choices=["on", "off"], default="on",

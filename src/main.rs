@@ -5,6 +5,7 @@ mod ast;
 mod build;
 mod builtins;
 mod codegen;
+mod codegen_llvm;
 mod driver;
 mod errors;
 mod json;
@@ -50,6 +51,8 @@ fn main() {
         eprintln!("  -o <file>      Output file name");
         eprintln!("  -c             Compile only (produce .o, no linking)");
         eprintln!("  --emit-c       Output C code only (do not invoke C compiler)");
+        eprintln!("  --emit-llvm    Output LLVM IR (.ll) instead of C");
+        eprintln!("  --llvm         Use LLVM backend (compile via clang)");
         eprintln!("  -I <path>      Add module search path");
         eprintln!("  -O<n>          Optimization level (0-3)");
         eprintln!("  -v             Verbose output");
@@ -168,6 +171,8 @@ fn main() {
             }
             "-c" => opts.compile_only = true,
             "--emit-c" => opts.emit_c = true,
+            "--emit-llvm" => opts.emit_llvm = true,
+            "--llvm" => { opts.use_llvm = true; opts.emit_llvm = true; },
             "-I" => {
                 i += 1;
                 if i >= args.len() {
@@ -421,6 +426,7 @@ fn run_subcommand(args: &[String]) {
     let mut verbose = false;
     let mut release = false;
     let mut debug = false;
+    let mut use_llvm = false;
     let mut cc = "cc".to_string();
     let mut features: Vec<String> = Vec::new();
     let mut run_args: Vec<String> = Vec::new();
@@ -438,6 +444,7 @@ fn run_subcommand(args: &[String]) {
             "-v" => verbose = true,
             "--release" => release = true,
             "-g" | "--debug" => debug = true,
+            "--llvm" => use_llvm = true,
             "--cc" => {
                 i += 1;
                 if i >= args.len() {
@@ -520,6 +527,7 @@ fn run_subcommand(args: &[String]) {
             },
             feature_cc: ctx.manifest.feature_cc.clone(),
             test: project_resolver::TestSection::default(),
+            backend: None,
         };
         m
     } else {
@@ -547,8 +555,12 @@ fn run_subcommand(args: &[String]) {
             },
             feature_cc: ctx.manifest.feature_cc.clone(),
             test: project_resolver::TestSection::default(),
+            backend: None,
         }
     };
+
+    // Check manifest for backend=llvm
+    let manifest_llvm = ctx.manifest.backend.as_deref() == Some("llvm");
 
     let config = build::BuildConfig {
         root: root.clone(),
@@ -559,6 +571,7 @@ fn run_subcommand(args: &[String]) {
         verbose,
         features,
         debug,
+        use_llvm: use_llvm || manifest_llvm,
     };
 
     match build::build_project(&config, is_run, &run_args) {

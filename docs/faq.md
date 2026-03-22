@@ -4,14 +4,13 @@
 
 Modula-2 is a systems programming language designed by Niklaus Wirth. It has strong typing, modules, and clean syntax. Modula-2+ (from DEC SRC) adds exceptions, reference types, objects, and concurrency -- features needed for real-world programs without abandoning M2's simplicity. mx supports both standard PIM4 Modula-2 and these extensions via the `--m2plus` flag.
 
-## Why transpile to C?
+## Why two backends?
 
-C is the universal portable assembly language. By emitting C, mx inherits:
+mx has a **C backend** (default) and an **LLVM backend** (`--llvm`).
 
-- Every platform's C compiler and optimizer
-- Cross-compilation support (just set `--cc` to a cross compiler)
-- Easy FFI with C libraries
-- Source-level debugging via `#line` directives (compile with `-g` to debug `.mod` files directly in LLDB/GDB)
+The C backend transpiles to C, inheriting every platform's C compiler and optimizer, cross-compilation (just set `--cc`), easy FFI, and readable output. Debug builds use `#line` directives for source-level debugging.
+
+The LLVM backend emits LLVM IR, compiled by clang. It provides native DWARF debug info (variables visible in lldb with M2 type names), LLVM-native exception handling for TRY/EXCEPT, and RTTI for TYPECASE/REF/OBJECT. Use it when you need full IDE debugging with m2dap.
 
 ## Why no async runtime?
 
@@ -71,9 +70,9 @@ PIM4 (Programming in Modula-2, 4th Edition by Niklaus Wirth). Keywords are alway
 
 ## How do I debug my Modula-2 program?
 
-**In VS Code**: Run "Modula-2+: Create Debug Configuration" from the Command Palette, set breakpoints by clicking the gutter, and press `F5`. You need the [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) extension. See [VS Code debugging](vscode.md#debugging) for details.
+**In VS Code**: Run "Modula-2+: Create Debug Configuration" from the Command Palette, set breakpoints by clicking the gutter, and press `F5`. The generated config includes both m2dap (M2-native debugging) and CodeLLDB options. See [VS Code debugging](vscode.md#debugging) for details.
 
-**From the command line**:
+**From the command line** (C backend):
 
 ```bash
 mx -g program.mod -o program
@@ -82,7 +81,23 @@ lldb ./program
 (lldb) run
 ```
 
-The `-g` flag emits `#line` directives so debuggers show your `.mod` source directly. Variables, stepping, and breakpoints all work at the Modula-2 level.
+**From the command line** (LLVM backend — full variable inspection):
+
+```bash
+mx --llvm -g program.mod -o program
+lldb ./program
+(lldb) breakpoint set -f program.mod -l 10
+(lldb) run
+(lldb) frame variable -T
+```
+
+The LLVM backend emits native DWARF debug info, so `frame variable` shows local variables with their M2 names. For M2-idiomatic type display (`BOOLEAN` → `TRUE`/`FALSE`, `NIL` for null pointers), use m2dap in an IDE.
+
+## What is m2dap?
+
+m2dap is a Modula-2 Debug Adapter Protocol server. It wraps lldb as a subprocess and translates DAP messages (from VS Code, Zed, etc.) into lldb commands. It provides M2-idiomatic debugging: demangled procedure names (`Module.Proc`), M2 type names (`BOOLEAN`, `INTEGER`), and M2 value formatting (`TRUE`/`FALSE`, `NIL`, `CHR(N)`).
+
+Build it with `cd tools/m2dap && mx build`. It requires the LLVM backend (`--llvm -g`) for full variable type information.
 
 ## Can I use mx without mxpkg?
 

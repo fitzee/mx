@@ -1,0 +1,30 @@
+DEFINITION MODULE SinkLib;
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE
+  Callback = PROCEDURE(ADDRESS, INTEGER);
+
+  Sink = RECORD
+    proc: Callback;
+    ctx:  ADDRESS;
+    level: INTEGER;
+  END;
+
+  Logger = RECORD
+    sinks: ARRAY [0..3] OF Sink;
+    count: INTEGER;
+  END;
+
+  Node = RECORD
+    tag: INTEGER;
+    name: ARRAY [0..63] OF CHAR;
+    value: INTEGER;
+  END;
+  NodePtr = POINTER TO Node;
+
+PROCEDURE Init(VAR l: Logger);
+PROCEDURE MakeSink(cb: Callback; level: INTEGER): Sink;
+PROCEDURE AddSink(VAR l: Logger; s: Sink): BOOLEAN;
+PROCEDURE Dispatch(VAR l: Logger; msg: INTEGER);
+
+END SinkLib.

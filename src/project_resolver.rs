@@ -56,6 +56,8 @@ pub struct Manifest {
     /// Parsed from `[cc.feature.NAME]` sections in m2.toml.
     pub feature_cc: HashMap<String, CcSection>,
     pub test: TestSection,
+    /// Backend: "c" (default) or "llvm"
+    pub backend: Option<String>,
 }
 
 impl Manifest {
@@ -131,6 +133,7 @@ impl Manifest {
         let mut version = String::new();
         let mut entry = String::new();
         let mut m2plus = false;
+        let mut backend: Option<String> = None;
         let mut includes = Vec::new();
         let mut deps = Vec::new();
         let mut cc = CcSection::default();
@@ -188,6 +191,7 @@ impl Manifest {
                         "version" => version = val.to_string(),
                         "entry" => entry = val.to_string(),
                         "m2plus" => m2plus = val == "true" || val == "1",
+                        "backend" => backend = Some(val.to_string()),
                         "includes" => {
                             includes = val.split_whitespace().map(|s| s.to_string()).collect();
                         }
@@ -241,7 +245,7 @@ impl Manifest {
             return None;
         }
 
-        Some(Manifest { name, version, entry, m2plus, includes, deps, cc, feature_cc, test })
+        Some(Manifest { name, version, entry, m2plus, includes, deps, cc, feature_cc, test, backend })
     }
 }
 

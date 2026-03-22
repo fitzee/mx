@@ -1,0 +1,22 @@
+DEFINITION MODULE PlanDef;
+FROM FieldDef IMPORT FieldId;
+
+CONST
+  MaxFields = 16;
+
+TYPE
+  Projection = RECORD
+    fields: ARRAY [0..MaxFields-1] OF FieldId;
+    count: INTEGER;
+    hasProject: BOOLEAN;
+  END;
+
+  Plan = RECORD
+    tag: INTEGER;
+    proj: Projection;
+    limit: INTEGER;
+  END;
+
+PROCEDURE InitPlan(VAR p: Plan);
+
+END PlanDef.

@@ -1,0 +1,18 @@
+# m2.toml - m2dap: Modula-2 Debug Adapter Protocol server
+#
+# Wraps lldb as a subprocess, translates DAP <-> lldb commands,
+# and formats M2 types idiomatically.
+manifest_version=1
+name=m2dap
+version=0.1.0
+entry=src/Main.mod
+edition=m2plus
+includes=src
+
+[deps]
+m2json=path:../../libs/m2json
+m2fmt=path:../../libs/m2fmt
+m2sys=path:../../libs/m2sys
+
+[cc]
+extra-c=src/process_bridge.c

@@ -1,0 +1,8 @@
+DEFINITION MODULE FieldDef;
+
+TYPE
+  FieldId = (FiName, FiValue, FiType, FiUnknown);
+
+PROCEDURE Resolve(VAR name: ARRAY OF CHAR): FieldId;
+
+END FieldDef.

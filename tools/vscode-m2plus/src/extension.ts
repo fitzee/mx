@@ -7,6 +7,19 @@ import {
 
 let client: LanguageClient | undefined;
 
+// ── Debug Adapter ───────────────────────────────────────────────
+
+class M2DapAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
+  createDebugAdapterDescriptor(
+    _session: vscode.DebugSession,
+    _executable: vscode.DebugAdapterExecutable | undefined
+  ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+    const config = vscode.workspace.getConfiguration("mx");
+    const m2dapPath = config.get<string>("m2dapPath", "m2dap");
+    return new vscode.DebugAdapterExecutable(m2dapPath);
+  }
+}
+
 // ── Documentation Tree View ─────────────────────────────────────
 
 interface DocInfo {
@@ -260,6 +273,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.tasks.registerTaskProvider("mx", new MxTaskProvider())
   );
 
+  // Register m2dap debug adapter
+  context.subscriptions.push(
+    vscode.debug.registerDebugAdapterDescriptorFactory(
+      "m2dap",
+      new M2DapAdapterFactory()
+    )
+  );
+
   const docTree = new DocTreeProvider();
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider("mxDocsBrowser", docTree)
@@ -395,6 +416,16 @@ export function activate(context: vscode.ExtensionContext) {
       const launchContent = JSON.stringify({
         version: "0.2.0",
         configurations: [
+          {
+            name: "Debug (m2dap)",
+            type: "m2dap",
+            request: "launch",
+            program: `\${workspaceFolder}/.mx/bin/${projectName}`,
+            args: [],
+            cwd: "${workspaceFolder}",
+            stopOnEntry: false,
+            preLaunchTask: "mx: build debug",
+          },
           {
             name: "Debug (lldb)",
             type: "lldb",

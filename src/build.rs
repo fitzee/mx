@@ -140,6 +140,7 @@ pub struct BuildConfig {
     pub verbose: bool,
     pub features: Vec<String>,
     pub debug: bool,
+    pub use_llvm: bool,
 }
 
 // ── build_project ───────────────────────────────────────────────────
@@ -259,6 +260,8 @@ pub fn build_project(
     opts.opt_level = config.opt_level;
     opts.verbose = config.verbose;
     opts.debug = config.debug;
+    opts.emit_llvm = config.use_llvm;
+    opts.use_llvm = config.use_llvm;
 
     // Auto-inject platform feature (MACOS or LINUX)
     let mut features = config.features.clone();

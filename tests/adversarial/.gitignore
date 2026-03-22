@@ -5,3 +5,10 @@ __pycache__/
 assets/certs/*.crt
 assets/certs/*.key
 assets/certs/*.srl
+
+# Generated C/LLVM/object files from compiler
+**/*.c
+**/*.ll
+**/*.o
+# Keep hand-written C source files
+!abi_layout/ffi_c_binding/CAdd.c

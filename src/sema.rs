@@ -27,6 +27,8 @@ pub struct SemanticAnalyzer {
     ref_index: ReferenceIndex,
     /// Whether we are currently inside a procedure body.
     in_procedure: bool,
+    /// m2plus mode: enables ADDRESS^[i] byte-level indexing.
+    pub m2plus: bool,
 }
 
 impl SemanticAnalyzer {
@@ -46,6 +48,7 @@ impl SemanticAnalyzer {
             last_col: 0,
             ref_index: ReferenceIndex::new(),
             in_procedure: false,
+            m2plus: false,
         };
         sa.register_builtins();
         sa
@@ -66,6 +69,147 @@ impl SemanticAnalyzer {
     /// are available when analyzing imports in the main program module.
     pub fn register_def_module(&mut self, def: &DefinitionModule) {
         self.analyze_definition_module(def);
+    }
+
+    /// Register an implementation module's type declarations in the symtab.
+    /// Creates a scope named after the module containing all TYPE declarations,
+    /// so that resolve_type_node_to_id can find module-specific types.
+    pub fn register_impl_types(&mut self, imp: &crate::ast::ImplementationModule) {
+        let scope_id = self.enter_scope(&imp.name);
+        // Import the .def scope's types first
+        if let Some(def_sym) = self.symtab.lookup_any(&imp.name).cloned() {
+            if let SymbolKind::Module { scope_id: def_scope } = def_sym.kind {
+                let def_types: Vec<Symbol> = self.symtab
+                    .scope_symbols(def_scope)
+                    .filter(|s| s.exported && matches!(s.kind,
+                        SymbolKind::Type | SymbolKind::Constant(_)))
+                    .cloned()
+                    .collect();
+                for sym in def_types {
+                    let _ = self.symtab.define(scope_id, sym);
+                }
+            }
+        }
+        // Process imports
+        self.process_imports(&imp.imports);
+        // Register type declarations (two-pass for forward refs)
+        let saved_errors = std::mem::take(&mut self.errors);
+        for decl in &imp.block.decls {
+            if let crate::ast::Declaration::Type(t) = decl {
+                let placeholder = self.types.register(Type::Opaque {
+                    name: t.name.clone(), module: String::new(),
+                });
+                let sym = Symbol {
+                    name: t.name.clone(),
+                    kind: SymbolKind::Type,
+                    typ: placeholder,
+                    exported: false,
+                    module: None,
+                    loc: crate::errors::SourceLoc::default(),
+                    doc: None,
+                };
+                let _ = self.symtab.define(self.current_scope, sym);
+            }
+        }
+        for decl in &imp.block.decls {
+            if let crate::ast::Declaration::Type(t) = decl {
+                if let Some(tn) = &t.typ {
+                    let resolved = self.resolve_type_node(tn);
+                    if let Some(sym) = self.symtab.lookup(&t.name) {
+                        let old = sym.typ;
+                        if old != resolved {
+                            *self.types.get_mut(old) = Type::Alias {
+                                name: t.name.clone(),
+                                target: resolved,
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        self.errors = saved_errors;
+        self.leave_scope();
+    }
+
+    /// Check if a definition module exists for the given name.
+    pub fn has_def_module(&self, name: &str) -> bool {
+        self.symtab.lookup_any(name)
+            .map(|s| matches!(s.kind, SymbolKind::Module { .. }))
+            .unwrap_or(false)
+    }
+
+    /// Finalize parameter types from an implementation module.
+    /// Re-resolves procedure parameter types defined in the .mod (which may
+    /// reference types not available during .def processing) and propagates
+    /// them back to the .def scope's procedure symbols.
+    pub fn finalize_impl_param_types(&mut self, mod_name: &str, imp: &crate::ast::ImplementationModule) {
+        // Find the .def scope for this module
+        let def_scope = match self.symtab.lookup_any(mod_name) {
+            Some(sym) => match &sym.kind {
+                SymbolKind::Module { scope_id } => *scope_id,
+                _ => return,
+            },
+            None => return,
+        };
+
+        // Enter an isolated temp scope parented to the global scope (0),
+        // not the current scope. This prevents inheriting unrelated types
+        // from other module scopes (e.g. ConnRec from Http2ServerConn
+        // shadowing ConnRec from HTTPClient).
+        let saved_scope = self.current_scope;
+        let temp_scope = self.symtab.push_scope_with_parent(
+            &format!("__finalize_{}", mod_name), 0);
+        self.current_scope = temp_scope;
+        self.scope_stack.push(temp_scope);
+
+        // Import types from the .def scope
+        let def_types: Vec<Symbol> = self.symtab
+            .scope_symbols(def_scope)
+            .filter(|s| s.exported && matches!(s.kind,
+                SymbolKind::Type | SymbolKind::Constant(_)))
+            .cloned()
+            .collect();
+        for sym in def_types {
+            let _ = self.symtab.define(temp_scope, sym);
+        }
+
+        // Process the .mod's imports to bring types into scope.
+        self.process_imports(&imp.imports);
+
+        let saved_errors = std::mem::take(&mut self.errors);
+        // Register impl-only type declarations. Use resolve_type_node to
+        // create TypeIds — since finalization runs AFTER sema.analyze,
+        // named types will resolve to canonical TypeIds via the temp scope's
+        // imports and parent chain.
+        for decl in &imp.block.decls {
+            if let crate::ast::Declaration::Type(td) = decl {
+                if let Some(tn) = &td.typ {
+                    let type_id = self.resolve_type_node(tn);
+                    let sym = self.make_type_symbol(&td.name, type_id, false, None, td.doc.clone());
+                    self.define_sym(sym, &td.loc);
+                }
+            }
+        }
+
+        // Re-resolve ONLY .def-exported procedure parameter types.
+        // .mod-only procedures keep their original sema-resolved params.
+        let def_proc_names: Vec<String> = self.symtab
+            .scope_symbols(def_scope)
+            .filter(|s| matches!(s.kind, SymbolKind::Procedure { .. }))
+            .map(|s| s.name.clone())
+            .collect();
+        for decl in &imp.block.decls {
+            if let crate::ast::Declaration::Procedure(p) = decl {
+                if def_proc_names.contains(&p.heading.name) {
+                    let (params, ret) = self.analyze_proc_heading(&p.heading);
+                    self.symtab.update_procedure(def_scope, &p.heading.name, params, ret);
+                }
+            }
+        }
+        self.errors = saved_errors;
+
+        self.leave_scope();
+        self.current_scope = saved_scope;
     }
 
     /// Reset position-dependent artifacts (scope_map, ref_index, etc.)
@@ -403,6 +547,32 @@ impl SemanticAnalyzer {
 
         self.process_imports(&m.imports);
         self.analyze_block(&m.block);
+
+        // Finalize parameter types: propagate correctly-resolved procedure
+        // symbols from the .mod scope back to the .def scope.
+        // During .def processing, parameter types like ConnPtr may not have
+        // been in scope, so ParamInfo.typ got a fallback (TY_VOID etc.).
+        // Now that the .mod has been analyzed, re-resolve and update.
+        if let Some(def_sym) = self.symtab.lookup(&m.name).cloned() {
+            if let SymbolKind::Module { scope_id: def_scope } = def_sym.kind {
+                // Collect .mod procedure symbols with their resolved params
+                let mod_procs: Vec<(String, Vec<ParamInfo>, Option<TypeId>)> = self.symtab
+                    .scope_symbols(scope_id)
+                    .filter_map(|s| {
+                        if let SymbolKind::Procedure { params, return_type, .. } = &s.kind {
+                            Some((s.name.clone(), params.clone(), *return_type))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                // Update .def scope procedure symbols
+                for (proc_name, mod_params, mod_ret) in mod_procs {
+                    self.symtab.update_procedure(def_scope, &proc_name, mod_params, mod_ret);
+                }
+            }
+        }
+
         self.leave_scope_at();
 
         // Only register the module symbol if not already present from the .def
@@ -1268,6 +1438,7 @@ impl SemanticAnalyzer {
                 if t != TY_VOID {
                     match self.types.get(t) {
                         Type::Pointer { base } => *base,
+                        Type::Address if self.m2plus => TY_CHAR,
                         _ => {
                             self.error(&expr.loc, "dereference of non-pointer type");
                             TY_VOID
@@ -1465,6 +1636,13 @@ impl SemanticAnalyzer {
                             }
                             Type::Ref { target, .. } => {
                                 current_type = *target;
+                            }
+                            Type::Address if self.m2plus => {
+                                // ADDRESS^[i] byte-level indexing: treat deref
+                                // as yielding an open array of CHAR so the
+                                // subsequent Index selector works naturally.
+                                current_type = self.types.register(
+                                    Type::OpenArray { elem_type: TY_CHAR });
                             }
                             _ => {
                                 self.error(loc, "dereference of non-pointer type");

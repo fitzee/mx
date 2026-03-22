@@ -182,32 +182,16 @@ BEGIN
 END ParseFrameHeader;
 
 PROCEDURE WritePreface(VAR b: Buf);
-(* "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" — 24 bytes *)
+VAR preface: ARRAY [0..23] OF CHAR;
+    dummy: BOOLEAN;
 BEGIN
-  ByteBuf.AppendByte(b, ORD('P'));
-  ByteBuf.AppendByte(b, ORD('R'));
-  ByteBuf.AppendByte(b, ORD('I'));
-  ByteBuf.AppendByte(b, ORD(' '));
-  ByteBuf.AppendByte(b, ORD('*'));
-  ByteBuf.AppendByte(b, ORD(' '));
-  ByteBuf.AppendByte(b, ORD('H'));
-  ByteBuf.AppendByte(b, ORD('T'));
-  ByteBuf.AppendByte(b, ORD('T'));
-  ByteBuf.AppendByte(b, ORD('P'));
-  ByteBuf.AppendByte(b, ORD('/'));
-  ByteBuf.AppendByte(b, ORD('2'));
-  ByteBuf.AppendByte(b, ORD('.'));
-  ByteBuf.AppendByte(b, ORD('0'));
-  ByteBuf.AppendByte(b, 13);
-  ByteBuf.AppendByte(b, 10);
-  ByteBuf.AppendByte(b, 13);
-  ByteBuf.AppendByte(b, 10);
-  ByteBuf.AppendByte(b, ORD('S'));
-  ByteBuf.AppendByte(b, ORD('M'));
-  ByteBuf.AppendByte(b, 13);
-  ByteBuf.AppendByte(b, 10);
-  ByteBuf.AppendByte(b, 13);
-  ByteBuf.AppendByte(b, 10)
+  preface := "PRI * HTTP/2.0";
+  preface[14] := CHR(13); preface[15] := CHR(10);
+  preface[16] := CHR(13); preface[17] := CHR(10);
+  preface[18] := 'S'; preface[19] := 'M';
+  preface[20] := CHR(13); preface[21] := CHR(10);
+  preface[22] := CHR(13); preface[23] := CHR(10);
+  dummy := ByteBuf.AppendChars(b, preface, 24)
 END WritePreface;
 
 (* ── TLS-aware I/O helpers ───────────────────────────────── *)

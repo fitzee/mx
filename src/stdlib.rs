@@ -1256,6 +1256,609 @@ static int m2_BinaryIO_IsEOF(uint32_t fh) {
     .to_string()
 }
 
+/// Generate a standalone C runtime file for linking with LLVM IR output.
+/// All functions have external linkage (no `static`) so they can be called
+/// from LLVM-generated code.
+pub fn generate_llvm_runtime_c() -> String {
+    r#"/* Modula-2 LLVM Runtime Support — standalone linkable version */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdint.h>
+#include <ctype.h>
+#include <limits.h>
+#include <float.h>
+
+/* Command-line argument storage */
+int m2_argc = 0;
+char **m2_argv = NULL;
+
+/* PIM4 floored DIV and MOD */
+int32_t m2_div(int32_t a, int32_t b) {
+    int32_t q = a / b;
+    if ((a % b != 0) && ((a ^ b) < 0)) q--;
+    return q;
+}
+int32_t m2_mod(int32_t a, int32_t b) {
+    int32_t r = a % b;
+    if (r < 0) r += (b > 0 ? b : -b);
+    return r;
+}
+int64_t m2_div64(int64_t a, int64_t b) {
+    int64_t q = a / b;
+    if ((a % b != 0) && ((a ^ b) < 0)) q--;
+    return q;
+}
+int64_t m2_mod64(int64_t a, int64_t b) {
+    int64_t r = a % b;
+    if (r < 0) r += (b > 0 ? b : -b);
+    return r;
+}
+
+/* SHIFT / ROTATE */
+uint32_t m2_shift(uint32_t val, int32_t n) {
+    if (n == 0) return val;
+    if (n > 0) return (n >= 32) ? 0u : (val << n);
+    n = -n;
+    return (n >= 32) ? 0u : (val >> n);
+}
+uint32_t m2_rotate(uint32_t val, int32_t n) {
+    n = n % 32;
+    if (n < 0) n += 32;
+    if (n == 0) return val;
+    return (val << n) | (val >> (32 - n));
+}
+
+/* InOut module */
+int m2_InOut_Done = 1;
+void m2_WriteString(const char *s) { printf("%s", s); }
+void m2_WriteLn(void) { printf("\n"); }
+void m2_WriteInt(int32_t n, int32_t w) { printf("%*d", (int)w, (int)n); }
+void m2_WriteCard(uint32_t n, int32_t w) { printf("%*u", (int)w, (unsigned)n); }
+void m2_WriteHex(uint32_t n, int32_t w) { printf("%*X", (int)w, (unsigned)n); }
+void m2_WriteOct(uint32_t n, int32_t w) { printf("%*o", (int)w, (unsigned)n); }
+void m2_Write(char ch) { putchar(ch); }
+void m2_Read(char *ch) { int c = getchar(); *ch = (c == EOF) ? '\0' : (char)c; m2_InOut_Done = (c != EOF); }
+void m2_ReadString(char *s) { m2_InOut_Done = (scanf("%s", s) == 1); }
+void m2_ReadInt(int32_t *n) { m2_InOut_Done = (scanf("%d", n) == 1); }
+void m2_ReadCard(uint32_t *n) { m2_InOut_Done = (scanf("%u", n) == 1); }
+
+static FILE *m2_InFile = NULL;
+static FILE *m2_OutFile = NULL;
+void m2_OpenInput(const char *ext) {
+    char name[256];
+    printf("Input file: "); scanf("%255s", name);
+    if (ext && ext[0]) { strcat(name, "."); strcat(name, ext); }
+    m2_InFile = fopen(name, "r");
+    m2_InOut_Done = (m2_InFile != NULL);
+}
+void m2_OpenOutput(const char *ext) {
+    char name[256];
+    printf("Output file: "); scanf("%255s", name);
+    if (ext && ext[0]) { strcat(name, "."); strcat(name, ext); }
+    m2_OutFile = fopen(name, "w");
+    m2_InOut_Done = (m2_OutFile != NULL);
+}
+void m2_CloseInput(void) { if (m2_InFile) { fclose(m2_InFile); m2_InFile = NULL; } }
+void m2_CloseOutput(void) { if (m2_OutFile) { fclose(m2_OutFile); m2_OutFile = NULL; } }
+
+/* RealInOut module */
+int m2_RealInOut_Done = 1;
+void m2_ReadReal(float *r) { m2_RealInOut_Done = (scanf("%f", r) == 1); }
+void m2_WriteReal(float r, int32_t w) { printf("%*g", (int)w, (double)r); }
+void m2_WriteFixPt(float r, int32_t w, int32_t d) { printf("%*.*f", (int)w, (int)d, (double)r); }
+void m2_WriteRealOct(float r) { printf("%.8A", (double)r); }
+void m2_WriteLongReal(double r, int32_t w) { printf("%*g", (int)w, r); }
+void m2_ReadLongReal(double *r) { m2_RealInOut_Done = (scanf("%lf", r) == 1); }
+
+/* MathLib — Random/Randomize */
+float m2_Random(void) { return (float)rand() / ((float)RAND_MAX + 1.0f); }
+void m2_Randomize(uint32_t seed) { srand(seed); }
+
+/* Storage module */
+void m2_ALLOCATE(void **p, uint32_t size) { *p = malloc(size); }
+void m2_DEALLOCATE(void **p, uint32_t size) { free(*p); *p = NULL; (void)size; }
+
+/* Strings module */
+void m2_Strings_Assign(const char *src, char *dst, uint32_t dst_high) {
+    size_t cap = (size_t)dst_high + 1;
+    size_t slen = strlen(src);
+    if (slen >= cap) slen = cap - 1;
+    memcpy(dst, src, slen);
+    dst[slen] = '\0';
+}
+void m2_Strings_Insert(const char *sub, char *dst, uint32_t dst_high, uint32_t pos) {
+    size_t cap = (size_t)dst_high + 1;
+    size_t slen = strlen(sub), dlen = strlen(dst);
+    if (pos > dlen) pos = (uint32_t)dlen;
+    size_t new_len = dlen + slen;
+    if (new_len >= cap) new_len = cap - 1;
+    if (pos + slen <= new_len) {
+        memmove(dst + pos + slen, dst + pos, dlen - pos);
+    }
+    size_t copy_len = slen;
+    if (pos + copy_len > new_len) copy_len = new_len - pos;
+    memcpy(dst + pos, sub, copy_len);
+    dst[new_len] = '\0';
+}
+void m2_Strings_Delete(char *s, uint32_t s_high, uint32_t pos, uint32_t len) {
+    (void)s_high;
+    size_t slen = strlen(s);
+    if (pos >= slen) return;
+    if (pos + len >= slen) { s[pos] = '\0'; return; }
+    memmove(s + pos, s + pos + len, slen - pos - len + 1);
+}
+uint32_t m2_Strings_Pos(const char *sub, const char *s) {
+    const char *p = strstr(s, sub);
+    if (!p) return (uint32_t)-1;
+    return (uint32_t)(p - s);
+}
+void m2_Strings_Copy(const char *src, uint32_t pos, uint32_t len, char *dst, uint32_t dst_high) {
+    size_t cap = (size_t)dst_high + 1;
+    size_t slen = strlen(src);
+    if (pos >= slen) { dst[0] = '\0'; return; }
+    size_t avail = slen - pos;
+    if (len > avail) len = (uint32_t)avail;
+    if (len >= cap) len = (uint32_t)(cap - 1);
+    memcpy(dst, src + pos, len);
+    dst[len] = '\0';
+}
+void m2_Strings_Concat(const char *a, const char *b, char *dst, uint32_t dst_high) {
+    size_t cap = (size_t)dst_high + 1;
+    size_t alen = strlen(a), blen = strlen(b);
+    size_t total = alen + blen;
+    if (total >= cap) {
+        if (alen >= cap) alen = cap - 1;
+        blen = cap - 1 - alen;
+        total = alen + blen;
+    }
+    memcpy(dst, a, alen);
+    memcpy(dst + alen, b, blen);
+    dst[total] = '\0';
+}
+uint32_t m2_Strings_Length(const char *s) { return (uint32_t)strlen(s); }
+int32_t m2_Strings_CompareStr(const char *a, const char *b) { return (int32_t)strcmp(a, b); }
+
+/* Args module */
+uint32_t m2_Args_ArgCount(void) { return (uint32_t)m2_argc; }
+void m2_Args_GetArg(uint32_t n, char *buf, uint32_t buf_high) {
+    size_t cap = (size_t)buf_high + 1;
+    if ((int)n < m2_argc) {
+        size_t len = strlen(m2_argv[n]);
+        if (len >= cap) len = cap - 1;
+        memcpy(buf, m2_argv[n], len);
+        buf[len] = '\0';
+    } else {
+        buf[0] = '\0';
+    }
+}
+
+/* Terminal module (aliases to InOut) */
+void m2_Terminal_Write(char ch) { putchar(ch); }
+void m2_Terminal_WriteLn(void) { printf("\n"); }
+void m2_Terminal_WriteString(const char *s) { printf("%s", s); }
+void m2_Terminal_Read(char *ch) { int c = getchar(); *ch = (c == EOF) ? '\0' : (char)c; }
+
+/* ── Exception handling (SjLj — temporary parity with C backend) ──
+   Target design: LLVM-native EH with invoke/landingpad/personality.
+   This SjLj implementation reuses the C backend's runtime for parity. */
+#include <setjmp.h>
+
+typedef struct m2_ExcFrame {
+    jmp_buf buf;
+    struct m2_ExcFrame *prev;
+    int exception_id;
+    const char *exception_name;
+    void *exception_arg;
+} m2_ExcFrame;
+
+static __thread m2_ExcFrame *m2_exc_stack = NULL;
+
+void m2_exc_push(m2_ExcFrame *frame) {
+    frame->prev = m2_exc_stack;
+    frame->exception_id = 0;
+    frame->exception_name = NULL;
+    frame->exception_arg = NULL;
+    m2_exc_stack = frame;
+}
+
+void m2_exc_pop(m2_ExcFrame *frame) {
+    m2_exc_stack = frame->prev;
+}
+
+void m2_raise(int id, const char *name, void *arg) {
+    if (m2_exc_stack) {
+        m2_exc_stack->exception_id = id;
+        m2_exc_stack->exception_name = name;
+        m2_exc_stack->exception_arg = arg;
+        longjmp(m2_exc_stack->buf, id ? id : 1);
+    }
+    fprintf(stderr, "Unhandled exception: %s (id=%d)\n", name ? name : "unknown", id);
+    exit(1);
+}
+
+/* Runtime type info (for TYPECASE) */
+typedef struct M2_TypeDesc {
+    uint32_t   type_id;
+    const char *type_name;
+    struct M2_TypeDesc *parent;
+    uint32_t   depth;
+} M2_TypeDesc;
+
+int32_t m2_exc_get_id(m2_ExcFrame *frame) { return frame->exception_id; }
+const char *m2_exc_get_name(m2_ExcFrame *frame) { return frame->exception_name; }
+void *m2_exc_get_arg(m2_ExcFrame *frame) { return frame->exception_arg; }
+void m2_exc_reraise(m2_ExcFrame *frame) {
+    m2_raise(frame->exception_id, frame->exception_name, frame->exception_arg);
+}
+
+/* ── LLVM-native exception handling ────────────────────────────────
+   Uses the Itanium C++ ABI unwinder (_Unwind_RaiseException) with a
+   custom personality function (m2_eh_personality).
+
+   Exception object layout:
+     M2UnwindException { _Unwind_Exception header; int32_t exc_id; const char *name; }
+
+   The personality function reads the LSDA (emitted by LLVM from
+   landingpad clauses) and matches exc_id against catch type info globals.
+
+   This coexists with the SjLj runtime above — SjLj handles ISO
+   module-body EXCEPT; this handles M2+ TRY/EXCEPT/FINALLY.           */
+
+#include <unwind.h>
+
+/* Vendor exception class: "M2\0\0\0\0\0\0" as uint64_t */
+#define M2_EXCEPTION_CLASS 0x4D32000000000000ULL
+
+typedef struct {
+    _Unwind_Exception header;
+    int32_t exc_id;
+    const char *exc_name;
+} M2UnwindException;
+
+static void m2_unwind_cleanup(_Unwind_Reason_Code reason, _Unwind_Exception *exc) {
+    free(exc);
+}
+
+/* Throw a Modula-2 exception using the LLVM/Itanium unwinder. */
+void m2_eh_throw(int32_t exc_id, const char *name) {
+    M2UnwindException *exc = (M2UnwindException *)malloc(sizeof(M2UnwindException));
+    if (!exc) { fprintf(stderr, "m2_eh_throw: out of memory\n"); exit(1); }
+    memset(&exc->header, 0, sizeof(_Unwind_Exception));
+    exc->header.exception_class = M2_EXCEPTION_CLASS;
+    exc->header.exception_cleanup = m2_unwind_cleanup;
+    exc->exc_id = exc_id;
+    exc->exc_name = name;
+    _Unwind_Reason_Code rc = _Unwind_RaiseException(&exc->header);
+    /* If we get here, no handler was found */
+    fprintf(stderr, "Unhandled M2 exception: %s (id=%d, rc=%d)\n",
+            name ? name : "unknown", exc_id, (int)rc);
+    exit(1);
+}
+
+/* Extract exception ID from a landed exception pointer.
+   The landingpad returns { ptr, i32 } where ptr is the _Unwind_Exception*. */
+int32_t m2_eh_get_id(void *unwind_exc_ptr) {
+    if (!unwind_exc_ptr) return 0;
+    _Unwind_Exception *ue = (_Unwind_Exception *)unwind_exc_ptr;
+    M2UnwindException *m2e = (M2UnwindException *)ue;
+    return m2e->exc_id;
+}
+
+/* Begin/end catch — called to acknowledge handling. */
+void *m2_eh_begin_catch(void *unwind_exc_ptr) {
+    return unwind_exc_ptr; /* no-op for now — could track active exception */
+}
+void m2_eh_end_catch(void) {
+    /* no-op for now */
+}
+
+/* Type info globals: each M2 exception ID is represented by a global i32.
+   The personality function compares the landed exception's exc_id against
+   these type info values. LLVM's @llvm.eh.typeid.for maps them to selectors.
+
+   For catch-all (EXCEPT without a type), use null type info in landingpad. */
+
+/* ── Modula-2 personality function ──────────────────────────────────
+   Reads the LSDA (generated by LLVM from landingpad clauses) using
+   the Itanium/DWARF encoding. Matches M2 exception IDs against
+   catch type info globals.
+
+   LSDA layout (Itanium C++ ABI, used by LLVM for all languages):
+     header: lpStartEncoding, lpStart (optional), ttEncoding, ttBase (optional),
+             callSiteEncoding, callSiteTableSize
+     call site table: [start, len, landingPad, actionIdx]*
+     action table: [typeFilter, nextAction]*
+     type table: [typeInfoPtr]* (reversed, indexed from end)                    */
+
+/* Read a ULEB128 value from *p, advance *p. */
+static uintptr_t m2_read_uleb128(const uint8_t **p) {
+    uintptr_t result = 0;
+    unsigned shift = 0;
+    uint8_t byte;
+    do {
+        byte = **p; (*p)++;
+        result |= (uintptr_t)(byte & 0x7F) << shift;
+        shift += 7;
+    } while (byte & 0x80);
+    return result;
+}
+
+/* Read a SLEB128 value from *p, advance *p. */
+static intptr_t m2_read_sleb128(const uint8_t **p) {
+    intptr_t result = 0;
+    unsigned shift = 0;
+    uint8_t byte;
+    do {
+        byte = **p; (*p)++;
+        result |= (intptr_t)(byte & 0x7F) << shift;
+        shift += 7;
+    } while (byte & 0x80);
+    if ((byte & 0x40) && (shift < sizeof(intptr_t) * 8))
+        result |= -(1L << shift);
+    return result;
+}
+
+/* Read an encoded pointer from *p using DW_EH_PE encoding. */
+static uintptr_t m2_read_encoded(const uint8_t **p, uint8_t encoding, uintptr_t base) {
+    if (encoding == 0xFF) return 0; /* DW_EH_PE_omit */
+    uintptr_t result;
+    const uint8_t *start = *p;
+    switch (encoding & 0x0F) {
+        case 0x00: /* DW_EH_PE_absptr */
+            result = *(uintptr_t *)*p;
+            *p += sizeof(uintptr_t);
+            break;
+        case 0x01: /* DW_EH_PE_uleb128 */
+            result = m2_read_uleb128(p);
+            break;
+        case 0x02: /* DW_EH_PE_udata2 */
+            result = *(uint16_t *)*p;
+            *p += 2;
+            break;
+        case 0x03: /* DW_EH_PE_udata4 */
+            result = *(uint32_t *)*p;
+            *p += 4;
+            break;
+        case 0x04: /* DW_EH_PE_udata8 */
+            result = *(uint64_t *)*p;
+            *p += 8;
+            break;
+        case 0x09: /* DW_EH_PE_sleb128 */
+            result = (uintptr_t)m2_read_sleb128(p);
+            break;
+        case 0x0A: /* DW_EH_PE_sdata2 */
+            result = (uintptr_t)*(int16_t *)*p;
+            *p += 2;
+            break;
+        case 0x0B: /* DW_EH_PE_sdata4 */
+            result = (uintptr_t)*(int32_t *)*p;
+            *p += 4;
+            break;
+        default:
+            result = 0;
+            break;
+    }
+    switch (encoding & 0x70) {
+        case 0x00: break; /* DW_EH_PE_absptr */
+        case 0x10: result += (uintptr_t)start; break; /* DW_EH_PE_pcrel */
+        case 0x20: result += base; break; /* DW_EH_PE_textrel */
+        case 0x30: result += base; break; /* DW_EH_PE_datarel */
+        case 0x40: result += (uintptr_t)start; break; /* DW_EH_PE_funcrel */
+    }
+    if (encoding & 0x80) { /* DW_EH_PE_indirect */
+        result = *(uintptr_t *)result;
+    }
+    return result;
+}
+
+_Unwind_Reason_Code m2_eh_personality(
+    int version, _Unwind_Action actions,
+    uint64_t exceptionClass,
+    _Unwind_Exception *exceptionObject,
+    struct _Unwind_Context *context)
+{
+    if (version != 1) return _URC_FATAL_PHASE1_ERROR;
+
+    const uint8_t *lsda = (const uint8_t *)_Unwind_GetLanguageSpecificData(context);
+    if (!lsda) return _URC_CONTINUE_UNWIND;
+
+    uintptr_t ip = _Unwind_GetIP(context) - 1;
+    uintptr_t funcStart = _Unwind_GetRegionStart(context);
+    uintptr_t ipOffset = ip - funcStart;
+
+    /* Parse LSDA header */
+    const uint8_t *p = lsda;
+    uint8_t lpStartEncoding = *p++;
+    uintptr_t lpStart = funcStart;
+    if (lpStartEncoding != 0xFF)
+        lpStart = m2_read_encoded(&p, lpStartEncoding, funcStart);
+
+    uint8_t ttEncoding = *p++;
+    const uint8_t *ttBase = NULL;
+    if (ttEncoding != 0xFF) {
+        uintptr_t ttBaseOffset = m2_read_uleb128(&p);
+        ttBase = p + ttBaseOffset;
+    }
+
+    uint8_t csEncoding = *p++;
+    uintptr_t csTableSize = m2_read_uleb128(&p);
+    const uint8_t *csTableEnd = p + csTableSize;
+    const uint8_t *actionTable = csTableEnd;
+
+    /* Scan call site table for matching entry */
+    int found = 0;
+    uintptr_t landingPad = 0;
+    uintptr_t actionIdx = 0;
+
+    while (p < csTableEnd) {
+        uintptr_t csStart = m2_read_encoded(&p, csEncoding, 0);
+        uintptr_t csLen   = m2_read_encoded(&p, csEncoding, 0);
+        uintptr_t csLp    = m2_read_encoded(&p, csEncoding, 0);
+        uintptr_t csAct   = m2_read_uleb128(&p);
+
+        if (ipOffset >= csStart && ipOffset < csStart + csLen) {
+            if (csLp) {
+                landingPad = lpStart + csLp;
+                actionIdx = csAct;
+                found = 1;
+            }
+            break;
+        }
+    }
+
+    if (!found) {
+#ifdef M2_EH_DEBUG
+        fprintf(stderr, "m2_eh_personality: no call site match for ip=%lx offset=%lx\n",
+                (unsigned long)ip, (unsigned long)ipOffset);
+#endif
+        return _URC_CONTINUE_UNWIND;
+    }
+#ifdef M2_EH_DEBUG
+    fprintf(stderr, "m2_eh_personality: found lp=%lx action=%lu actions=%d\n",
+            (unsigned long)landingPad, (unsigned long)actionIdx, (int)actions);
+#endif
+
+    /* Determine selector value from action table */
+    int32_t selector = 0;
+    int matched = 0;
+
+    if (actionIdx) {
+        const uint8_t *ap = actionTable + actionIdx - 1;
+        while (1) {
+            intptr_t typeFilter = m2_read_sleb128(&ap);
+            intptr_t nextAction = m2_read_sleb128(&ap);
+
+#ifdef M2_EH_DEBUG
+            fprintf(stderr, "  action: typeFilter=%ld ttBase=%p ttEncoding=%d\n",
+                    (long)typeFilter, (void*)ttBase, (int)ttEncoding);
+#endif
+            if (typeFilter > 0 && ttBase && ttEncoding != 0xFF) {
+                /* Positive filter: catch clause */
+                /* Type info is stored in reverse order before ttBase */
+                uintptr_t typeInfoSize;
+                switch (ttEncoding & 0x0F) {
+                    case 0x0B: typeInfoSize = 4; break;  /* sdata4 */
+                    case 0x03: typeInfoSize = 4; break;  /* udata4 */
+                    case 0x00: typeInfoSize = sizeof(uintptr_t); break;
+                    default: typeInfoSize = 4; break;
+                }
+                const uint8_t *typeInfoPtr = ttBase - typeFilter * typeInfoSize;
+                /* Read raw value first — if 0, it's a catch-all (null type info) */
+                int32_t rawVal = *(int32_t *)typeInfoPtr;
+                uintptr_t typeInfo;
+                if (rawVal == 0) {
+                    typeInfo = 0; /* catch-all */
+                } else {
+                    const uint8_t *readPtr = typeInfoPtr;
+                    typeInfo = m2_read_encoded(&readPtr, ttEncoding, (uintptr_t)typeInfoPtr);
+                }
+#ifdef M2_EH_DEBUG
+                fprintf(stderr, "  typeInfo: ptr=%p raw=%d val=%lx\n",
+                        (void*)typeInfoPtr, rawVal, (unsigned long)typeInfo);
+#endif
+
+                if (typeInfo == 0) {
+                    /* catch-all (null type info) */
+                    selector = (int32_t)typeFilter;
+                    matched = 1;
+                    break;
+                }
+                /* typeInfo points to our M2_EXC_xxx global (an i32).
+                   Compare exception ID against the global's value. */
+                if (exceptionClass == M2_EXCEPTION_CLASS) {
+                    M2UnwindException *m2e = (M2UnwindException *)exceptionObject;
+                    int32_t *exc_type = (int32_t *)typeInfo;
+                    if (m2e->exc_id == *exc_type) {
+                        selector = (int32_t)typeFilter;
+                        matched = 1;
+                        break;
+                    }
+                }
+            } else if (typeFilter == 0) {
+                /* Cleanup (FINALLY) — always matches in phase 2 */
+                if (actions & _UA_CLEANUP_PHASE) {
+                    selector = 0;
+                    matched = 1;
+                    break;
+                }
+            }
+
+            if (nextAction == 0) break;
+            ap = ap + nextAction; /* relative offset, but ap already advanced */
+        }
+    } else {
+        /* No action — cleanup landing pad */
+        if (actions & _UA_CLEANUP_PHASE) {
+            selector = 0;
+            matched = 1;
+        }
+    }
+
+    if (!matched) {
+#ifdef M2_EH_DEBUG
+        fprintf(stderr, "m2_eh_personality: no action match\n");
+#endif
+        return _URC_CONTINUE_UNWIND;
+    }
+
+#ifdef M2_EH_DEBUG
+    fprintf(stderr, "m2_eh_personality: matched! selector=%d phase=%s\n",
+            selector, (actions & _UA_SEARCH_PHASE) ? "search" : "cleanup");
+#endif
+
+    if (actions & _UA_SEARCH_PHASE) {
+        return _URC_HANDLER_FOUND;
+    }
+
+    /* Install context for landing pad */
+    _Unwind_SetGR(context, __builtin_eh_return_data_regno(0),
+                  (uintptr_t)exceptionObject);
+    _Unwind_SetGR(context, __builtin_eh_return_data_regno(1),
+                  (uintptr_t)selector);
+    _Unwind_SetIP(context, landingPad);
+    return _URC_INSTALL_CONTEXT;
+}
+
+/* REF/OBJECT allocation with RTTI header */
+typedef struct M2_RefHeader {
+    M2_TypeDesc *td;
+} M2_RefHeader;
+
+void *M2_ref_alloc(size_t payload_size, M2_TypeDesc *td) {
+    M2_RefHeader *hdr = (M2_RefHeader *)malloc(sizeof(M2_RefHeader) + payload_size);
+    if (!hdr) { fprintf(stderr, "M2_ref_alloc: out of memory\n"); exit(1); }
+    memset(hdr, 0, sizeof(M2_RefHeader) + payload_size);
+    hdr->td = td;
+    return (void *)(hdr + 1);
+}
+
+M2_TypeDesc *M2_TYPEOF(void *ref) {
+    if (!ref) return NULL;
+    M2_RefHeader *hdr = ((M2_RefHeader *)ref) - 1;
+    return hdr->td;
+}
+
+int32_t M2_ISA(void *payload, M2_TypeDesc *target) {
+    M2_TypeDesc *td = M2_TYPEOF(payload);
+    if (!td || !target) return 0;
+    while (td) {
+        if (td == target) return 1;
+        td = td->parent;
+    }
+    return 0;
+}
+
+void M2_ref_free(void *payload) {
+    if (!payload) return;
+    M2_RefHeader *hdr = ((M2_RefHeader *)payload) - 1;
+    free(hdr);
+}
+"#
+    .to_string()
+}
+
 /// Map a stdlib procedure call to its C equivalent
 pub fn map_stdlib_call(module: &str, proc_name: &str) -> Option<String> {
     let m = module.to_ascii_uppercase();

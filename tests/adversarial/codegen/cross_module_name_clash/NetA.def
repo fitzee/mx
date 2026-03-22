@@ -1,0 +1,21 @@
+DEFINITION MODULE NetA;
+
+TYPE
+  Status = (Ok, Error, Timeout);
+
+  Header = RECORD
+    name: ARRAY [0..31] OF CHAR;
+    value: INTEGER;
+  END;
+
+  Response = RECORD
+    code: INTEGER;
+    headers: ARRAY [0..3] OF Header;
+    headerCount: INTEGER;
+  END;
+
+  ResponsePtr = POINTER TO Response;
+
+PROCEDURE MakeResponse(code: INTEGER): ResponsePtr;
+
+END NetA.

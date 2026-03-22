@@ -71,11 +71,15 @@
 - [m2zlib](libs/m2zlib/Zlib.md) — zlib compression/decompression: raw, zlib, and gzip formats
 - [m2metrics](libs/m2metrics/Metrics.md) — system metrics: load average, memory, CPU time, process RSS
 
+## Tools
+
+- [m2dap](toolchain.md#m2dap-debug-adapter) — Debug Adapter Protocol server for M2-idiomatic IDE debugging
+- [mxpkg](mxpkg.md) — package manager: commands, manifest format, lockfile, dependency resolution
+
 ## Reference
 
 - [Language reference](lang/) — keywords, types, builtins, stdlib, Modula-2+ extensions
 - [LSP capabilities](lsp.md) — supported features, configuration, known limitations
-- [mxpkg package manager](mxpkg.md) — commands, manifest format, lockfile
 - [Build plan schema](mxpkg-build-plan.md) — JSON build plan for `mx compile --plan`
 
 ## Project

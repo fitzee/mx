@@ -1,0 +1,26 @@
+DEFINITION MODULE Process;
+(* High-level subprocess management for lldb.
+   Wraps ProcessBridge with buffered I/O and sentinel-based
+   response boundaries. *)
+
+(* Spawn lldb with --no-use-colors, set custom prompt "(m2dap)".
+   Returns TRUE on success. *)
+PROCEDURE Spawn(): BOOLEAN;
+
+(* Send a command line to lldb stdin. Appends newline. *)
+PROCEDURE SendLine(VAR cmd: ARRAY OF CHAR);
+
+(* Read from lldb stdout until the "(m2dap)" sentinel prompt appears.
+   buf receives everything before the prompt.
+   len is set to the number of bytes read.
+   Returns TRUE on success, FALSE on EOF/error. *)
+PROCEDURE ReadUntilPrompt(VAR buf: ARRAY OF CHAR;
+                          VAR len: CARDINAL): BOOLEAN;
+
+(* Kill the lldb subprocess and clean up. *)
+PROCEDURE Kill;
+
+(* Returns TRUE if lldb subprocess is running. *)
+PROCEDURE IsRunning(): BOOLEAN;
+
+END Process.

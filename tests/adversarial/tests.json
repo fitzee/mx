@@ -1819,8 +1819,16 @@
     "expected_stdout": "bytes: 0 0 1 149 141 3 238 128\nroundtrip: PASS\nproc params: PASS\nalias params: PASS\nlarge div mod: PASS\nval cardinal: PASS\nall longcard div mod OK\n",
     "c_scan": true,
     "c_scan_patterns": {
-      "must_not_contain": ["m2_div(", "m2_mod("],
-      "must_contain": ["/ 256", "% 256", "/ 65536", "% 65536"],
+      "must_not_contain": [
+        "m2_div(",
+        "m2_mod("
+      ],
+      "must_contain": [
+        "/ 256",
+        "% 256",
+        "/ 65536",
+        "% 65536"
+      ],
       "_note": "LONGCARD DIV/MOD must emit plain C / and %, never m2_div() or m2_mod() which truncate to int32_t"
     },
     "tags": [
@@ -1842,8 +1850,14 @@
     "expected_stdout": "large positive: PASS\nlarge non-exact: PASS\n(-7) DIV 2 = -4  MOD = 1\nfloor div small: PASS\nfloor div 64: PASS\nneg mod pos: PASS\nproc floor 64: PASS\nproc large pos: PASS\nall longint div mod OK\n",
     "c_scan": true,
     "c_scan_patterns": {
-      "must_not_contain": ["m2_div(", "m2_mod("],
-      "must_contain": ["m2_div64(", "m2_mod64("],
+      "must_not_contain": [
+        "m2_div(",
+        "m2_mod("
+      ],
+      "must_contain": [
+        "m2_div64(",
+        "m2_mod64("
+      ],
       "_note": "LONGINT DIV/MOD must emit m2_div64/m2_mod64 (64-bit floored), never m2_div/m2_mod (32-bit truncation)"
     },
     "tags": [
@@ -1904,5 +1918,112 @@
       "regression"
     ],
     "_comment": "Regression: Func(x)^ was a parse error. Tests basic deref, assign through deref, double deref (^^), deref in arithmetic, and array element deref via function."
+  },
+  {
+    "name": "address_index",
+    "category": "codegen",
+    "dir": "codegen/address_index",
+    "main": "AddressIndex.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": true,
+    "expected_exit": 0,
+    "expected_stdout": "r0=H\nr1=e\nr2=l\nr3=l\nr4=o\nmod=World\nshift=rld\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: ADDRESS^[i] byte-level indexing emitted void* indexing in C backend, causing incomplete type error. m2plus feature: treat ADDRESS as POINTER TO ARRAY OF CHAR for indexing."
+  },
+  {
+    "name": "param_entry_clash",
+    "category": "codegen",
+    "dir": "codegen/param_entry_clash",
+    "main": "ParamEntryClash.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "entry=42\nfound=TRUE\nn=99\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: LLVM backend emitted entry: as the block label which clashes with a parameter named entry, causing unable to create block named entry."
+  },
+  {
+    "name": "stdlib_proc_val",
+    "category": "codegen",
+    "dir": "codegen/stdlib_args",
+    "main": "StdlibProcVal.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: LLVM backend emitted load from @Args_GetArg instead of using @m2_Args_GetArg as function pointer when stdlib procedure passed as proc value argument."
+  },
+  {
+    "name": "record_cross_module",
+    "category": "codegen",
+    "dir": "codegen/record_cross_module",
+    "main": "RecordCrossModule.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "sum=42\ntag=5\ncount=1\nlimit=100\naddr=ok\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: LLVM backend emitted void for unresolved imported enum types in array elements inside records, and wrong deref type for POINTER TO ADDRESS across modules."
+  },
+  {
+    "name": "record_param_cross",
+    "category": "codegen",
+    "dir": "codegen/record_param_cross",
+    "main": "RecordParamCross.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "added=TRUE\nmsg=42\nname=hello\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: LLVM backend mismatched types when passing record by value to cross-module procedure. Tests record with proc type field, record return, and callback dispatch."
+  },
+  {
+    "name": "cross_module_name_clash",
+    "category": "codegen",
+    "dir": "codegen/cross_module_name_clash",
+    "main": "CrossModuleClash.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "code=200\nhcount=2\nok=0\nerr=1\nconn=0\nepst=0\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: two modules with same impl-only type names (ConnRec/ConnPtr), nested deref chains (c^.resp^.headerCount), re-exported enums (NetB re-exports NetA.Status), INC on deeply nested fields. Tests LLVM backend type disambiguation and enum variant resolution."
   }
 ]

@@ -11,9 +11,9 @@ entry=src/Glob.mod
 includes=src
 
 [deps]
+m2sys=path:../m2sys
 
 [test]
 entry=tests/glob_tests.mod
 
 [cc]
-extra-c=../m2sys/m2sys.c

@@ -1,0 +1,11 @@
+DEFINITION MODULE DAPServer;
+(* DAP command dispatch and state management.
+   Parses incoming DAP JSON requests, dispatches to handlers,
+   builds and sends JSON responses. *)
+
+(* Process a single DAP message (JSON body).
+   Returns FALSE when the server should exit. *)
+PROCEDURE HandleMessage(VAR buf: ARRAY OF CHAR;
+                        len: CARDINAL): BOOLEAN;
+
+END DAPServer.

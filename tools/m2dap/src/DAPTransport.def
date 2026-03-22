@@ -1,0 +1,16 @@
+DEFINITION MODULE DAPTransport;
+(* DAP message framing: Content-Length + JSON over stdin/stdout.
+   Uses raw read(2)/write(2) to bypass stdio buffering. *)
+
+(* Read a DAP message from stdin.
+   Parses "Content-Length: N\r\n\r\n" header, then reads N body bytes.
+   buf receives the JSON body, len is set to body length.
+   Returns TRUE on success, FALSE on EOF or error. *)
+PROCEDURE ReadMessage(VAR buf: ARRAY OF CHAR;
+                      VAR len: CARDINAL): BOOLEAN;
+
+(* Write a DAP message to stdout.
+   Prepends "Content-Length: N\r\n\r\n" header to the body. *)
+PROCEDURE WriteMessage(VAR buf: ARRAY OF CHAR; len: CARDINAL);
+
+END DAPTransport.

@@ -63,6 +63,7 @@ All settings are under the `mx.*` namespace. Configure in VS Code settings (JSON
 | `mx.m2plus` | boolean | `true` | Pass `--m2plus` flag to the LSP server |
 | `mx.includePaths` | string[] | `[]` | Additional `-I` paths passed to the LSP server |
 | `mx.diagnostics.debounceMs` | number | `250` | Diagnostics debounce delay in milliseconds |
+| `mx.m2dapPath` | string | `"m2dap"` | Path to the `m2dap` debug adapter binary |
 
 The debounce setting is passed to the server via `initializationOptions`. See [LSP configuration](lsp.md#configuration) for all server-side options.
 
@@ -129,14 +130,29 @@ The LSP server automatically detects projects by looking for `m2.toml` manifests
 
 ## Debugging
 
-The extension provides full source-level debugging of Modula-2 programs using LLDB via the [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) extension.
+The extension supports two debugging modes:
+
+1. **m2dap** (recommended for LLVM backend) — a Modula-2 Debug Adapter Protocol server with M2-idiomatic variable display
+2. **CodeLLDB** (fallback) — direct LLDB integration via the [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) extension
 
 ### Quick start
 
-1. Install the **CodeLLDB** extension from the VS Code marketplace (`vadimcn.vscode-lldb`).
+1. Build m2dap: `cd tools/m2dap && mx build` (ensure `m2dap` is on PATH or set `mx.m2dapPath`)
 2. Run **Modula-2+: Create Debug Configuration** from the Command Palette.
 3. Set a breakpoint by clicking the gutter next to a line number in a `.mod` file.
 4. Press `F5` to build in debug mode and launch the debugger.
+
+The generated `launch.json` includes both "Debug (m2dap)" and "Debug (lldb)" configurations. Select the one you want from the debug dropdown.
+
+### m2dap vs CodeLLDB
+
+| Feature | m2dap | CodeLLDB |
+|---------|-------|----------|
+| Backend | LLVM (`--llvm -g`) | C (`-g`) or LLVM |
+| Variable types | M2 names (`BOOLEAN`, `INTEGER`) | C names (`unsigned int`, `int`) |
+| Value formatting | `TRUE`/`FALSE`, `NIL`, `CHR(N)` | Raw C values |
+| Procedure names | `Module.Proc` | `Module_Proc` |
+| Requirements | m2dap binary | CodeLLDB extension |
 
 ### What "Create Debug Configuration" does
 
@@ -145,7 +161,7 @@ The command creates four files in `.vscode/`:
 | File | Purpose |
 |------|---------|
 | `tasks.json` | Build task that runs `mx build -g` |
-| `launch.json` | CodeLLDB launch config with the binary name read from `m2.toml` |
+| `launch.json` | m2dap and CodeLLDB launch configs with the binary name read from `m2.toml` |
 | `extensions.json` | Recommends the CodeLLDB extension |
 | `settings.json` | Sets `debug.allowBreakpointsEverywhere: true` (required for `.mod` breakpoints) |
 
@@ -153,7 +169,11 @@ Existing files are not overwritten. Delete a file and re-run the command to rege
 
 ### How it works
 
-The `-g` flag emits `#line` directives mapping generated C back to `.mod` source lines, enabling source-level debugging. See [debug builds](toolchain.md#debug-builds) for the full compilation details.
+**C backend** (`-g`): Emits `#line` directives mapping generated C back to `.mod` source lines.
+
+**LLVM backend** (`--llvm -g`): Emits native DWARF metadata with M2 type names. m2dap queries DWARF type info and formats variables idiomatically.
+
+See [debug builds](toolchain.md#debug-builds) for full compilation details.
 
 ### Debugging features
 
@@ -162,17 +182,24 @@ The `-g` flag emits `#line` directives mapping generated C back to `.mod` source
 - **Step into** (`F11`): Enter a procedure call
 - **Step out** (`Shift+F11`): Return from the current procedure
 - **Continue** (`F5`): Run to the next breakpoint
-- **Variables**: Local variables appear in the VARIABLES panel when paused
+- **Variables**: Local variables appear in the VARIABLES panel with M2 types (via m2dap)
 - **Watch**: Add expressions to the WATCH panel to track values across steps
-- **Call stack**: View the full call stack with Modula-2 procedure names
+- **Call stack**: View the full call stack with demangled Modula-2 procedure names
 - **Debug console**: Type LLDB commands directly (e.g., `p myVar`, `frame variable`)
 
 ### Build artifacts in debug mode
 
 ```
+# C backend
 src/
   Main.c          # generated C (preserved for source mapping)
   Main.o          # object file (kept for DWARF debug info)
+
+# LLVM backend
+src/
+  Main.ll         # generated LLVM IR
+
+# Both backends
 .mx/
   bin/
     <name>        # executable with debug info
@@ -181,7 +208,7 @@ src/
 
 ### Variable naming
 
-Local variables map 1:1 to their Modula-2 names. Module-level variables appear as `Module_varName` in the debugger. Procedure names follow the same convention (`Module_ProcName` for imported procedures).
+Local variables map 1:1 to their Modula-2 names in both backends. Module-level variables appear as `Module_varName`. With m2dap, procedure names in stack traces are demangled: `Module_ProcName` → `Module.ProcName`.
 
 ### Troubleshooting debugging
 
@@ -194,12 +221,20 @@ Local variables map 1:1 to their Modula-2 names. Module-level variables appear a
 - Ensure the binary name in `launch.json` matches the `name` field in `m2.toml`
 - Check the Debug Console for error messages
 
+**m2dap not found**:
+- Build it: `cd tools/m2dap && mx build`
+- Add to PATH or set `mx.m2dapPath` in VS Code settings
+
+**Variables not showing in m2dap**:
+- Ensure you compiled with `--llvm -g` (set `backend=llvm` in `m2.toml`)
+- The LLVM backend emits native DWARF; the C backend's `#line` directives don't include variable metadata
+
 **Output doesn't appear when stepping**:
 - This should work automatically (stdout is unbuffered in debug mode)
 - If using a non-debug build, rebuild with `mx build -g`
 
 **Debugger shows assembly instead of source**:
-- The `.dSYM` bundle may be missing -- rebuild with `mx clean && mx build -g`
+- The `.dSYM` bundle may be missing — rebuild with `mx clean && mx build -g`
 - Ensure the `.mod` source files haven't moved since the last build
 
 ## Output and logs
