@@ -295,8 +295,12 @@ impl LLVMCodeGen {
         val
     }
 
-    pub(crate) fn infer_call_return_type(&self, _full_name: &str, base_name: &str) -> (String, Option<crate::types::TypeId>) {
-        // Try symbol table
+    pub(crate) fn infer_call_return_type(&self, full_name: &str, base_name: &str) -> (String, Option<crate::types::TypeId>) {
+        // Check fn_return_types first (canonical source from gen_proc_decl and declare_stdlib_function)
+        if let Some(ret_ty) = self.fn_return_types.get(full_name) {
+            return (ret_ty.clone(), None);
+        }
+        // Try symbol table with base name
         if let Some(sym) = self.sema.symtab.lookup_any(base_name) {
             if let crate::symtab::SymbolKind::Procedure { return_type, .. } = &sym.kind {
                 if let Some(ret_id) = return_type {
@@ -305,7 +309,7 @@ impl LLVMCodeGen {
                 return ("void".to_string(), None);
             }
         }
-        // Default
+        // Default for unknown functions
         ("i32".to_string(), None)
     }
 

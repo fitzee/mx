@@ -114,23 +114,31 @@ pub(crate) fn find_def_file(module_name: &str, input_path: &Path, include_paths:
             }
         }
     }
-    // Fallback: scan installed libraries at ~/HOME_DIR/lib/*/src/
+    // Fallback: scan installed libraries at ~/HOME_DIR/lib/*/src/ and ~/HOME_DIR/lib/*/
     if let Some(home) = mx_home() {
         let lib_dir = home.join("lib");
         if let Ok(entries) = fs::read_dir(&lib_dir) {
             for entry in entries.flatten() {
-                let src_dir = entry.path().join("src");
-                if !src_dir.is_dir() {
-                    continue;
-                }
-                let candidates = vec![
-                    src_dir.join(format!("{}.def", module_name)),
-                    src_dir.join(format!("{}.DEF", module_name)),
-                    src_dir.join(format!("{}.def", module_name.to_lowercase())),
-                ];
-                for c in &candidates {
-                    if c.exists() {
-                        return Some(c.clone());
+                let pkg_dir = entry.path();
+                // Check src/ subdirectory first, then package root
+                let search_dirs: Vec<PathBuf> = {
+                    let src_dir = pkg_dir.join("src");
+                    if src_dir.is_dir() {
+                        vec![src_dir, pkg_dir]
+                    } else {
+                        vec![pkg_dir]
+                    }
+                };
+                for search_dir in &search_dirs {
+                    let candidates = vec![
+                        search_dir.join(format!("{}.def", module_name)),
+                        search_dir.join(format!("{}.DEF", module_name)),
+                        search_dir.join(format!("{}.def", module_name.to_lowercase())),
+                    ];
+                    for c in &candidates {
+                        if c.exists() {
+                            return Some(c.clone());
+                        }
                     }
                 }
             }
@@ -172,23 +180,30 @@ pub(crate) fn find_mod_file_candidates(module_name: &str, input_path: &Path, inc
             }
         }
     }
-    // Fallback: scan installed libraries at ~/HOME_DIR/lib/*/src/
+    // Fallback: scan installed libraries at ~/HOME_DIR/lib/*/src/ and ~/HOME_DIR/lib/*/
     if let Some(home) = mx_home() {
         let lib_dir = home.join("lib");
         if let Ok(entries) = fs::read_dir(&lib_dir) {
             for entry in entries.flatten() {
-                let src_dir = entry.path().join("src");
-                if !src_dir.is_dir() {
-                    continue;
-                }
-                let candidates = vec![
-                    src_dir.join(format!("{}.mod", module_name)),
-                    src_dir.join(format!("{}.MOD", module_name)),
-                    src_dir.join(format!("{}.mod", module_name.to_lowercase())),
-                ];
-                for c in &candidates {
-                    if c.exists() && !results.contains(c) {
-                        results.push(c.clone());
+                let pkg_dir = entry.path();
+                let search_dirs: Vec<PathBuf> = {
+                    let src_dir = pkg_dir.join("src");
+                    if src_dir.is_dir() {
+                        vec![src_dir, pkg_dir]
+                    } else {
+                        vec![pkg_dir]
+                    }
+                };
+                for search_dir in &search_dirs {
+                    let candidates = vec![
+                        search_dir.join(format!("{}.mod", module_name)),
+                        search_dir.join(format!("{}.MOD", module_name)),
+                        search_dir.join(format!("{}.mod", module_name.to_lowercase())),
+                    ];
+                    for c in &candidates {
+                        if c.exists() && !results.contains(c) {
+                            results.push(c.clone());
+                        }
                     }
                 }
             }
@@ -915,7 +930,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             ll_parsed_defs.insert(def_mod.name.clone(), def_mod.clone());
         }
         while let Some(mod_name) = ll_def_queue.pop() {
-            if crate::stdlib::is_stdlib_module(&mod_name) || ll_registered.contains(&mod_name) || ll_parsed_defs.contains_key(&mod_name) {
+            if (crate::stdlib::is_stdlib_module(&mod_name) && !crate::stdlib::is_native_stdlib(&mod_name)) || ll_registered.contains(&mod_name) || ll_parsed_defs.contains_key(&mod_name) {
                 continue;
             }
             if let Some(def_path) = find_def_file(&mod_name, &opts.input, &opts.include_paths) {
@@ -980,7 +995,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         let mut ll_loaded = std::collections::HashSet::new();
         let mut ll_mod_queue: Vec<String> = all_imported_modules.clone();
         while let Some(mod_name) = ll_mod_queue.pop() {
-            if crate::stdlib::is_stdlib_module(&mod_name) || ll_loaded.contains(&mod_name) { continue; }
+            if (crate::stdlib::is_stdlib_module(&mod_name) && !crate::stdlib::is_native_stdlib(&mod_name)) || ll_loaded.contains(&mod_name) { continue; }
             if llvm_codegen.is_foreign_module(&mod_name) {
                 ll_loaded.insert(mod_name.clone());
                 continue;
@@ -998,7 +1013,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 for imp in &imp_mod.imports {
                     if let Some(ref from_mod) = imp.from_module {
                         if !ll_loaded.contains(from_mod) {
-                            if !ll_registered.contains(from_mod) && !crate::stdlib::is_stdlib_module(from_mod) {
+                            if !ll_registered.contains(from_mod) && (!crate::stdlib::is_stdlib_module(from_mod) || crate::stdlib::is_native_stdlib(from_mod)) {
                                 if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
                                     let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
                                     if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
@@ -1013,7 +1028,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         for name in &imp.names {
                             let n = &name.name;
                             if !ll_loaded.contains(n) {
-                                if !ll_registered.contains(n) && !crate::stdlib::is_stdlib_module(n) {
+                                if !ll_registered.contains(n) && (!crate::stdlib::is_stdlib_module(n) || crate::stdlib::is_native_stdlib(n)) {
                                     if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
                                         if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features) {
                                             if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
@@ -1083,9 +1098,14 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             CompileError::driver(format!("cannot write runtime '{}': {}", runtime_c.display(), e))
         })?;
 
+        // Find m2fmt.c (float formatting helpers for native M2 stdlib)
+        let m2fmt_c = mx_home()
+            .map(|h| h.join("lib/m2stdlib/src/m2fmt.c"))
+            .filter(|p| p.exists());
+
         let exe_file = opts.output.clone().unwrap_or_else(|| parent_dir.join(&*stem));
 
-        // Compile with clang: ll + runtime.c → executable
+        // Compile with clang: ll + runtime.c + m2fmt.c → executable
         if opts.debug {
             // Debug mode: two-step compile+link so .o stays for DWARF
             let obj_file = ll_file.with_extension("o");
@@ -1127,8 +1147,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             let mut link_cmd = Command::new("clang");
             link_cmd.arg("-o").arg(&exe_file)
                 .arg(&obj_file)
-                .arg(&rt_obj)
-                .arg("-g")
+                .arg(&rt_obj);
+            if let Some(ref fmt_c) = m2fmt_c {
+                link_cmd.arg(fmt_c);
+            }
+            link_cmd.arg("-g")
                 .arg("-lm");
             for extra in &opts.extra_c_files {
                 link_cmd.arg(extra);
@@ -1168,8 +1191,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             let mut cmd = Command::new("clang");
             cmd.arg("-o").arg(&exe_file)
                 .arg(&ll_file)
-                .arg(&runtime_c)
-                .arg("-lm")
+                .arg(&runtime_c);
+            if let Some(ref fmt_c) = m2fmt_c {
+                cmd.arg(fmt_c);
+            }
+            cmd.arg("-lm")
                 .arg("-w")
                 .args(["-ffunction-sections", "-fdata-sections"]);
 
@@ -1286,6 +1312,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         CompileError::driver(format!("cannot write '{}': {}", c_file.display(), e))
     })?;
 
+    // Find m2fmt.c (float formatting helpers for native M2 stdlib)
+    let m2fmt_c = mx_home()
+        .map(|h| h.join("lib/m2stdlib/src/m2fmt.c"))
+        .filter(|p| p.exists());
+
     if opts.compile_only {
         // Compile to .o
         let obj_file = opts
@@ -1385,8 +1416,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             // Step 2: link .o → executable
             let mut link_cmd = Command::new(&opts.cc);
             link_cmd.arg("-o").arg(&exe_file)
-                .arg(&obj_file)
-                .arg("-g")
+                .arg(&obj_file);
+            if let Some(ref fmt_c) = m2fmt_c {
+                link_cmd.arg(fmt_c);
+            }
+            link_cmd.arg("-g")
                 .arg("-lm");
             if cfg!(target_os = "macos") {
                 link_cmd.arg("-Wl,-dead_strip");
@@ -1449,8 +1483,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             let mut cmd = Command::new(&opts.cc);
             cmd.arg("-o")
                 .arg(&exe_file)
-                .arg(&c_file)
-                .arg("-lm");
+                .arg(&c_file);
+            if let Some(ref fmt_c) = m2fmt_c {
+                cmd.arg(fmt_c);
+            }
+            cmd.arg("-lm");
 
             add_mx_home_includes(&mut cmd);
 

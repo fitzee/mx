@@ -1,0 +1,16 @@
+DEFINITION MODULE FOR "C" CFmt;
+(* Non-varargs wrappers around snprintf/scanf for float formatting.
+   Backed by m2fmt.c *)
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE m2_fmt_real_g(buf: ADDRESS; bufsz: INTEGER; r: REAL; w: INTEGER);
+PROCEDURE m2_fmt_real_f(buf: ADDRESS; bufsz: INTEGER; r: REAL; w: INTEGER; d: INTEGER);
+PROCEDURE m2_fmt_real_e(buf: ADDRESS; bufsz: INTEGER; r: REAL; sigFigs: INTEGER; w: INTEGER);
+PROCEDURE m2_fmt_real_oct(buf: ADDRESS; bufsz: INTEGER; r: REAL);
+PROCEDURE m2_fmt_long_g(buf: ADDRESS; bufsz: INTEGER; r: LONGREAL; w: INTEGER);
+PROCEDURE m2_fmt_long_f(buf: ADDRESS; bufsz: INTEGER; r: LONGREAL; w: INTEGER; d: INTEGER);
+PROCEDURE m2_fmt_long_e(buf: ADDRESS; bufsz: INTEGER; r: LONGREAL; sigFigs: INTEGER; w: INTEGER);
+PROCEDURE m2_scan_real(VAR r: REAL): INTEGER;
+PROCEDURE m2_scan_longreal(VAR r: LONGREAL): INTEGER;
+
+END CFmt.

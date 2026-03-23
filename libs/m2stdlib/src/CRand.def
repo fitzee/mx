@@ -1,0 +1,7 @@
+DEFINITION MODULE FOR "C" CRand;
+(* C random number functions *)
+
+PROCEDURE rand(): INTEGER;
+PROCEDURE srand(seed: CARDINAL);
+
+END CRand.

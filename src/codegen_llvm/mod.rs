@@ -168,6 +168,10 @@ pub struct LLVMCodeGen {
 
     // ── Procedure parameter tracking ────────────────────────────────
     pub(crate) proc_params: HashMap<String, Vec<ParamLLVMInfo>>,
+    /// Known return types for functions (populated by declare_stdlib_function and gen_proc_decl)
+    pub(crate) fn_return_types: HashMap<String, String>,
+    /// String constant lengths (for CONST s = "..." passed to open array params)
+    pub(crate) string_const_lengths: HashMap<String, usize>,
     /// VAR params in current scope (passed as pointers)
     pub(crate) var_params: Vec<HashSet<String>>,
     /// Open array params in current scope (have _high companion)
@@ -267,6 +271,8 @@ impl LLVMCodeGen {
             ref_type_descs: HashMap::new(),
             rtti_type_id_counter: 0,
             proc_params: HashMap::new(),
+            fn_return_types: HashMap::new(),
+            string_const_lengths: HashMap::new(),
             var_params: vec![HashSet::new()],
             open_array_params: vec![HashSet::new()],
             declared_fns: HashSet::new(),

@@ -197,16 +197,31 @@ fn resolve_deps(
             let dep_dir = manifest_dir.join(rel_path);
             let dep_dir = dep_dir.canonicalize().unwrap_or(dep_dir);
 
-            // Add dep's src/ as include dir
-            let src_dir = dep_dir.join("src");
-            if src_dir.is_dir() && !include_dirs.contains(&src_dir) {
-                include_dirs.push(src_dir);
+            // Read dep's m2.toml for transitive deps, [cc], and includes
+            let dep_toml = dep_dir.join("m2.toml");
+            let dep_manifest = if dep_toml.exists() {
+                Some(parse_manifest(&dep_toml)?)
+            } else {
+                None
+            };
+
+            // Add dep's include dirs (from manifest's includes field, or default to src/)
+            if let Some(ref manifest) = dep_manifest {
+                for inc in &manifest.includes {
+                    let inc_dir = dep_dir.join(inc);
+                    let inc_dir = inc_dir.canonicalize().unwrap_or(inc_dir);
+                    if inc_dir.is_dir() && !include_dirs.contains(&inc_dir) {
+                        include_dirs.push(inc_dir);
+                    }
+                }
+            } else {
+                let src_dir = dep_dir.join("src");
+                if src_dir.is_dir() && !include_dirs.contains(&src_dir) {
+                    include_dirs.push(src_dir);
+                }
             }
 
-            // Read dep's m2.toml for transitive deps and [cc]
-            let dep_toml = dep_dir.join("m2.toml");
-            if dep_toml.exists() {
-                let dep_manifest = parse_manifest(&dep_toml)?;
+            if let Some(dep_manifest) = dep_manifest {
 
                 // Collect [cc] extra-c (resolved relative to dep dir)
                 for ec in &dep_manifest.cc_extra_c {

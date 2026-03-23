@@ -1799,6 +1799,20 @@ pub fn get_stdlib_exports(module: &str) -> Vec<&'static str> {
     }
 }
 
+/// Check if a module is a native M2 stdlib module compiled inline
+/// (as opposed to being backed by C functions in the runtime header).
+pub fn is_native_stdlib(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "STRINGS" | "STORAGE" | "TERMINAL" | "INOUT"
+            | "BINARYIO" | "FILESYSTEM"
+            | "MATHLIB0" | "MATHLIB"
+            | "STEXTIO" | "SWHOLEIO"
+            | "REALINOUT" | "SREALIO" | "SLONGIO"
+    )
+}
+
 /// Check if a module name is a standard library module (handled by runtime header)
 pub fn is_stdlib_module(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();

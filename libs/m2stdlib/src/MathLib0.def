@@ -1,0 +1,14 @@
+DEFINITION MODULE MathLib0;
+(* PIM4 MathLib0 — basic mathematical functions *)
+
+PROCEDURE sqrt(x: REAL): REAL;
+PROCEDURE sin(x: REAL): REAL;
+PROCEDURE cos(x: REAL): REAL;
+PROCEDURE exp(x: REAL): REAL;
+PROCEDURE ln(x: REAL): REAL;
+PROCEDURE arctan(x: REAL): REAL;
+PROCEDURE entier(x: REAL): INTEGER;
+PROCEDURE Random(): REAL;
+PROCEDURE Randomize(seed: CARDINAL);
+
+END MathLib0.

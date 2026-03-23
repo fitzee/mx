@@ -1,0 +1,8 @@
+DEFINITION MODULE Storage;
+(* PIM4 Storage module — heap allocation/deallocation *)
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE ALLOCATE(VAR p: ADDRESS; size: CARDINAL);
+PROCEDURE DEALLOCATE(VAR p: ADDRESS; size: CARDINAL);
+
+END Storage.

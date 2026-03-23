@@ -722,7 +722,9 @@ impl CodeGen {
 
     /// Emit extern declarations for all foreign (C ABI) definition modules.
     fn gen_foreign_extern_decls(&mut self) {
+        const STDLIB_C_HELPERS: &[&str] = &["CStr", "CIO", "CMem", "CMath", "CRand"];
         for def in self.foreign_def_modules.clone() {
+            if STDLIB_C_HELPERS.contains(&def.name.as_str()) { continue; }
             self.emitln(&format!("/* Foreign C bindings: {} */", def.name));
             for d in &def.definitions {
                 match d {
@@ -1111,7 +1113,7 @@ impl CodeGen {
                         self.import_alias_map.insert(local.clone(), original.clone());
                     }
                     // Register stdlib proc params for codegen (is_char, is_var, etc.)
-                    if stdlib::is_stdlib_module(from_mod) {
+                    if stdlib::is_stdlib_module(from_mod) && !stdlib::is_native_stdlib(from_mod) {
                         if let Some(params) = stdlib::get_stdlib_proc_params(from_mod, original) {
                             let info: Vec<ParamCodegenInfo> = params.into_iter().map(|(pname, is_var, is_char, is_open_array)| {
                                 ParamCodegenInfo { name: pname, is_var, is_char, is_open_array }
@@ -1447,7 +1449,7 @@ impl CodeGen {
                             let c_param = self.mangle(name);
                             if is_open_array {
                                 self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                                oa_params.insert(name.clone());
+                                oa_params.insert(c_param.clone());
                             } else if Self::is_proc_type(&fp.typ) {
                                 let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
                                 self.emit(&decl);
@@ -2833,8 +2835,9 @@ impl CodeGen {
         for fp in &p.heading.params {
             if matches!(fp.typ, TypeNode::OpenArray { .. }) {
                 for name in &fp.names {
+                    let mangled = self.mangle(name);
                     if let Some(scope) = self.open_array_params.last_mut() {
-                        scope.insert(name.clone());
+                        scope.insert(mangled);
                     }
                 }
             } else if fp.is_var {
@@ -3592,7 +3595,7 @@ impl CodeGen {
                     if actual_name == "ADR" && args.len() == 1 {
                         if let ExprKind::Designator(ref d) = args[0].kind {
                             if d.selectors.is_empty() && d.ident.module.is_none()
-                                && (self.is_open_array_param(&d.ident.name)
+                                && (self.is_open_array_param(&self.mangle(&d.ident.name))
                                     || self.is_named_array_value_param(&d.ident.name))
                             {
                                 let arg_str = self.expr_to_string(&args[0]);
@@ -3608,7 +3611,7 @@ impl CodeGen {
                             // Simple variable that's not an open array param
                             let is_open = d.selectors.is_empty()
                                 && d.ident.module.is_none()
-                                && self.is_open_array_param(&d.ident.name);
+                                && self.is_open_array_param(&self.mangle(&d.ident.name));
                             if !is_open {
                                 let dname = &d.ident.name;
                                 if let Some(high) = self.get_named_array_param_high(dname) {
@@ -4008,7 +4011,7 @@ impl CodeGen {
             if self.foreign_modules.contains(module.as_str()) {
                 desig.ident.name.clone()
             } else {
-                let mapped = stdlib::map_stdlib_call(module, &desig.ident.name);
+                let mapped = if stdlib::is_native_stdlib(module) { None } else { stdlib::map_stdlib_call(module, &desig.ident.name) };
                 mapped.unwrap_or_else(|| {
                     let candidate = format!("{}_{}", module, desig.ident.name);
                     // Check for module-prefixed enum variant (e.g., Stream.OK → Stream_Status_OK)
@@ -4028,7 +4031,7 @@ impl CodeGen {
             let field_name = field_name.to_string();
             if self.foreign_modules.contains(mod_name.as_str()) {
                 field_name
-            } else if let Some(c_name) = stdlib::map_stdlib_call(&mod_name, &field_name) {
+            } else if let Some(c_name) = if stdlib::is_native_stdlib(&mod_name) { None } else { stdlib::map_stdlib_call(&mod_name, &field_name) } {
                 c_name
             } else {
                 // Check for module-prefixed enum variant (e.g., EventLoop.OK → EventLoop_Status_OK)
@@ -4115,7 +4118,7 @@ impl CodeGen {
                 if let Some(c_name) = self.resolve_reexported_enum_variant(&module, &orig) {
                     return c_name;
                 }
-                if stdlib::is_stdlib_module(&module) {
+                if stdlib::is_stdlib_module(&module) && !stdlib::is_native_stdlib(&module) {
                     if let Some(c_name) = stdlib::map_stdlib_call(&module, &orig) {
                         return c_name;
                     }
@@ -5365,8 +5368,10 @@ impl CodeGen {
             if self.foreign_modules.contains(module.as_str()) {
                 return name.to_string();
             }
-            if let Some(c_name) = stdlib::map_stdlib_call(module, name) {
-                return c_name;
+            if !stdlib::is_native_stdlib(module) {
+                if let Some(c_name) = stdlib::map_stdlib_call(module, name) {
+                    return c_name;
+                }
             }
             return format!("{}_{}", module, name);
         }
@@ -5376,8 +5381,10 @@ impl CodeGen {
                 if self.foreign_modules.contains(name.as_str()) {
                     return proc_name.to_string();
                 }
-                if let Some(c_name) = stdlib::map_stdlib_call(name, proc_name) {
-                    return c_name;
+                if !stdlib::is_native_stdlib(name) {
+                    if let Some(c_name) = stdlib::map_stdlib_call(name, proc_name) {
+                        return c_name;
+                    }
                 }
                 return format!("{}_{}", name, proc_name);
             }
@@ -5388,11 +5395,13 @@ impl CodeGen {
             if self.foreign_modules.contains(module.as_str()) {
                 return orig;
             }
-            if let Some(c_name) = stdlib::map_stdlib_call(module, &orig) {
-                return c_name;
+            if !stdlib::is_native_stdlib(module) {
+                if let Some(c_name) = stdlib::map_stdlib_call(module, &orig) {
+                    return c_name;
+                }
             }
             // Non-stdlib module: use module-prefixed name
-            if !stdlib::is_stdlib_module(module) {
+            if !stdlib::is_stdlib_module(module) || stdlib::is_native_stdlib(module) {
                 return format!("{}_{}", module, orig);
             }
         }

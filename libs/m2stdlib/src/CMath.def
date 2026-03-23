@@ -1,0 +1,12 @@
+DEFINITION MODULE FOR "C" CMath;
+(* C math library functions *)
+
+PROCEDURE sqrtf(x: REAL): REAL;
+PROCEDURE sinf(x: REAL): REAL;
+PROCEDURE cosf(x: REAL): REAL;
+PROCEDURE expf(x: REAL): REAL;
+PROCEDURE logf(x: REAL): REAL;
+PROCEDURE atanf(x: REAL): REAL;
+PROCEDURE floorf(x: REAL): REAL;
+
+END CMath.
