@@ -178,6 +178,8 @@ pub struct LLVMCodeGen {
     pub(crate) var_params: Vec<HashSet<String>>,
     /// Open array params in current scope (have _high companion)
     pub(crate) open_array_params: Vec<HashSet<String>>,
+    /// Named array params in current scope (passed as ptr to array, need load before GEP)
+    pub(crate) named_array_params: Vec<HashSet<String>>,
 
     // ── Declared external functions (avoid duplicates) ──────────────
     pub(crate) declared_fns: HashSet<String>,
@@ -280,6 +282,7 @@ impl LLVMCodeGen {
             string_const_lengths: HashMap::new(),
             var_params: vec![HashSet::new()],
             open_array_params: vec![HashSet::new()],
+            named_array_params: vec![HashSet::new()],
             declared_fns: HashSet::new(),
             loop_exit_stack: Vec::new(),
             current_return_type: None,

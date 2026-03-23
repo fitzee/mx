@@ -470,6 +470,15 @@ impl LLVMCodeGen {
         false
     }
 
+    pub(crate) fn is_named_array_param(&self, name: &str) -> bool {
+        for scope in self.named_array_params.iter().rev() {
+            if scope.contains(name) {
+                return true;
+            }
+        }
+        false
+    }
+
     // ── Type coercion ───────────────────────────────────────────────
 
     pub(crate) fn coerce_val(&mut self, val: &Val, target_ty: &str) -> Val {

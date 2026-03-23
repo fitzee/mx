@@ -429,6 +429,7 @@ impl LLVMCodeGen {
         let mut param_names = Vec::new();
         let mut var_param_set = HashSet::new();
         let mut open_array_set = HashSet::new();
+        let mut named_array_set = HashSet::new();
         let mut param_infos = Vec::new();
         let mut sema_param_idx = 0;
 
@@ -463,6 +464,7 @@ impl LLVMCodeGen {
                     // HIGH is computed from the type, not passed as a param
                     params.push(format!("ptr nocapture readonly %{}", name));
                     param_names.push((name.clone(), base_ty.clone(), false));
+                    named_array_set.insert(name.clone());
                 } else {
                     // Scalar value params are always well-defined in M2
                     params.push(format!("{} noundef %{}", base_ty, name));
@@ -543,6 +545,7 @@ impl LLVMCodeGen {
         self.locals.push(HashMap::new());
         self.var_params.push(var_param_set.clone());
         self.open_array_params.push(open_array_set.clone());
+        self.named_array_params.push(named_array_set);
 
         // Stack trace: push frame at procedure entry
         let frame_alloca = self.next_tmp();
@@ -742,6 +745,7 @@ impl LLVMCodeGen {
         self.locals.pop();
         self.var_params.pop();
         self.open_array_params.pop();
+        self.named_array_params.pop();
         self.current_return_type = None;
         self.in_function = false;
         if let Some(ref mut di) = self.di {

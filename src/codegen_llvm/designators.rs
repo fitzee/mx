@@ -179,21 +179,10 @@ impl LLVMCodeGen {
                 self.emitln(&format!("  {} = load ptr, ptr {}", ptr, addr));
                 (ptr, "ptr".to_string())
             } else if ty.starts_with('[') && self.in_function {
-                // Named array params passed as ptr: alloca stores a ptr to the array
-                // Need to load the ptr before GEP. Detect by checking if this is
-                // a function param with array type (alloca is ptr, local type is array)
-                // Only applies to params, not regular local arrays
-                let is_array_param = self.sema.symtab.lookup_any(name)
-                    .map(|sym| matches!(sym.kind, crate::symtab::SymbolKind::Variable))
-                    .unwrap_or(false)
-                    && d.selectors.iter().any(|s| matches!(s, Selector::Index(..)));
-                // Check if the alloca actually stores a ptr (param) vs the array itself (local)
-                // Params have alloca ptr + store ptr %name; locals have alloca [N x T]
-                // We can't easily distinguish at this point, so check if name is a known param
-                // by looking at proc_params
-                let is_named_array_param = self.proc_params.values()
-                    .any(|params| params.iter().any(|p| p.name.as_str() == name && p.llvm_type.starts_with('[')));
-                if is_named_array_param {
+                // Named array params passed as ptr: alloca stores a ptr to the array.
+                // Need to load the ptr before GEP. Use the per-function tracking set
+                // (NOT global proc_params which can match wrong functions).
+                if self.is_named_array_param(name) {
                     let ptr = self.next_tmp();
                     self.emitln(&format!("  {} = load ptr, ptr {}", ptr, addr));
                     // Use the actual array type from param info (not the
