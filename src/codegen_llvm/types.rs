@@ -263,6 +263,13 @@ impl LLVMCodeGen {
                 }
             }
             TypeNode::Array { index_types, elem_type, .. } => {
+                // Try sema-based resolution first — handles cross-module CONSTs correctly
+                if let Some(tid) = self.resolve_type_node_to_id(tn) {
+                    let ty_str = self.tl_type_str(tid);
+                    if ty_str != "void" && ty_str.starts_with('[') {
+                        return ty_str;
+                    }
+                }
                 let raw_elem_ty = self.llvm_type_for_type_node(elem_type);
                 // Guard: void is never a valid array element type —
                 // unresolved imported type, default to i32.
@@ -271,7 +278,7 @@ impl LLVMCodeGen {
                 } else {
                     raw_elem_ty
                 };
-                // Build type from innermost to outermost dimension
+                // Fallback: build type from AST dimensions
                 // For ARRAY [1..3],[1..3] OF INTEGER → [4 x [4 x i32]]
                 let mut sizes = Vec::new();
                 for idx_tn in index_types {
