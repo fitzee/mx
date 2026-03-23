@@ -412,20 +412,28 @@ impl LLVMCodeGen {
                             current_type_id = array_element(&self.sema.types, tid);
                         }
                     }
-                    // LEGACY: string-based fallback
-                    if let Some(elem_tn) = self.array_elem_type_names.get(name).cloned() {
+                    // Update current_type_name from sema TypeId (canonical) or fallback
+                    if let Some(tid) = current_type_id {
+                        // Resolve the type name from the sema type registry
+                        if let Some(sym) = self.sema.symtab.find_type_by_id(tid) {
+                            current_type_name = sym;
+                        } else {
+                            // Fallback: search type_map by LLVM type string
+                            let ct = current_ty.clone();
+                            current_type_name = self.type_map.iter()
+                                .find(|(_, ty)| **ty == ct)
+                                .map(|(tn, _)| tn.clone())
+                                .or_else(|| self.array_elem_type_names.get(name).cloned())
+                                .unwrap_or_default();
+                        }
+                    } else if let Some(elem_tn) = self.array_elem_type_names.get(name).cloned() {
                         current_type_name = elem_tn;
                     } else {
                         let ct = current_ty.clone();
-                        let mut found = false;
-                        for (tn, ty) in &self.type_map {
-                            if *ty == ct {
-                                current_type_name = tn.clone();
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found { current_type_name = String::new(); }
+                        current_type_name = self.type_map.iter()
+                            .find(|(_, ty)| **ty == ct)
+                            .map(|(tn, _)| tn.clone())
+                            .unwrap_or_default();
                     }
                 }
                 Selector::Deref(_) => {

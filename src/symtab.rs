@@ -273,6 +273,18 @@ impl SymbolTable {
         self.scopes.len()
     }
 
+    /// Find a type name by its TypeId across all scopes.
+    pub fn find_type_by_id(&self, target_id: TypeId) -> Option<String> {
+        for scope in &self.scopes {
+            for sym in scope.symbols.values() {
+                if matches!(sym.kind, SymbolKind::Type) && sym.typ == target_id {
+                    return Some(sym.name.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// Dump all scopes and their type symbols for diagnostics.
     pub fn dump_type_scopes(&self, target_name: &str) {
         for (i, scope) in self.scopes.iter().enumerate() {
