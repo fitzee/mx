@@ -450,7 +450,8 @@ impl LLVMCodeGen {
                     let attrs = if fp.is_var {
                         " noalias nocapture"
                     } else {
-                        " nocapture"
+                        // Non-VAR open array: callee cannot modify the data (M2 value semantics)
+                        " nocapture readonly"
                     };
                     params.push(format!("ptr{} %{}", attrs, name));
                     param_names.push((name.clone(), base_ty.clone(), fp.is_var));
@@ -460,7 +461,7 @@ impl LLVMCodeGen {
                 } else if base_ty.starts_with('[') {
                     // Named array params: pass as pointer (like C array decay)
                     // HIGH is computed from the type, not passed as a param
-                    params.push(format!("ptr nocapture %{}", name));
+                    params.push(format!("ptr nocapture readonly %{}", name));
                     param_names.push((name.clone(), base_ty.clone(), false));
                 } else {
                     // Scalar value params are always well-defined in M2
