@@ -461,7 +461,13 @@ impl LLVMCodeGen {
                     continue;
                 }
                 if addr.ty.starts_with('[') {
-                    let high = self.get_array_high(&d.ident.name);
+                    // Compute HIGH from the resolved address type (not the base variable),
+                    // so that e.g. arr2d[i] passes the inner array's HIGH, not the outer's.
+                    let high = if let Some(n_str) = addr.ty.strip_prefix('[').and_then(|s| s.split(' ').next()) {
+                        if let Ok(n) = n_str.parse::<usize>() {
+                            format!("{}", n.saturating_sub(1))
+                        } else { self.get_array_high(&d.ident.name) }
+                    } else { self.get_array_high(&d.ident.name) };
                     arg_strs.push(format!("ptr {}", addr.name));
                     arg_strs.push(format!("i32 {}", high));
                     continue;
