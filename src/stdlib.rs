@@ -609,6 +609,44 @@ pub fn generate_runtime_header() -> String {
 static int m2_argc = 0;
 static char **m2_argv = NULL;
 
+/* Stack trace support — lightweight frame tracking for crash diagnostics */
+typedef struct m2_StackFrame {
+    struct m2_StackFrame *prev;
+    const char *proc_name;
+    const char *file;
+    int line;
+} m2_StackFrame;
+
+static __thread m2_StackFrame *m2_frame_stack = NULL;
+
+static void m2_stack_push(m2_StackFrame *frame, const char *proc, const char *file) {
+    frame->prev = m2_frame_stack;
+    frame->proc_name = proc;
+    frame->file = file;
+    frame->line = 0;
+    m2_frame_stack = frame;
+}
+
+static void m2_stack_pop(m2_StackFrame *frame) {
+    m2_frame_stack = frame->prev;
+}
+
+static void m2_print_stack_trace(void) {
+    m2_StackFrame *f = m2_frame_stack;
+    int depth = 0;
+    if (!f) return;
+    fprintf(stderr, "Stack trace (most recent call first):\n");
+    while (f && depth < 50) {
+        if (f->line > 0) {
+            fprintf(stderr, "  #%d %s (%s:%d)\n", depth, f->proc_name, f->file, f->line);
+        } else {
+            fprintf(stderr, "  #%d %s (%s)\n", depth, f->proc_name, f->file);
+        }
+        f = f->prev;
+        depth++;
+    }
+}
+
 /* ISO Modula-2 exception handling support */
 static jmp_buf m2_exception_buf;
 static int m2_exception_code = 0;
@@ -654,8 +692,15 @@ static inline void m2_raise(int id, const char *name, void *arg) {
         m2_exception_code = id ? id : 1;
         longjmp(m2_exception_buf, m2_exception_code);
     }
-    /* No handler — terminate */
+    /* No handler — terminate with stack trace */
     fprintf(stderr, "Unhandled exception: %s (id=%d)\n", name ? name : "unknown", id);
+    m2_print_stack_trace();
+    exit(1);
+}
+
+static void m2_halt(void) {
+    fprintf(stderr, "HALT called\n");
+    m2_print_stack_trace();
     exit(1);
 }
 
@@ -1330,6 +1375,7 @@ void m2_eh_throw(int32_t exc_id, const char *name) {
     /* If we get here, no handler was found */
     fprintf(stderr, "Unhandled M2 exception: %s (id=%d, rc=%d)\n",
             name ? name : "unknown", exc_id, (int)rc);
+    m2_print_stack_trace();
     exit(1);
 }
 

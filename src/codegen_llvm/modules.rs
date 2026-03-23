@@ -148,6 +148,15 @@ impl LLVMCodeGen {
         self.emitln("  store i32 %argc, ptr @m2_argc");
         self.emitln("  store ptr %argv, ptr @m2_argv");
 
+        // Stack trace: push frame for main module
+        let main_frame = self.next_tmp();
+        self.emitln(&format!("  {} = alloca %m2_StackFrame", main_frame));
+        let main_name_str = self.intern_string(&m.name);
+        let main_file_str = self.intern_string(&m.loc.file);
+        self.emitln(&format!("  call void @m2_stack_push(ptr {}, ptr {}, ptr {})",
+            main_frame, main_name_str.0, main_file_str.0));
+        self.stack_frame_alloca = Some(main_frame);
+
         // Call embedded module init functions
         for mod_name in &self.embedded_init_modules.clone() {
             self.emitln(&format!("  call void @{}_init()", mod_name));
@@ -207,7 +216,11 @@ impl LLVMCodeGen {
             }
         }
 
-        // Ensure we have a terminator
+        // Pop stack frame and return
+        if let Some(ref frame) = self.stack_frame_alloca.clone() {
+            self.emitln(&format!("  call void @m2_stack_pop(ptr {})", frame));
+        }
+        self.stack_frame_alloca = None;
         self.emitln("  ret i32 0");
         self.emitln("}");
 
@@ -517,6 +530,16 @@ impl LLVMCodeGen {
         if !self.declared_fns.contains("strlen") {
             self.emit_preambleln("declare i64 @strlen(ptr nocapture) nounwind readonly");
             self.declared_fns.insert("strlen".to_string());
+        }
+        // Stack trace support
+        if !self.declared_fns.contains("m2_stack_push") {
+            // m2_StackFrame = { ptr prev, ptr proc_name, ptr file, i32 line }
+            self.emit_preambleln("%m2_StackFrame = type { ptr, ptr, ptr, i32 }");
+            self.emit_preambleln("@m2_frame_stack = external thread_local global ptr");
+            self.emit_preambleln("declare void @m2_stack_push(ptr, ptr, ptr) nounwind");
+            self.emit_preambleln("declare void @m2_stack_pop(ptr) nounwind");
+            self.declared_fns.insert("m2_stack_push".to_string());
+            self.declared_fns.insert("m2_stack_pop".to_string());
         }
         // Note: #dbg_declare records (LLVM 19+) don't need a function declaration
     }

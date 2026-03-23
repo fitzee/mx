@@ -188,6 +188,8 @@ pub struct LLVMCodeGen {
 
     // ── Current function context ────────────────────────────────────
     pub(crate) current_return_type: Option<String>,
+    /// Stack frame alloca for stack trace support (None if not in a function)
+    pub(crate) stack_frame_alloca: Option<String>,
     pub(crate) in_function: bool,
 
     // ── Enum / const tracking ───────────────────────────────────────
@@ -281,6 +283,7 @@ impl LLVMCodeGen {
             declared_fns: HashSet::new(),
             loop_exit_stack: Vec::new(),
             current_return_type: None,
+            stack_frame_alloca: None,
             in_function: false,
             enum_variants: HashMap::new(),
             const_values: HashMap::new(),

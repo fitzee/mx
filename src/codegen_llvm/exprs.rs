@@ -687,7 +687,11 @@ impl LLVMCodeGen {
                 }
             }
             "HALT" => {
-                self.emitln("  call void @exit(i32 0)");
+                if !self.declared_fns.contains("m2_halt") {
+                    self.emit_preambleln("declare void @m2_halt() noreturn nounwind");
+                    self.declared_fns.insert("m2_halt".to_string());
+                }
+                self.emitln("  call void @m2_halt()");
                 self.emitln("  unreachable");
             }
             "NEW" => {

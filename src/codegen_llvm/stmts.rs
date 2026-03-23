@@ -7,6 +7,16 @@ impl LLVMCodeGen {
         // Set debug source location for this statement
         self.set_debug_loc(&stmt.loc);
 
+        // Update stack frame line number for stack trace
+        if stmt.loc.line > 0 {
+            if let Some(frame) = self.stack_frame_alloca.clone() {
+                let line_ptr = self.next_tmp();
+                self.emitln(&format!("  {} = getelementptr inbounds %m2_StackFrame, ptr {}, i32 0, i32 3",
+                    line_ptr, frame));
+                self.emitln(&format!("  store i32 {}, ptr {}", stmt.loc.line, line_ptr));
+            }
+        }
+
         match &stmt.kind {
             StatementKind::Empty => {}
 
@@ -48,6 +58,10 @@ impl LLVMCodeGen {
             }
 
             StatementKind::Return { expr } => {
+                // Pop stack frame before returning
+                if let Some(ref frame) = self.stack_frame_alloca.clone() {
+                    self.emitln(&format!("  call void @m2_stack_pop(ptr {})", frame));
+                }
                 if let Some(e) = expr {
                     let val = self.gen_expr(e);
                     let ret_ty = self.current_return_type.clone().unwrap_or_else(|| "void".to_string());

@@ -544,6 +544,15 @@ impl LLVMCodeGen {
         self.var_params.push(var_param_set.clone());
         self.open_array_params.push(open_array_set.clone());
 
+        // Stack trace: push frame at procedure entry
+        let frame_alloca = self.next_tmp();
+        self.emitln(&format!("  {} = alloca %m2_StackFrame", frame_alloca));
+        let proc_str = self.intern_string(&proc_name);
+        let file_str = self.intern_string(&p.loc.file);
+        self.emitln(&format!("  call void @m2_stack_push(ptr {}, ptr {}, ptr {})",
+            frame_alloca, proc_str.0, file_str.0));
+        self.stack_frame_alloca = Some(frame_alloca);
+
         // Create allocas for value parameters (not VAR params)
         for (name, ty, is_var) in &param_names {
             if *is_var {
@@ -690,6 +699,9 @@ impl LLVMCodeGen {
             }
             self.in_sjlj_context = false;
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
+            if let Some(ref sf) = self.stack_frame_alloca.clone() {
+                self.emitln(&format!("  call void @m2_stack_pop(ptr {})", sf));
+            }
             if ret_ty == "void" {
                 self.emitln("  ret void");
             } else {
@@ -712,7 +724,10 @@ impl LLVMCodeGen {
             }
         }
 
-        // Ensure function has a terminator
+        // Pop stack frame and ensure function has a terminator
+        if let Some(ref frame) = self.stack_frame_alloca.clone() {
+            self.emitln(&format!("  call void @m2_stack_pop(ptr {})", frame));
+        }
         if ret_ty == "void" {
             self.emitln("  ret void");
         } else {
@@ -720,6 +735,7 @@ impl LLVMCodeGen {
             self.emitln(&format!("  ret {} {}", ret_ty, zero));
         }
 
+        self.stack_frame_alloca = None;
         self.emitln("}");
         self.emitln("");
 
