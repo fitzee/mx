@@ -183,8 +183,20 @@ impl LLVMCodeGen {
                         arg_strs.push(format!("ptr {}", addr.name));
                         continue;
                     }
-                    if addr.ty.starts_with('[') {
-                        let high = if let Some(n_str) = addr.ty.strip_prefix('[').and_then(|s| s.split(' ').next()) {
+                    let effective_ty = if d.selectors.is_empty() {
+                        self.lookup_local(&d.ident.name)
+                            .map(|(_, t)| t.clone())
+                            .or_else(|| {
+                                let mangled = self.mangle(&d.ident.name);
+                                self.globals.get(&d.ident.name).or_else(|| self.globals.get(&mangled))
+                                    .map(|(_, t)| t.clone())
+                            })
+                            .unwrap_or_else(|| addr.ty.clone())
+                    } else {
+                        addr.ty.clone()
+                    };
+                    if effective_ty.starts_with('[') {
+                        let high = if let Some(n_str) = effective_ty.strip_prefix('[').and_then(|s| s.split(' ').next()) {
                             if let Ok(n) = n_str.parse::<usize>() {
                                 format!("{}", n.saturating_sub(1))
                             } else { self.get_array_high(&d.ident.name) }

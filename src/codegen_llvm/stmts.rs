@@ -460,10 +460,24 @@ impl LLVMCodeGen {
                     arg_strs.push(format!("ptr {}", addr.name));
                     continue;
                 }
-                if addr.ty.starts_with('[') {
-                    // Compute HIGH from the resolved address type (not the base variable),
-                    // so that e.g. arr2d[i] passes the inner array's HIGH, not the outer's.
-                    let high = if let Some(n_str) = addr.ty.strip_prefix('[').and_then(|s| s.split(' ').next()) {
+                // For array args, compute HIGH from the alloca type (reliable)
+                // rather than addr.ty (which may be wrong due to type registry issues).
+                let effective_ty = if d.selectors.is_empty() {
+                    // Simple variable — use the alloca's declared type
+                    self.lookup_local(&d.ident.name)
+                        .map(|(_, t)| t.clone())
+                        .or_else(|| {
+                            let mangled = self.mangle(&d.ident.name);
+                            self.globals.get(&d.ident.name).or_else(|| self.globals.get(&mangled))
+                                .map(|(_, t)| t.clone())
+                        })
+                        .unwrap_or_else(|| addr.ty.clone())
+                } else {
+                    // Has selectors (e.g. arr[i]) — use the resolved addr.ty after GEP
+                    addr.ty.clone()
+                };
+                if effective_ty.starts_with('[') {
+                    let high = if let Some(n_str) = effective_ty.strip_prefix('[').and_then(|s| s.split(' ').next()) {
                         if let Ok(n) = n_str.parse::<usize>() {
                             format!("{}", n.saturating_sub(1))
                         } else { self.get_array_high(&d.ident.name) }
