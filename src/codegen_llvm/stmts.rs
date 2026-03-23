@@ -53,7 +53,6 @@ impl LLVMCodeGen {
                     self.emitln(&format!("  br label %{}", exit_label));
                     let dead = self.next_label("exit.dead");
                     self.emitln(&format!("{}:", dead));
-                    self.emitln("  unreachable");
                 }
             }
 
@@ -79,10 +78,9 @@ impl LLVMCodeGen {
                 } else {
                     self.emitln("  ret void");
                 }
-                // Dead code after return — emit unreachable block
+                // Dead code after return — start new block for well-formedness
                 let dead = self.next_label("ret.dead");
                 self.emitln(&format!("{}:", dead));
-                self.emitln("  unreachable");
             }
 
             StatementKind::Case { expr, branches, else_body } => {
