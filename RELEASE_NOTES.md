@@ -1,5 +1,11 @@
 # Release Notes
 
+## 1.4.0 (2026-03-23)
+
+### Features
+
+- **LLVM: stack traces** — Unhandled exceptions and HALT now print a full stack trace with procedure names, source files, and line numbers. Lightweight frame tracking via thread-local `m2_StackFrame` stack — procedure entry pushes a frame, exit pops it, each statement updates the line number. No external dependencies, no DWARF parsing required, works with and without `-g`.
+
 ## 1.3.1 (2026-03-23)
 
 ### Optimizations
