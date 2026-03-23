@@ -140,6 +140,8 @@ pub struct LLVMCodeGen {
     // ── SSA naming ──────────────────────────────────────────────────
     pub(crate) tmp_counter: usize,
     pub(crate) label_counter: usize,
+    /// Current basic block label (for PHI node predecessor tracking)
+    pub(crate) current_block: String,
 
     // ── String constant pool ────────────────────────────────────────
     /// (content, global_name, byte_length_including_nul)
@@ -257,6 +259,7 @@ impl LLVMCodeGen {
             debug_mode: false,
             tmp_counter: 0,
             label_counter: 0,
+            current_block: "bb.entry".to_string(),
             string_pool: Vec::new(),
             locals: vec![HashMap::new()],
             globals: HashMap::new(),
@@ -479,9 +482,9 @@ impl LLVMCodeGen {
     /// Declare RTTI runtime functions if not already declared.
     pub(crate) fn declare_rtti_runtime(&mut self) {
         if !self.declared_fns.contains("M2_ref_alloc") {
-            self.emit_preambleln("declare ptr @M2_ref_alloc(i64, ptr)");
-            self.emit_preambleln("declare i32 @M2_ISA(ptr, ptr)");
-            self.emit_preambleln("declare void @M2_ref_free(ptr)");
+            self.emit_preambleln("declare noalias ptr @M2_ref_alloc(i64, ptr) nounwind");
+            self.emit_preambleln("declare i32 @M2_ISA(ptr nocapture, ptr nocapture) nounwind readonly");
+            self.emit_preambleln("declare void @M2_ref_free(ptr) nounwind");
             self.declared_fns.insert("M2_ref_alloc".to_string());
             self.declared_fns.insert("M2_ISA".to_string());
             self.declared_fns.insert("M2_ref_free".to_string());
@@ -624,6 +627,11 @@ impl LLVMCodeGen {
                 }
             }
         }
+        // Track current basic block for PHI predecessor tracking
+        let trimmed = s.trim();
+        if trimmed.ends_with(':') && !trimmed.starts_with(';') && !trimmed.contains("  ") {
+            self.current_block = trimmed.trim_end_matches(':').to_string();
+        }
         self.body.push_str(s);
         self.body.push('\n');
     }
@@ -638,6 +646,12 @@ impl LLVMCodeGen {
         let n = self.label_counter;
         self.label_counter += 1;
         format!("{}.{}", prefix, n)
+    }
+
+    /// Emit a basic block label and update current_block for PHI tracking
+    pub(crate) fn emit_label(&mut self, label: &str) {
+        self.emitln(&format!("{}:", label));
+        self.current_block = label.to_string();
     }
 
     pub(crate) fn mangle(&self, name: &str) -> String {

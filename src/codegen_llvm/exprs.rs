@@ -876,37 +876,57 @@ impl LLVMCodeGen {
                 Val::new(tmp, common_ty)
             }
             BinaryOp::IntDiv => {
-                // PIM4 floored division via runtime helper
-                if !self.declared_fns.contains("m2_div") {
-                    self.emit_preambleln("declare i32 @m2_div(i32, i32)");
-                    self.emit_preambleln("declare i64 @m2_div64(i64, i64)");
-                    self.declared_fns.insert("m2_div".to_string());
-                    self.declared_fns.insert("m2_div64".to_string());
-                }
-                if common_ty == "i64" {
-                    self.emitln(&format!("  {} = call i64 @m2_div64(i64 {}, i64 {})", tmp, l.name, r.name));
+                // PIM4 floored division — inline IR (no function call overhead,
+                // enables constant folding and strength reduction by LLVM)
+                // q = a sdiv b; r = a srem b; if (r != 0 && (r ^ b) < 0) q--
+                let (la, ra) = if common_ty == "i64" {
+                    (l.clone(), r.clone())
                 } else {
-                    let l32 = self.coerce_val(&l, "i32");
-                    let r32 = self.coerce_val(&r, "i32");
-                    self.emitln(&format!("  {} = call i32 @m2_div(i32 {}, i32 {})", tmp, l32.name, r32.name));
-                }
+                    (self.coerce_val(&l, "i32"), self.coerce_val(&r, "i32"))
+                };
+                let ty = if common_ty == "i64" { "i64" } else { "i32" };
+                let q = self.next_tmp();
+                self.emitln(&format!("  {} = sdiv {} {}, {}", q, ty, la.name, ra.name));
+                let rem = self.next_tmp();
+                self.emitln(&format!("  {} = srem {} {}, {}", rem, ty, la.name, ra.name));
+                let xor = self.next_tmp();
+                self.emitln(&format!("  {} = xor {} {}, {}", xor, ty, rem, ra.name));
+                let r_ne_0 = self.next_tmp();
+                self.emitln(&format!("  {} = icmp ne {} {}, 0", r_ne_0, ty, rem));
+                let xor_neg = self.next_tmp();
+                self.emitln(&format!("  {} = icmp slt {} {}, 0", xor_neg, ty, xor));
+                let need_adj = self.next_tmp();
+                self.emitln(&format!("  {} = and i1 {}, {}", need_adj, r_ne_0, xor_neg));
+                let adj = self.next_tmp();
+                self.emitln(&format!("  {} = sext i1 {} to {}", adj, need_adj, ty));
+                // sext i1 true → -1, false → 0; so q + adj = q - 1 when needed
+                self.emitln(&format!("  {} = add {} {}, {}", tmp, ty, q, adj));
                 Val::new(tmp, common_ty)
             }
             BinaryOp::Mod => {
-                // PIM4 floored MOD via runtime helper
-                if !self.declared_fns.contains("m2_mod") {
-                    self.emit_preambleln("declare i32 @m2_mod(i32, i32)");
-                    self.emit_preambleln("declare i64 @m2_mod64(i64, i64)");
-                    self.declared_fns.insert("m2_mod".to_string());
-                    self.declared_fns.insert("m2_mod64".to_string());
-                }
-                if common_ty == "i64" {
-                    self.emitln(&format!("  {} = call i64 @m2_mod64(i64 {}, i64 {})", tmp, l.name, r.name));
+                // PIM4 floored MOD — inline IR
+                // r = a srem b; if (r < 0) r += abs(b)
+                let (la, ra) = if common_ty == "i64" {
+                    (l.clone(), r.clone())
                 } else {
-                    let l32 = self.coerce_val(&l, "i32");
-                    let r32 = self.coerce_val(&r, "i32");
-                    self.emitln(&format!("  {} = call i32 @m2_mod(i32 {}, i32 {})", tmp, l32.name, r32.name));
-                }
+                    (self.coerce_val(&l, "i32"), self.coerce_val(&r, "i32"))
+                };
+                let ty = if common_ty == "i64" { "i64" } else { "i32" };
+                let rem = self.next_tmp();
+                self.emitln(&format!("  {} = srem {} {}, {}", rem, ty, la.name, ra.name));
+                let r_neg = self.next_tmp();
+                self.emitln(&format!("  {} = icmp slt {} {}, 0", r_neg, ty, rem));
+                // abs(b): negate if b < 0
+                let b_neg = self.next_tmp();
+                self.emitln(&format!("  {} = icmp slt {} {}, 0", b_neg, ty, ra.name));
+                let neg_b = self.next_tmp();
+                self.emitln(&format!("  {} = sub {} 0, {}", neg_b, ty, ra.name));
+                let abs_b = self.next_tmp();
+                self.emitln(&format!("  {} = select i1 {}, {} {}, {} {}", abs_b, b_neg, ty, neg_b, ty, ra.name));
+                // add abs(b) if remainder is negative, else add 0
+                let correction = self.next_tmp();
+                self.emitln(&format!("  {} = select i1 {}, {} {}, {} 0", correction, r_neg, ty, abs_b, ty));
+                self.emitln(&format!("  {} = add {} {}, {}", tmp, ty, rem, correction));
                 Val::new(tmp, common_ty)
             }
             BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le |
@@ -1068,16 +1088,17 @@ impl LLVMCodeGen {
     }
 
     pub(crate) fn gen_short_circuit_and(&mut self, left: &Expr, right: &Expr) -> Val {
-        // Use alloca-based approach to avoid phi node block naming issues
-        let result_alloca = self.next_tmp();
-        self.emitln(&format!("  {} = alloca i32", result_alloca));
-        self.emitln(&format!("  store i32 0, ptr {}", result_alloca)); // default false
-
+        // PHI-based short-circuit: no alloca needed.
+        // gen_expr(left) may emit multiple blocks (nested AND/OR), so we
+        // capture current_block AFTER evaluating the LHS to get the actual
+        // predecessor for the PHI.
         let rhs_label = self.next_label("and.rhs");
         let merge_label = self.next_label("and.merge");
 
         let lval = self.gen_expr(left);
         let l_bool = self.to_i1(&lval);
+        let lhs_exit_block = self.current_block.clone();
+        // If LHS is false, short-circuit to merge with 0; otherwise eval RHS
         self.emitln(&format!("  br i1 {}, label %{}, label %{}", l_bool, rhs_label, merge_label));
 
         self.emitln(&format!("{}:", rhs_label));
@@ -1085,25 +1106,24 @@ impl LLVMCodeGen {
         let r_bool = self.to_i1(&rval);
         let r_ext = self.next_tmp();
         self.emitln(&format!("  {} = zext i1 {} to i32", r_ext, r_bool));
-        self.emitln(&format!("  store i32 {}, ptr {}", r_ext, result_alloca));
+        let rhs_exit_block = self.current_block.clone();
         self.emitln(&format!("  br label %{}", merge_label));
 
         self.emitln(&format!("{}:", merge_label));
         let result = self.next_tmp();
-        self.emitln(&format!("  {} = load i32, ptr {}", result, result_alloca));
+        self.emitln(&format!("  {} = phi i32 [0, %{}], [{}, %{}]",
+            result, lhs_exit_block, r_ext, rhs_exit_block));
         Val::new(result, "i32".to_string())
     }
 
     pub(crate) fn gen_short_circuit_or(&mut self, left: &Expr, right: &Expr) -> Val {
-        let result_alloca = self.next_tmp();
-        self.emitln(&format!("  {} = alloca i32", result_alloca));
-        self.emitln(&format!("  store i32 1, ptr {}", result_alloca)); // default true
-
         let rhs_label = self.next_label("or.rhs");
         let merge_label = self.next_label("or.merge");
 
         let lval = self.gen_expr(left);
         let l_bool = self.to_i1(&lval);
+        let lhs_exit_block = self.current_block.clone();
+        // If LHS is true, short-circuit to merge with 1; otherwise eval RHS
         self.emitln(&format!("  br i1 {}, label %{}, label %{}", l_bool, merge_label, rhs_label));
 
         self.emitln(&format!("{}:", rhs_label));
@@ -1111,12 +1131,13 @@ impl LLVMCodeGen {
         let r_bool = self.to_i1(&rval);
         let r_ext = self.next_tmp();
         self.emitln(&format!("  {} = zext i1 {} to i32", r_ext, r_bool));
-        self.emitln(&format!("  store i32 {}, ptr {}", r_ext, result_alloca));
+        let rhs_exit_block = self.current_block.clone();
         self.emitln(&format!("  br label %{}", merge_label));
 
         self.emitln(&format!("{}:", merge_label));
         let result = self.next_tmp();
-        self.emitln(&format!("  {} = load i32, ptr {}", result, result_alloca));
+        self.emitln(&format!("  {} = phi i32 [1, %{}], [{}, %{}]",
+            result, lhs_exit_block, r_ext, rhs_exit_block));
         Val::new(result, "i32".to_string())
     }
 

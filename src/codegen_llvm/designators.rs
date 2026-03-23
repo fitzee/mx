@@ -666,7 +666,13 @@ impl LLVMCodeGen {
         };
 
         let tmp = self.next_tmp();
-        self.emitln(&format!("  {} = load {}, ptr {}", tmp, load_ty, addr.name));
+        // Add !range metadata for BOOLEAN loads (value is always 0 or 1)
+        let is_boolean = addr.type_id == Some(crate::types::TY_BOOLEAN);
+        if is_boolean && load_ty == "i32" {
+            self.emitln(&format!("  {} = load {}, ptr {}, !range !{{i32 0, i32 2}}", tmp, load_ty, addr.name));
+        } else {
+            self.emitln(&format!("  {} = load {}, ptr {}", tmp, load_ty, addr.name));
+        }
         Val { name: tmp, ty: load_ty, type_id: addr.type_id }
     }
 

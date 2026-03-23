@@ -482,40 +482,40 @@ impl LLVMCodeGen {
     pub(crate) fn declare_runtime_helpers(&mut self) {
         // printf for basic I/O fallback
         if !self.declared_fns.contains("printf") {
-            self.emit_preambleln("declare i32 @printf(ptr, ...)");
+            self.emit_preambleln("declare i32 @printf(ptr, ...) nounwind");
             self.declared_fns.insert("printf".to_string());
         }
         // Memory functions
         if !self.declared_fns.contains("malloc") {
-            self.emit_preambleln("declare ptr @malloc(i64)");
+            self.emit_preambleln("declare noalias ptr @malloc(i64) nounwind");
             self.declared_fns.insert("malloc".to_string());
         }
         if !self.declared_fns.contains("free") {
-            self.emit_preambleln("declare void @free(ptr)");
+            self.emit_preambleln("declare void @free(ptr nocapture) nounwind");
             self.declared_fns.insert("free".to_string());
         }
         if !self.declared_fns.contains("memcpy") {
-            self.emit_preambleln("declare ptr @memcpy(ptr, ptr, i64)");
+            self.emit_preambleln("declare ptr @memcpy(ptr, ptr, i64) nounwind");
             self.declared_fns.insert("memcpy".to_string());
         }
         if !self.declared_fns.contains("memset") {
-            self.emit_preambleln("declare ptr @memset(ptr, i32, i64)");
+            self.emit_preambleln("declare ptr @memset(ptr, i32, i64) nounwind");
             self.declared_fns.insert("memset".to_string());
         }
         if !self.declared_fns.contains("exit") {
-            self.emit_preambleln("declare void @exit(i32) noreturn");
+            self.emit_preambleln("declare void @exit(i32) noreturn nounwind");
             self.declared_fns.insert("exit".to_string());
         }
         if !self.declared_fns.contains("strcmp") {
-            self.emit_preambleln("declare i32 @strcmp(ptr, ptr)");
+            self.emit_preambleln("declare i32 @strcmp(ptr nocapture, ptr nocapture) nounwind readonly");
             self.declared_fns.insert("strcmp".to_string());
         }
         if !self.declared_fns.contains("strcpy") {
-            self.emit_preambleln("declare ptr @strcpy(ptr, ptr)");
+            self.emit_preambleln("declare ptr @strcpy(ptr, ptr nocapture) nounwind");
             self.declared_fns.insert("strcpy".to_string());
         }
         if !self.declared_fns.contains("strlen") {
-            self.emit_preambleln("declare i64 @strlen(ptr)");
+            self.emit_preambleln("declare i64 @strlen(ptr nocapture) nounwind readonly");
             self.declared_fns.insert("strlen".to_string());
         }
         // Note: #dbg_declare records (LLVM 19+) don't need a function declaration

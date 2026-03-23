@@ -41,9 +41,9 @@ impl LLVMCodeGen {
             StatementKind::Exit => {
                 if let Some(exit_label) = self.loop_exit_stack.last().cloned() {
                     self.emitln(&format!("  br label %{}", exit_label));
-                    // Start a new unreachable block to keep IR well-formed
                     let dead = self.next_label("exit.dead");
                     self.emitln(&format!("{}:", dead));
+                    self.emitln("  unreachable");
                 }
             }
 
@@ -65,9 +65,10 @@ impl LLVMCodeGen {
                 } else {
                     self.emitln("  ret void");
                 }
-                // Dead code after return
+                // Dead code after return — emit unreachable block
                 let dead = self.next_label("ret.dead");
                 self.emitln(&format!("{}:", dead));
+                self.emitln("  unreachable");
             }
 
             StatementKind::Case { expr, branches, else_body } => {
@@ -573,11 +574,10 @@ impl LLVMCodeGen {
             else { self.gen_expr(end) }
         } else { self.gen_expr(end) };
 
-        // Store start value to loop var
         let var_addr = self.get_var_addr(var);
         let var_ty = var_addr.ty.clone();
         let start_coerced = self.coerce_val(&start_val, &var_ty);
-        self.emitln(&format!("  store {} {}, ptr {}", var_ty, start_coerced.name, var_addr.name));
+        let end_coerced = self.coerce_val(&end_val, &var_ty);
 
         // Determine step
         let step_val = if let Some(s) = step {
@@ -585,10 +585,10 @@ impl LLVMCodeGen {
         } else {
             Val::new("1", var_ty.clone())
         };
+        let step_coerced = self.coerce_val(&step_val, &var_ty);
 
         // Determine if counting up or down
         let is_negative_step = if let Some(s) = step {
-            // Check the AST for negative step
             match &s.kind {
                 ExprKind::UnaryOp { op: UnaryOp::Neg, .. } => true,
                 ExprKind::IntLit(v) => *v < 0,
@@ -598,44 +598,57 @@ impl LLVMCodeGen {
             false
         };
 
-        let cond_label = self.next_label("for.cond");
-        let body_label = self.next_label("for.body");
-        let end_label = self.next_label("for.end");
+        let preheader_label = self.next_label("for.ph");
+        let header_label = self.next_label("for.header");
+        let latch_label = self.next_label("for.latch");
+        let exit_label = self.next_label("for.exit");
 
-        self.emitln(&format!("  br label %{}", cond_label));
-        self.emitln(&format!("{}:", cond_label));
-
-        // Load current value
-        let cur = self.next_tmp();
-        self.emitln(&format!("  {} = load {}, ptr {}", cur, var_ty, var_addr.name));
-
-        // Compare: cur <= end (counting up) or cur >= end (counting down)
-        let cmp = self.next_tmp();
-        let end_coerced = self.coerce_val(&end_val, &var_ty);
+        // ── Preheader: evaluate bounds once, skip if empty range ──
+        // Guard: if start > end (counting up) or start < end (counting down), skip
+        let skip_cmp = self.next_tmp();
         if is_negative_step {
-            self.emitln(&format!("  {} = icmp sge {} {}, {}", cmp, var_ty, cur, end_coerced.name));
+            self.emitln(&format!("  {} = icmp slt {} {}, {}", skip_cmp, var_ty, start_coerced.name, end_coerced.name));
         } else {
-            self.emitln(&format!("  {} = icmp sle {} {}, {}", cmp, var_ty, cur, end_coerced.name));
+            self.emitln(&format!("  {} = icmp sgt {} {}, {}", skip_cmp, var_ty, start_coerced.name, end_coerced.name));
         }
-        self.emitln(&format!("  br i1 {}, label %{}, label %{}", cmp, body_label, end_label));
+        self.emitln(&format!("  br i1 {}, label %{}, label %{}", skip_cmp, exit_label, preheader_label));
 
-        self.emitln(&format!("{}:", body_label));
-        self.loop_exit_stack.push(end_label.clone());
+        self.emitln(&format!("{}:", preheader_label));
+        // Store start value to loop var (for body code that reads via alloca)
+        self.emitln(&format!("  store {} {}, ptr {}", var_ty, start_coerced.name, var_addr.name));
+        self.emitln(&format!("  br label %{}", header_label));
+
+        // ── Header: body executes here ──
+        self.emitln(&format!("{}:", header_label));
+
+        self.loop_exit_stack.push(exit_label.clone());
         for stmt in body {
             self.gen_statement(stmt);
         }
         self.loop_exit_stack.pop();
 
-        // Increment
-        let cur2 = self.next_tmp();
-        self.emitln(&format!("  {} = load {}, ptr {}", cur2, var_ty, var_addr.name));
-        let step_coerced = self.coerce_val(&step_val, &var_ty);
-        let next = self.next_tmp();
-        self.emitln(&format!("  {} = add {} {}, {}", next, var_ty, cur2, step_coerced.name));
-        self.emitln(&format!("  store {} {}, ptr {}", var_ty, next, var_addr.name));
-        self.emitln(&format!("  br label %{}", cond_label));
+        self.emitln(&format!("  br label %{}", latch_label));
 
-        self.emitln(&format!("{}:", end_label));
+        // ── Latch: increment, compare, branch back or exit ──
+        self.emitln(&format!("{}:", latch_label));
+        let cur = self.next_tmp();
+        self.emitln(&format!("  {} = load {}, ptr {}", cur, var_ty, var_addr.name));
+        let next = self.next_tmp();
+        // nsw: FOR loop induction variables have defined range (no signed overflow)
+        self.emitln(&format!("  {} = add nsw {} {}, {}", next, var_ty, cur, step_coerced.name));
+        self.emitln(&format!("  store {} {}, ptr {}", var_ty, next, var_addr.name));
+
+        // Exit test: compare AFTER increment (canonical latch-exit pattern)
+        let cont_cmp = self.next_tmp();
+        if is_negative_step {
+            self.emitln(&format!("  {} = icmp sge {} {}, {}", cont_cmp, var_ty, next, end_coerced.name));
+        } else {
+            self.emitln(&format!("  {} = icmp sle {} {}, {}", cont_cmp, var_ty, next, end_coerced.name));
+        }
+        self.emitln(&format!("  br i1 {}, label %{}, label %{}", cont_cmp, header_label, exit_label));
+
+        // ── Exit ──
+        self.emitln(&format!("{}:", exit_label));
     }
 
     pub(crate) fn gen_loop(&mut self, body: &[Statement]) {

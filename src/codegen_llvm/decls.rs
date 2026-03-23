@@ -444,24 +444,27 @@ impl LLVMCodeGen {
 
             for name in &fp.names {
                 if fp.is_var || is_open_array {
-                    params.push(format!("ptr %{}", name));
+                    // VAR params: noalias (M2 guarantees distinct variables at call site)
+                    // + nocapture (pointer doesn't escape the callee)
+                    // Open array params: nocapture (data pointer doesn't escape)
+                    let attrs = if fp.is_var {
+                        " noalias nocapture"
+                    } else {
+                        " nocapture"
+                    };
+                    params.push(format!("ptr{} %{}", attrs, name));
                     param_names.push((name.clone(), base_ty.clone(), fp.is_var));
                     if fp.is_var {
                         var_param_set.insert(name.clone());
                     }
-                    // Track open array params (even if also VAR) for element type lookup
-                    if is_open_array {
-                        // Note: don't add to open_array_set if VAR — the alloca/load
-                        // is handled by the VAR path. But we need lookup_open_array_elem_type
-                        // to find the element type, so add to open_array_params tracking.
-                    }
                 } else if base_ty.starts_with('[') {
                     // Named array params: pass as pointer (like C array decay)
                     // HIGH is computed from the type, not passed as a param
-                    params.push(format!("ptr %{}", name));
+                    params.push(format!("ptr nocapture %{}", name));
                     param_names.push((name.clone(), base_ty.clone(), false));
                 } else {
-                    params.push(format!("{} %{}", base_ty, name));
+                    // Scalar value params are always well-defined in M2
+                    params.push(format!("{} noundef %{}", base_ty, name));
                     param_names.push((name.clone(), base_ty.clone(), false));
                 }
 
@@ -520,10 +523,16 @@ impl LLVMCodeGen {
             }
             " personality ptr @m2_eh_personality"
         } else { "" };
+        // Function attributes: nounwind for procedures without exception handling
+        let has_exceptions = p.block.except.is_some()
+            || p.block.decls.iter().any(|d| matches!(d, Declaration::Procedure(pp) if pp.block.except.is_some()))
+            || self.m2plus; // M2+ procs may use TRY
+        let fn_attrs = if has_exceptions { "" } else { " nounwind" };
+
         if let Some(sp) = dbg_sp {
-            self.emitln(&format!("define {} @{}({}){} !dbg !{} {{", ret_ty, proc_name, params_str, personality, sp));
+            self.emitln(&format!("define {} @{}({}){}{} !dbg !{} {{", ret_ty, proc_name, params_str, fn_attrs, personality, sp));
         } else {
-            self.emitln(&format!("define {} @{}({}){} {{", ret_ty, proc_name, params_str, personality));
+            self.emitln(&format!("define {} @{}({}){}{} {{", ret_ty, proc_name, params_str, fn_attrs, personality));
         }
         self.emitln("bb.entry:");
 
