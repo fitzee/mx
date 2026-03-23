@@ -1,5 +1,19 @@
 # Release Notes
 
+## 1.3.1 (2026-03-23)
+
+### Optimizations
+
+- **LLVM: function attributes** — `nounwind` on all non-exception procedures, `noalias nocapture` on VAR params, `nocapture readonly` on non-VAR open array and named array params, `noundef` on scalar value params.
+- **LLVM: canonical FOR loops** — Preheader/header/latch/exit structure with empty-range guard. Exit test after increment (latch-exit pattern). `nsw` on induction variable increment. Enables IndVarSimplify and LoopVectorize.
+- **LLVM: PHI-based short-circuit AND/OR** — Eliminates non-entry-block allocas. LLVM collapses nested boolean chains to branchless `and i1` / `or i1` sequences.
+- **LLVM: inline m2_div/m2_mod** — Floored division and modulo emitted as inline IR instead of opaque C runtime calls. Enables constant folding (`DIV 2` → `ashr 1`), strength reduction, and `sdiv` → `udiv` promotion when LLVM proves positive range.
+- **LLVM: runtime function attributes** — `readnone nounwind willreturn` on m2_div/m2_mod/m2_div64/m2_mod64. `nounwind readonly` on strcmp/strlen. `noalias` on malloc. `nocapture` on free.
+- **LLVM: BOOLEAN !range metadata** — Loads of BOOLEAN variables annotated with `!range !{i32 0, i32 2}`, enabling value-range optimizations.
+- **LLVM: unreachable dead blocks** — Dead code after return/exit emits `unreachable` instead of dangling `ret`.
+- **LLVM: current_block tracking** — `emitln` auto-tracks the current basic block label for correct PHI node predecessor references in nested expressions.
+- **LLVM: fn_return_types map** — Cross-module function call return types resolved via `gen_proc_decl`-populated map, fixing void-return miscompilation for embedded module calls.
+
 ## 1.3.0 (2026-03-23)
 
 ### Features
