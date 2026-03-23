@@ -1,0 +1,11 @@
+DEFINITION MODULE Terminal;
+(* PIM4 Terminal module — basic character I/O *)
+
+VAR Done: BOOLEAN;
+
+PROCEDURE Read(VAR ch: CHAR);
+PROCEDURE Write(ch: CHAR);
+PROCEDURE WriteString(s: ARRAY OF CHAR);
+PROCEDURE WriteLn;
+
+END Terminal.

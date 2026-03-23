@@ -414,10 +414,13 @@ impl LLVMCodeGen {
             return;
         }
 
-        // Special handling for Strings module functions that need extra HIGH params
-        if name.contains("Strings_Assign") || name.contains("Strings_Concat")
-            || name.contains("Strings_Insert") || name.contains("Strings_Delete")
-            || name.contains("Strings_Copy") {
+        // Special handling for non-native Strings module functions that need extra HIGH params.
+        // Native Strings module has proper open array params — gen_call handles them correctly.
+        if !crate::stdlib::is_native_stdlib("Strings")
+            && (name.contains("Strings_Assign") || name.contains("Strings_Concat")
+                || name.contains("Strings_Insert") || name.contains("Strings_Delete")
+                || name.contains("Strings_Copy"))
+        {
             self.gen_strings_call(&name, args);
             return;
         }

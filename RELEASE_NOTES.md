@@ -1,5 +1,29 @@
 # Release Notes
 
+## 1.3.0 (2026-03-23)
+
+### Features
+
+- **Native M2 stdlib** — Both C and LLVM backends now compile 13 stdlib modules (InOut, Strings, Storage, Terminal, MathLib, RealInOut, FileSystem, BinaryIO, STextIO, SWholeIO, SRealIO, SLongIO) from native Modula-2 source instead of hardcoded C functions. Single source of truth for stdlib behavior across backends.
+- **Slimmed runtime header** — C backend runtime header reduced from ~660 to ~380 lines. Dead C stdlib functions removed; only core runtime (exception handling, RTTI, div/mod, complex arithmetic, threads, Args) remains.
+- **Library root includes** — `find_def_file` and `find_mod_file` now scan `~/.mx/lib/*/` package roots in addition to `*/src/` subdirectories.
+
+### Bug fixes
+
+- **LLVM: cross-module function return types** — Function return types are now tracked in a dedicated `fn_return_types` map populated by `gen_proc_decl`, fixing void-return calls to functions like `MathLib.Entier` from embedded modules.
+- **LLVM: string CONST open array passing** — Local string constants (CONST s = "...") passed to open array parameters now correctly load the string pointer and compute HIGH from the string length, instead of passing the address of the pointer global with HIGH=0.
+- **LLVM: duplicate global variables** — Globals emitted from both definition and implementation modules are now deduplicated, preventing LLVM IR redefinition errors.
+- **LLVM: case-insensitive stdlib name resolution** — Import-site casing (e.g. `Entier`) is resolved against the def-file casing (e.g. `entier`) for native stdlib modules via case-insensitive `declared_fns` lookup.
+- **LLVM: native Strings calling convention** — Bypass the old `gen_strings_call` special handler for native Strings module; `gen_call` handles open array params correctly.
+- **LLVM: `map_stdlib_call` bypass** — Native stdlib functions no longer go through `map_stdlib_call` which returned C expressions (like `(int32_t)floorf`) invalid as LLVM IR function names.
+- **C backend: open array param name mangling** — `open_array_params` now stores mangled names, fixing HIGH computation for parameters whose names are C keywords (e.g. `default`).
+- **C backend: skip `get_stdlib_proc_params` for native modules** — Prevents hardcoded param info (without open array flags) from overwriting the actual param info from compiled modules.
+- **mxpkg0: respect dep `includes` field** — `resolve_deps` now reads the dependency's `m2.toml` `includes` field instead of always assuming `src/`, fixing resolution for packages like m2sys with `includes=.`.
+
+### Build system
+
+- **m2fmt.c linking** — Float formatting helpers (`m2fmt.c`) are now linked in both C and LLVM backend compile paths, and auto-detected by the adversarial test runner.
+
 ## 1.2.0 (2026-03-23)
 
 ### Features

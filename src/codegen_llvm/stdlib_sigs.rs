@@ -3,14 +3,15 @@ use super::*;
 impl LLVMCodeGen {
     // ── Stdlib function declarations ────────────────────────────────
 
+    /// Declare a non-native stdlib function (backed by C runtime).
+    /// Native stdlib modules are compiled inline and should NOT use this path —
+    /// their functions are defined by gen_embedded_impl_module / gen_proc_decl.
     pub(crate) fn declare_stdlib_function(&mut self, module: &str, name: &str) {
-        // Use the m2_* C runtime name (matches the standalone runtime .c file)
         let c_name = stdlib::map_stdlib_call(module, name)
             .unwrap_or_else(|| format!("{}_{}", module, name));
         let import_name = format!("{}_{}", module, name);
 
         if self.declared_fns.contains(&c_name) {
-            // Still register the import→runtime name mapping
             self.stdlib_name_map.insert(import_name, c_name);
             return;
         }
@@ -20,10 +21,13 @@ impl LLVMCodeGen {
             sig.return_type, c_name, sig.params_str));
         self.declared_fns.insert(c_name.clone());
 
-        // Map import name (InOut_WriteString) → runtime name (m2_WriteString)
         self.stdlib_name_map.insert(import_name.clone(), c_name.clone());
 
-        // Register param info under both names
+        if sig.return_type != "void" {
+            self.fn_return_types.insert(c_name.clone(), sig.return_type.clone());
+            self.fn_return_types.insert(import_name.clone(), sig.return_type.clone());
+        }
+
         if !sig.param_infos.is_empty() {
             self.proc_params.insert(c_name.clone(), sig.param_infos.clone());
             self.proc_params.insert(import_name, sig.param_infos);
@@ -45,48 +49,52 @@ impl LLVMCodeGen {
             open_array_elem_type: None,
         };
 
-        // Common stdlib functions — emit correct LLVM signatures
-        match (module, name) {
+        // Common stdlib functions — emit correct LLVM signatures.
+        // Normalize function name for case-insensitive matching (Modula-2 identifiers
+        // may differ in case between def files and import sites).
+        let name_lower = name.to_ascii_lowercase();
+        let nl = name_lower.as_str();
+        match (module, nl) {
             // ── InOut ──────────────────────────────────────────
             // C runtime signatures: m2_WriteString(const char *s), etc.
             // These match the C runtime's actual parameter lists.
-            ("InOut", "WriteString") => FnSig::with_params("void", "ptr",
+            ("InOut", "writestring") => FnSig::with_params("void", "ptr",
                 vec![val_param("s", "ptr")]),
-            ("InOut", "WriteInt") => FnSig::with_params("void", "i32, i32",
+            ("InOut", "writeint") => FnSig::with_params("void", "i32, i32",
                 vec![val_param("n", "i32"), val_param("w", "i32")]),
-            ("InOut", "WriteCard") => FnSig::with_params("void", "i32, i32",
+            ("InOut", "writecard") => FnSig::with_params("void", "i32, i32",
                 vec![val_param("n", "i32"), val_param("w", "i32")]),
-            ("InOut", "WriteLn") => FnSig::new("void", ""),
-            ("InOut", "Write") => FnSig::with_params("void", "i8",
+            ("InOut", "writeln") => FnSig::new("void", ""),
+            ("InOut", "write") => FnSig::with_params("void", "i8",
                 vec![val_param("ch", "i8")]),
-            ("InOut", "WriteHex") => FnSig::with_params("void", "i32, i32",
+            ("InOut", "writehex") => FnSig::with_params("void", "i32, i32",
                 vec![val_param("n", "i32"), val_param("w", "i32")]),
-            ("InOut", "WriteOct") => FnSig::with_params("void", "i32, i32",
+            ("InOut", "writeoct") => FnSig::with_params("void", "i32, i32",
                 vec![val_param("n", "i32"), val_param("w", "i32")]),
-            ("InOut", "Read") => FnSig::with_params("void", "ptr",
+            ("InOut", "read") => FnSig::with_params("void", "ptr",
                 vec![var_param("ch")]),
-            ("InOut", "ReadString") => FnSig::with_params("void", "ptr",
+            ("InOut", "readstring") => FnSig::with_params("void", "ptr",
                 vec![val_param("s", "ptr")]),
-            ("InOut", "ReadInt") => FnSig::with_params("void", "ptr",
+            ("InOut", "readint") => FnSig::with_params("void", "ptr",
                 vec![var_param("n")]),
-            ("InOut", "ReadCard") => FnSig::with_params("void", "ptr",
+            ("InOut", "readcard") => FnSig::with_params("void", "ptr",
                 vec![var_param("n")]),
-            ("InOut", "Done") => FnSig::new("i32", ""),
-            ("InOut", "EOL") => FnSig::new("void", ""),
-            ("InOut", "OpenInput") => FnSig::with_params("void", "ptr",
+            ("InOut", "done") => FnSig::new("i32", ""),
+            ("InOut", "eol") => FnSig::new("void", ""),
+            ("InOut", "openinput") => FnSig::with_params("void", "ptr",
                 vec![val_param("ext", "ptr")]),
-            ("InOut", "OpenOutput") => FnSig::with_params("void", "ptr",
+            ("InOut", "openoutput") => FnSig::with_params("void", "ptr",
                 vec![val_param("ext", "ptr")]),
-            ("InOut", "CloseInput") => FnSig::new("void", ""),
-            ("InOut", "CloseOutput") => FnSig::new("void", ""),
+            ("InOut", "closeinput") => FnSig::new("void", ""),
+            ("InOut", "closeoutput") => FnSig::new("void", ""),
             // ── RealInOut ────────────────────────────────────
-            ("RealInOut", "WriteReal") => FnSig::with_params("void", "float, i32",
+            ("RealInOut", "writereal") => FnSig::with_params("void", "float, i32",
                 vec![val_param("r", "float"), val_param("w", "i32")]),
-            ("RealInOut", "WriteLongReal") => FnSig::with_params("void", "double, i32",
+            ("RealInOut", "writelongreal") => FnSig::with_params("void", "double, i32",
                 vec![val_param("r", "double"), val_param("w", "i32")]),
-            ("RealInOut", "WriteFixPt") => FnSig::with_params("void", "float, i32, i32",
+            ("RealInOut", "writefixpt") => FnSig::with_params("void", "float, i32, i32",
                 vec![val_param("r", "float"), val_param("w", "i32"), val_param("d", "i32")]),
-            ("RealInOut", "ReadReal") => FnSig::with_params("void", "ptr",
+            ("RealInOut", "readreal") => FnSig::with_params("void", "ptr",
                 vec![var_param("r")]),
             // ── MathLib ──────────────────────────────────────
             ("MathLib", "sqrt") => FnSig::with_params("float", "float",
@@ -105,51 +113,51 @@ impl LLVMCodeGen {
                 vec![val_param("x", "float")]),
             // ── Strings ──────────────────────────────────────
             // C runtime: m2_Strings_Assign(src, dst, dst_high)
-            ("Strings", "Length") => FnSig::with_params("i32", "ptr",
+            ("Strings", "length") => FnSig::with_params("i32", "ptr",
                 vec![val_param("s", "ptr")]),
-            ("Strings", "Assign") => FnSig::with_params("void", "ptr, ptr, i32",
+            ("Strings", "assign") => FnSig::with_params("void", "ptr, ptr, i32",
                 vec![val_param("src", "ptr"), val_param("dst", "ptr"), val_param("dst_high", "i32")]),
-            ("Strings", "Concat") => FnSig::with_params("void", "ptr, ptr, ptr, i32",
+            ("Strings", "concat") => FnSig::with_params("void", "ptr, ptr, ptr, i32",
                 vec![val_param("a", "ptr"), val_param("b", "ptr"), val_param("dst", "ptr"), val_param("dst_high", "i32")]),
-            ("Strings", "CompareStr") => FnSig::with_params("i32", "ptr, ptr",
+            ("Strings", "comparestr") => FnSig::with_params("i32", "ptr, ptr",
                 vec![val_param("a", "ptr"), val_param("b", "ptr")]),
-            ("Strings", "Insert") => FnSig::with_params("void", "ptr, ptr, i32, i32",
+            ("Strings", "insert") => FnSig::with_params("void", "ptr, ptr, i32, i32",
                 vec![val_param("sub", "ptr"), val_param("dst", "ptr"), val_param("dst_high", "i32"), val_param("pos", "i32")]),
-            ("Strings", "Delete") => FnSig::with_params("void", "ptr, i32, i32, i32",
+            ("Strings", "delete") => FnSig::with_params("void", "ptr, i32, i32, i32",
                 vec![val_param("s", "ptr"), val_param("s_high", "i32"), val_param("pos", "i32"), val_param("len", "i32")]),
-            ("Strings", "Copy") => FnSig::with_params("void", "ptr, i32, i32, ptr, i32",
+            ("Strings", "copy") => FnSig::with_params("void", "ptr, i32, i32, ptr, i32",
                 vec![val_param("src", "ptr"), val_param("pos", "i32"), val_param("len", "i32"), val_param("dst", "ptr"), val_param("dst_high", "i32")]),
-            ("Strings", "Pos") => FnSig::with_params("i32", "ptr, ptr",
+            ("Strings", "pos") => FnSig::with_params("i32", "ptr, ptr",
                 vec![val_param("sub", "ptr"), val_param("s", "ptr")]),
             // ── Storage ──────────────────────────────────────
-            ("Storage", "ALLOCATE") => FnSig::with_params("void", "ptr, i32",
+            ("Storage", "allocate") => FnSig::with_params("void", "ptr, i32",
                 vec![var_param("p"), val_param("size", "i32")]),
-            ("Storage", "DEALLOCATE") => FnSig::with_params("void", "ptr, i32",
+            ("Storage", "deallocate") => FnSig::with_params("void", "ptr, i32",
                 vec![var_param("p"), val_param("size", "i32")]),
             // ── BinaryIO ────────────────────────────────────
-            ("BinaryIO", "OpenRead") => FnSig::with_params("void", "ptr, ptr",
+            ("BinaryIO", "openread") => FnSig::with_params("void", "ptr, ptr",
                 vec![val_param("name", "ptr"), var_param("fh")]),
-            ("BinaryIO", "OpenWrite") => FnSig::with_params("void", "ptr, ptr",
+            ("BinaryIO", "openwrite") => FnSig::with_params("void", "ptr, ptr",
                 vec![val_param("name", "ptr"), var_param("fh")]),
-            ("BinaryIO", "Close") => FnSig::with_params("void", "i32",
+            ("BinaryIO", "close") => FnSig::with_params("void", "i32",
                 vec![val_param("fh", "i32")]),
-            ("BinaryIO", "ReadByte") => FnSig::with_params("void", "i32, ptr",
+            ("BinaryIO", "readbyte") => FnSig::with_params("void", "i32, ptr",
                 vec![val_param("fh", "i32"), var_param("b")]),
-            ("BinaryIO", "WriteByte") => FnSig::with_params("void", "i32, i32",
+            ("BinaryIO", "writebyte") => FnSig::with_params("void", "i32, i32",
                 vec![val_param("fh", "i32"), val_param("b", "i32")]),
-            ("BinaryIO", "ReadBytes") => FnSig::with_params("void", "i32, ptr, i32, ptr",
+            ("BinaryIO", "readbytes") => FnSig::with_params("void", "i32, ptr, i32, ptr",
                 vec![val_param("fh", "i32"), val_param("buf", "ptr"), val_param("n", "i32"), var_param("actual")]),
-            ("BinaryIO", "WriteBytes") => FnSig::with_params("void", "i32, ptr, i32",
+            ("BinaryIO", "writebytes") => FnSig::with_params("void", "i32, ptr, i32",
                 vec![val_param("fh", "i32"), val_param("buf", "ptr"), val_param("n", "i32")]),
-            ("BinaryIO", "FileSize") => FnSig::with_params("void", "i32, ptr",
+            ("BinaryIO", "filesize") => FnSig::with_params("void", "i32, ptr",
                 vec![val_param("fh", "i32"), var_param("size")]),
-            ("BinaryIO", "Seek") => FnSig::with_params("void", "i32, i32",
+            ("BinaryIO", "seek") => FnSig::with_params("void", "i32, i32",
                 vec![val_param("fh", "i32"), val_param("pos", "i32")]),
-            ("BinaryIO", "Tell") => FnSig::with_params("void", "i32, ptr",
+            ("BinaryIO", "tell") => FnSig::with_params("void", "i32, ptr",
                 vec![val_param("fh", "i32"), var_param("pos")]),
-            ("BinaryIO", "IsEOF") => FnSig::with_params("i32", "i32",
+            ("BinaryIO", "iseof") => FnSig::with_params("i32", "i32",
                 vec![val_param("fh", "i32")]),
-            ("BinaryIO", "Done") => FnSig::new("i32", ""),
+            ("BinaryIO", "done") => FnSig::new("i32", ""),
             _ => {
                 // Default: void with no params — caller should override
                 FnSig::new("void", "")
@@ -254,7 +262,15 @@ impl LLVMCodeGen {
                     }
                     ExprKind::Designator(d) => {
                         let addr = self.gen_designator_addr(d);
-                        arg_strs.push(format!("ptr {}", addr.name));
+                        // String constants are stored as `global ptr @.str.N` —
+                        // need to load the pointer to get the actual string data.
+                        if self.string_const_lengths.contains_key(&d.ident.name) {
+                            let tmp = self.next_tmp();
+                            self.emitln(&format!("  {} = load ptr, ptr {}", tmp, addr.name));
+                            arg_strs.push(format!("ptr {}", tmp));
+                        } else {
+                            arg_strs.push(format!("ptr {}", addr.name));
+                        }
                         // Compute HIGH from the resolved address type first,
                         // then fall back to variable-level HIGH
                         let high = if addr.ty.starts_with('[') {

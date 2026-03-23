@@ -1,0 +1,17 @@
+DEFINITION MODULE Strings;
+(* PIM4 Strings module — bounded string operations.
+   All operations NUL-terminate and truncate on overflow. *)
+
+PROCEDURE Assign(s: ARRAY OF CHAR; VAR dst: ARRAY OF CHAR);
+PROCEDURE Insert(sub: ARRAY OF CHAR; VAR dst: ARRAY OF CHAR; pos: CARDINAL);
+PROCEDURE Delete(VAR s: ARRAY OF CHAR; pos: CARDINAL; len: CARDINAL);
+PROCEDURE Pos(sub: ARRAY OF CHAR; s: ARRAY OF CHAR): CARDINAL;
+PROCEDURE Length(s: ARRAY OF CHAR): CARDINAL;
+PROCEDURE Copy(src: ARRAY OF CHAR; pos: CARDINAL; len: CARDINAL;
+               VAR dst: ARRAY OF CHAR);
+PROCEDURE Concat(s1: ARRAY OF CHAR; s2: ARRAY OF CHAR;
+                 VAR dst: ARRAY OF CHAR);
+PROCEDURE CompareStr(s1: ARRAY OF CHAR; s2: ARRAY OF CHAR): INTEGER;
+PROCEDURE CAPS(VAR s: ARRAY OF CHAR);
+
+END Strings.

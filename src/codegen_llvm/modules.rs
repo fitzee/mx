@@ -430,9 +430,10 @@ impl LLVMCodeGen {
         for imp in imports {
             if imp.from_module.is_none() {
                 // Whole-module import: IMPORT InOut
-                // For stdlib modules, declare all exported functions
+                // For non-native stdlib modules, declare exported function signatures.
+                // Native stdlib modules are compiled inline — gen_proc_decl handles everything.
                 for iname in &imp.names {
-                    if stdlib::is_stdlib_module(&iname.name) {
+                    if stdlib::is_stdlib_module(&iname.name) && !stdlib::is_native_stdlib(&iname.name) {
                         let exports = stdlib::get_stdlib_exports(&iname.name);
                         for export in &exports {
                             self.declare_stdlib_function(&iname.name, export);
@@ -441,7 +442,7 @@ impl LLVMCodeGen {
                 }
             }
             if let Some(ref from_mod) = imp.from_module {
-                if stdlib::is_stdlib_module(from_mod) {
+                if stdlib::is_stdlib_module(from_mod) && !stdlib::is_native_stdlib(from_mod) {
                     for iname in &imp.names {
                         self.declare_stdlib_function(from_mod, &iname.name);
                     }

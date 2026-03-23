@@ -1,0 +1,8 @@
+DEFINITION MODULE FOR "C" CMem;
+(* C memory allocation functions *)
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE malloc(size: CARDINAL): ADDRESS;
+PROCEDURE free(ptr: ADDRESS);
+
+END CMem.

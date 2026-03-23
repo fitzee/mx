@@ -216,11 +216,18 @@ impl LLVMCodeGen {
                 if let ExprKind::StringLit(s) = &cd.expr.kind {
                     // String constants — create a global alias pointing to the interned string
                     let (str_name, _) = self.intern_string(s);
-                    let global_name = format!("@{}", self.mangle(&cd.name));
+                    let mut mangled = self.mangle(&cd.name);
+                    // Deduplicate: if a global with this name already exists, append a counter
+                    if self.globals.contains_key(&mangled) {
+                        self.anon_record_counter += 1;
+                        mangled = format!("{}_{}", mangled, self.anon_record_counter);
+                    }
+                    let global_name = format!("@{}", mangled);
                     self.emit_preambleln(&format!("{} = global ptr {}", global_name, str_name));
                     self.globals.insert(cd.name.clone(), (global_name.clone(), "ptr".to_string()));
-                    let mangled = self.mangle(&cd.name);
                     self.globals.insert(mangled, (global_name, "ptr".to_string()));
+                    // Track string length for open array HIGH computation
+                    self.string_const_lengths.insert(cd.name.clone(), s.len());
                     // Single-char string: also register as integer constant for CHAR comparisons
                     if s.len() == 1 {
                         self.const_values.insert(cd.name.clone(), s.as_bytes()[0] as i64);
@@ -318,7 +325,12 @@ impl LLVMCodeGen {
                 }
 
                 for name in &v.names {
-                    let global_name = format!("@{}", self.mangle(name));
+                    let mangled_name = self.mangle(name);
+                    // Skip if this global was already emitted (e.g., def + impl both declare same var)
+                    if self.globals.contains_key(&mangled_name) {
+                        continue;
+                    }
+                    let global_name = format!("@{}", mangled_name);
                     let zero = self.llvm_zero_initializer(&llvm_ty);
                     // Emit with debug global variable expression if debug mode
                     let dbg_suffix = if self.di.is_some() {
@@ -335,7 +347,8 @@ impl LLVMCodeGen {
                     };
                     self.emit_preambleln(&format!("{} = global {} {}{}",
                         global_name, llvm_ty, zero, dbg_suffix));
-                    self.globals.insert(name.clone(), (global_name, llvm_ty.clone()));
+                    self.globals.insert(name.clone(), (global_name.clone(), llvm_ty.clone()));
+                    self.globals.insert(mangled_name, (global_name, llvm_ty.clone()));
                     if is_array {
                         self.array_vars.insert(name.clone());
                     }
@@ -381,6 +394,12 @@ impl LLVMCodeGen {
         } else {
             "void".to_string()
         };
+
+        // Register return type for all name variants (used by infer_call_return_type)
+        if ret_ty != "void" {
+            self.fn_return_types.insert(proc_name.clone(), ret_ty.clone());
+            self.fn_return_types.insert(p.heading.name.clone(), ret_ty.clone());
+        }
 
         // Save var_types BEFORE params are registered, so they don't
         // overwrite globals with the same name (e.g. param 'd' vs global 'd').

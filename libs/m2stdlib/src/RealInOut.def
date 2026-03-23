@@ -1,0 +1,11 @@
+DEFINITION MODULE RealInOut;
+(* PIM4 RealInOut — floating-point I/O *)
+
+VAR Done: BOOLEAN;
+
+PROCEDURE ReadReal(VAR r: REAL);
+PROCEDURE WriteReal(r: REAL; w: CARDINAL);
+PROCEDURE WriteFixPt(r: REAL; w: CARDINAL; d: CARDINAL);
+PROCEDURE WriteRealOct(r: REAL);
+
+END RealInOut.

@@ -817,6 +817,13 @@ impl LLVMCodeGen {
                 if let Some(runtime_name) = self.stdlib_name_map.get(&full_name) {
                     return runtime_name.clone();
                 }
+                // Case-insensitive resolution for native stdlib
+                if !self.declared_fns.contains(&full_name) && crate::stdlib::is_native_stdlib(&desig.ident.name) {
+                    let lower = full_name.to_ascii_lowercase();
+                    if let Some(actual) = self.declared_fns.iter().find(|f| f.to_ascii_lowercase() == lower) {
+                        return actual.clone();
+                    }
+                }
                 return full_name;
             }
         }
@@ -854,6 +861,20 @@ impl LLVMCodeGen {
             return runtime_name.clone();
         }
 
+        // For native stdlib modules, the import-site casing may differ from the
+        // def file casing (e.g. Entier vs entier). Resolve against declared_fns,
+        // but only for stdlib imports to avoid false matches with local names.
+        if !self.declared_fns.contains(&import_name) {
+            if let Some(module) = self.import_map.get(&desig.ident.name) {
+                if crate::stdlib::is_native_stdlib(module) {
+                    let lower = import_name.to_ascii_lowercase();
+                    if let Some(actual) = self.declared_fns.iter().find(|f| f.to_ascii_lowercase() == lower) {
+                        return actual.clone();
+                    }
+                }
+            }
+        }
+
         import_name
     }
 
@@ -886,6 +907,10 @@ impl LLVMCodeGen {
                     }
                 }
             }
+        }
+        // Check string constant lengths (CONST s = "..." passed to open array)
+        if let Some(&len) = self.string_const_lengths.get(name) {
+            return format!("{}", len.saturating_sub(1));
         }
         "0".to_string()
     }

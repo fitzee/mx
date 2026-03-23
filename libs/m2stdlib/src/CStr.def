@@ -1,0 +1,12 @@
+DEFINITION MODULE FOR "C" CStr;
+(* C string/memory functions used by native M2 stdlib modules *)
+FROM SYSTEM IMPORT ADDRESS;
+
+PROCEDURE strlen(s: ADDRESS): CARDINAL;
+PROCEDURE memcpy(dst: ADDRESS; src: ADDRESS; n: CARDINAL): ADDRESS;
+PROCEDURE memmove(dst: ADDRESS; src: ADDRESS; n: CARDINAL): ADDRESS;
+PROCEDURE strcmp(s1: ADDRESS; s2: ADDRESS): INTEGER;
+PROCEDURE strstr(haystack: ADDRESS; needle: ADDRESS): ADDRESS;
+PROCEDURE toupper(c: INTEGER): INTEGER;
+
+END CStr.

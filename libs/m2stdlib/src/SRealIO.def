@@ -1,0 +1,9 @@
+DEFINITION MODULE SRealIO;
+(* ISO SRealIO — REAL I/O *)
+
+PROCEDURE WriteFloat(r: REAL; sigFigs: CARDINAL; w: CARDINAL);
+PROCEDURE WriteFixed(r: REAL; place: INTEGER; w: CARDINAL);
+PROCEDURE WriteReal(r: REAL; w: CARDINAL);
+PROCEDURE ReadReal(VAR r: REAL);
+
+END SRealIO.

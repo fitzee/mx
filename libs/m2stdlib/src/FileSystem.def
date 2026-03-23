@@ -1,0 +1,14 @@
+DEFINITION MODULE FileSystem;
+(* PIM4 FileSystem — basic file operations *)
+FROM SYSTEM IMPORT ADDRESS;
+
+TYPE File = ADDRESS;
+
+VAR Done: BOOLEAN;
+
+PROCEDURE Lookup(VAR f: File; name: ARRAY OF CHAR; newFile: BOOLEAN);
+PROCEDURE Close(VAR f: File);
+PROCEDURE ReadChar(VAR f: File; VAR ch: CHAR);
+PROCEDURE WriteChar(VAR f: File; ch: CHAR);
+
+END FileSystem.
