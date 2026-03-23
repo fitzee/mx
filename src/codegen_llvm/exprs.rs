@@ -748,9 +748,14 @@ impl LLVMCodeGen {
                                 ptr, elem_size, td));
                             self.emitln(&format!("  store ptr {}, ptr {}", ptr, addr.name));
                         } else {
-                            // Plain allocation (no RTTI)
+                            // Plain allocation — compute size from the pointed-to type
+                            let target_ty = self.var_types.get(var_name)
+                                .and_then(|&tid| self.tl_pointer_target(tid))
+                                .map(|target_tid| self.tl_type_str(target_tid))
+                                .unwrap_or_else(|| addr.ty.clone());
+                            let alloc_size = self.emit_sizeof(&target_ty);
                             let ptr = self.next_tmp();
-                            self.emitln(&format!("  {} = call ptr @malloc(i64 256)", ptr));
+                            self.emitln(&format!("  {} = call noalias ptr @malloc(i64 {})", ptr, alloc_size));
                             self.emitln(&format!("  store ptr {}, ptr {}", ptr, addr.name));
                         }
                     }
