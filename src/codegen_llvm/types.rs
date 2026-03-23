@@ -234,13 +234,17 @@ impl LLVMCodeGen {
                     "COMPLEX" => "{ float, float }".to_string(),
                     "LONGCOMPLEX" => "{ double, double }".to_string(),
                     _ => {
-                        // TypeLowering first, then type_map fallback
+                        // Resolve through sema (handles cross-module aliases and records)
+                        if let Some(tid) = self.resolve_type_node_to_id(tn) {
+                            let ty_str = self.tl_type_str(tid);
+                            if ty_str != "void" {
+                                return ty_str;
+                            }
+                        }
+                        // Fallback: symtab lookup, then type_map
                         if let Some(sym) = self.sema.symtab.lookup_any(name) {
                             if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
                                 let ty_str = self.tl_type_str(sym.typ);
-                                // Guard: void is never valid for a named type
-                                // used in a record field or array element.
-                                // Fall through to type_map if tl returns void.
                                 if ty_str != "void" {
                                     ty_str
                                 } else {

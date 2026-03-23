@@ -273,6 +273,24 @@ impl SymbolTable {
         self.scopes.len()
     }
 
+    /// Dump all scopes and their type symbols for diagnostics.
+    pub fn dump_type_scopes(&self, target_name: &str) {
+        for (i, scope) in self.scopes.iter().enumerate() {
+            let types: Vec<&str> = scope.symbols.values()
+                .filter(|s| matches!(s.kind, SymbolKind::Type))
+                .map(|s| s.name.as_str())
+                .collect();
+            if types.contains(&target_name) {
+                eprintln!("  FOUND '{}' in scope[{}] '{}'", target_name, i, scope.name);
+            }
+            if !types.is_empty() && types.len() <= 20 {
+                eprintln!("  scope[{}] '{}': {:?}", i, scope.name, types);
+            } else if !types.is_empty() {
+                eprintln!("  scope[{}] '{}': {} types", i, scope.name, types.len());
+            }
+        }
+    }
+
     /// Return the parent scope ID, if any.
     pub fn scope_parent(&self, scope_id: usize) -> Option<usize> {
         self.scopes.get(scope_id).and_then(|s| s.parent)

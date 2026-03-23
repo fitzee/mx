@@ -366,42 +366,49 @@ impl LLVMCodeGen {
 
     pub fn add_imported_module(&mut self, imp: ImplementationModule) {
         let mod_name = imp.name.clone();
-
-        // Note: param type finalization deferred to after sema.analyze()
-        // to ensure TypeIds are from the final canonical TypeRegistry.
-        // Extract exported procedure info
-        let mut exports = Vec::new();
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                let mut param_info = Vec::new();
-                for fp in &p.heading.params {
-                    let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                    let llvm_ty = self.llvm_type_for_type_node(&fp.typ);
-                    let elem_ty2 = if is_open_array {
-                        if let TypeNode::OpenArray { elem_type, .. } = &fp.typ {
-                            Some(self.llvm_type_for_type_node(elem_type))
-                        } else { None }
-                    } else { None };
-                    for name in &fp.names {
-                        param_info.push(ParamLLVMInfo {
-                            name: name.clone(),
-                            is_var: fp.is_var,
-                            is_open_array,
-                            llvm_type: if fp.is_var { "ptr".to_string() } else { llvm_ty.clone() },
-                            open_array_elem_type: elem_ty2.clone(),
-                        });
-                    }
-                }
-                exports.push((p.heading.name.clone(), param_info));
-            }
-        }
-        self.module_exports.insert(mod_name.clone(), exports);
+        // Don't resolve LLVM types here — sema hasn't analyzed these modules yet.
+        // Just store the module; exports will be built after sema analysis.
         self.imported_modules.insert(mod_name);
-
         if self.pending_modules.is_none() {
             self.pending_modules = Some(Vec::new());
         }
         self.pending_modules.as_mut().unwrap().push(imp);
+    }
+
+    /// Build module_exports from pending modules. Must be called AFTER
+    /// analyze_all_impl_modules() so sema has full type information.
+    fn build_module_exports(&mut self) {
+        let modules: Vec<_> = self.pending_modules.as_ref()
+            .map(|v| v.iter().cloned().collect())
+            .unwrap_or_default();
+        for imp in &modules {
+            let mut exports = Vec::new();
+            for decl in &imp.block.decls {
+                if let Declaration::Procedure(p) = decl {
+                    let mut param_info = Vec::new();
+                    for fp in &p.heading.params {
+                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
+                        let llvm_ty = self.llvm_type_for_type_node(&fp.typ);
+                        let elem_ty2 = if is_open_array {
+                            if let TypeNode::OpenArray { elem_type, .. } = &fp.typ {
+                                Some(self.llvm_type_for_type_node(elem_type))
+                            } else { None }
+                        } else { None };
+                        for name in &fp.names {
+                            param_info.push(ParamLLVMInfo {
+                                name: name.clone(),
+                                is_var: fp.is_var,
+                                is_open_array,
+                                llvm_type: if fp.is_var { "ptr".to_string() } else { llvm_ty.clone() },
+                                open_array_elem_type: elem_ty2.clone(),
+                            });
+                        }
+                    }
+                    exports.push((p.heading.name.clone(), param_info));
+                }
+            }
+            self.module_exports.insert(imp.name.clone(), exports);
+        }
     }
 
     pub fn is_foreign_module(&self, name: &str) -> bool {
@@ -410,7 +417,8 @@ impl LLVMCodeGen {
 
     pub fn generate_or_errors(&mut self, unit: &CompilationUnit) -> Result<String, Vec<CompileError>> {
         self.sema.analyze(unit)?;
-        self.finalize_all_impl_modules();
+        self.analyze_all_impl_modules();
+        self.build_module_exports();
         self.build_type_lowering();
         self.post_sema_generate(unit).map_err(|e| vec![e])?;
         Ok(self.finalize())
@@ -426,28 +434,23 @@ impl LLVMCodeGen {
                 msg,
             )
         })?;
-        self.finalize_all_impl_modules();
+        self.analyze_all_impl_modules();
+        self.build_module_exports();
         self.build_type_lowering();
         self.post_sema_generate(unit)?;
         Ok(self.finalize())
     }
 
-    /// Build the TypeLowering table from the sema TypeRegistry.
-    /// Called once after sema.analyze() succeeds.
-    /// Finalize parameter types and register impl types for all imported
-    /// implementation modules. Must run AFTER sema.analyze(main_unit)
-    /// and BEFORE build_type_lowering() so TypeIds are in TypeLowering.
-    fn finalize_all_impl_modules(&mut self) {
+    /// Run full semantic analysis on all imported implementation modules.
+    /// Must run AFTER sema.analyze(main_unit) and BEFORE build_type_lowering()
+    /// so all types (including private impl-only types like records, pointers)
+    /// are fully registered in sema's type registry and scopes.
+    fn analyze_all_impl_modules(&mut self) {
         let modules: Vec<_> = self.pending_modules.as_ref()
             .map(|v| v.iter().cloned().collect())
             .unwrap_or_default();
         for imp in &modules {
-            // Register .mod types in sema (creates scopes for find_type_in_module)
-            self.sema.register_impl_types(imp);
-            // Finalize .def-exported procedure param types
-            if self.sema.has_def_module(&imp.name) {
-                self.sema.finalize_impl_param_types(&imp.name, imp);
-            }
+            self.sema.analyze_impl_module(imp);
         }
     }
 

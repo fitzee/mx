@@ -71,6 +71,14 @@ impl SemanticAnalyzer {
         self.analyze_definition_module(def);
     }
 
+    /// Run full semantic analysis on an implementation module.
+    /// Registers all types (including private impl-only types), resolves
+    /// imports, analyzes all declarations and statements, and finalizes
+    /// parameter types back to the .def scope.
+    pub fn analyze_impl_module(&mut self, imp: &crate::ast::ImplementationModule) {
+        self.analyze_implementation_module(imp);
+    }
+
     /// Register an implementation module's type declarations in the symtab.
     /// Creates a scope named after the module containing all TYPE declarations,
     /// so that resolve_type_node_to_id can find module-specific types.
