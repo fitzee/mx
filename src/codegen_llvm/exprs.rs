@@ -452,14 +452,31 @@ impl LLVMCodeGen {
             "SIZE" | "TSIZE" => {
                 if let Some(arg) = args.first() {
                     if let ExprKind::Designator(d) = &arg.kind {
-                        let size = match d.ident.name.as_str() {
-                            "INTEGER" | "CARDINAL" | "BITSET" | "WORD" | "REAL" => "4",
-                            "LONGINT" | "LONGCARD" | "LONGREAL" | "ADDRESS" => "8",
-                            "CHAR" | "BYTE" => "1",
-                            "BOOLEAN" => "4",
-                            _ => "4",
+                        let name = &d.ident.name;
+                        // Try builtin sizes first
+                        let builtin_size = match name.as_str() {
+                            "INTEGER" | "CARDINAL" | "BITSET" | "WORD" | "REAL" => Some("4"),
+                            "LONGINT" | "LONGCARD" | "LONGREAL" | "ADDRESS" => Some("8"),
+                            "CHAR" | "BYTE" => Some("1"),
+                            "BOOLEAN" => Some("4"),
+                            _ => None,
                         };
-                        return Val::new(size, "i32".to_string());
+                        if let Some(s) = builtin_size {
+                            return Val::new(s, "i32".to_string());
+                        }
+                        // Resolve through sema: get the LLVM type and compute sizeof
+                        let llvm_ty = self.llvm_type_for_type_node(
+                            &crate::ast::TypeNode::Named(crate::ast::QualIdent {
+                                module: d.ident.module.clone(),
+                                name: name.clone(),
+                                loc: crate::errors::SourceLoc::default(),
+                            }));
+                        // Use GEP-from-null trick: sizeof(T) = ptrtoint(gep T, null, 1)
+                        let gep_tmp = self.next_tmp();
+                        self.emitln(&format!("  {} = getelementptr {}, ptr null, i32 1", gep_tmp, llvm_ty));
+                        let size_tmp = self.next_tmp();
+                        self.emitln(&format!("  {} = ptrtoint ptr {} to i32", size_tmp, gep_tmp));
+                        return Val::new(size_tmp, "i32".to_string());
                     }
                 }
                 Val::new("4", "i32".to_string())
