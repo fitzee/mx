@@ -158,6 +158,18 @@ impl LLVMCodeGen {
             ("BinaryIO", "iseof") => FnSig::with_params("i32", "i32",
                 vec![val_param("fh", "i32")]),
             ("BinaryIO", "done") => FnSig::new("i32", ""),
+            // ── Args ──────────────────────────────────────
+            ("Args", "argcount") => FnSig::new("i32", ""),
+            ("Args", "getarg") => {
+                // GetArg(n: CARDINAL; VAR buf: ARRAY OF CHAR)
+                // C runtime: m2_Args_GetArg(uint32_t n, char *buf, uint32_t buf_high)
+                let buf_param = ParamLLVMInfo {
+                    name: "buf".to_string(), is_var: true, is_open_array: true,
+                    llvm_type: "ptr".to_string(), open_array_elem_type: Some("i8".to_string()),
+                };
+                FnSig { return_type: "void".to_string(), params_str: "i32, ptr, i32".to_string(),
+                    param_infos: vec![val_param("n", "i32"), buf_param] }
+            }
             _ => {
                 // Default: void with no params — caller should override
                 FnSig::new("void", "")
