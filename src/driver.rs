@@ -755,7 +755,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     }
     let mut def_queue: Vec<String> = all_imported_modules.clone();
     while let Some(mod_name) = def_queue.pop() {
-        if crate::stdlib::is_stdlib_module(&mod_name) || registered_defs.contains(&mod_name) || parsed_defs.contains_key(&mod_name) {
+        if (crate::stdlib::is_stdlib_module(&mod_name) && !crate::stdlib::is_native_stdlib(&mod_name)) || registered_defs.contains(&mod_name) || parsed_defs.contains_key(&mod_name) {
             continue;
         }
         if let Some(def_path) = find_def_file(&mod_name, &opts.input, &opts.include_paths) {
@@ -831,7 +831,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     let mut loaded_modules = std::collections::HashSet::new();
     let mut mod_queue: Vec<String> = all_imported_modules.clone();
     while let Some(mod_name) = mod_queue.pop() {
-        if crate::stdlib::is_stdlib_module(&mod_name) || loaded_modules.contains(&mod_name) {
+        if (crate::stdlib::is_stdlib_module(&mod_name) && !crate::stdlib::is_native_stdlib(&mod_name)) || loaded_modules.contains(&mod_name) {
             continue;
         }
         // Skip .mod lookup for foreign (C ABI) modules — they have no M2 implementation
@@ -863,7 +863,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 if let Some(ref from_mod) = imp.from_module {
                     if !loaded_modules.contains(from_mod) {
                         // Register the def module first if not already done
-                        if !registered_defs.contains(from_mod) && !crate::stdlib::is_stdlib_module(from_mod) {
+                        if !registered_defs.contains(from_mod) && (!crate::stdlib::is_stdlib_module(from_mod) || crate::stdlib::is_native_stdlib(from_mod)) {
                             if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
                                 if opts.verbose {
                                     eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, from_mod, dep_def_path.display());
@@ -883,7 +883,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         let n = &name.name;
                         if !loaded_modules.contains(n) {
                             // Also register the def module if not already done
-                            if !registered_defs.contains(n) && !crate::stdlib::is_stdlib_module(n) {
+                            if !registered_defs.contains(n) && (!crate::stdlib::is_stdlib_module(n) || crate::stdlib::is_native_stdlib(n)) {
                                 if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
                                     if opts.verbose {
                                         eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, n, dep_def_path.display());
