@@ -262,12 +262,52 @@ impl LLVMCodeGen {
                         }
                     }
 
-                    // Try LEGACY path first (it handles variant records correctly)
-                    // Then fall back to TypeLowering for cases legacy can't handle
+                    // Try TypeLowering first (sema-derived, canonical struct types)
+                    // Fall back to legacy string-based path if TL can't resolve
                     let mut resolved = false;
 
-                    // LEGACY PATH: string-based field resolution
-                    {
+                    // PRIMARY: TypeLowering path
+                    let tl_result: Option<(String, String, usize, TypeId)> = (|| {
+                        let tid = current_type_id?;
+                        let tl = self.type_lowering.as_ref()?;
+                        let resolved_tid = tl.resolve_alias(&self.sema.types, tid);
+                        let lookup_tid = if tl.get_record_layout(resolved_tid).is_some() {
+                            resolved_tid
+                        } else {
+                            let target = tl.pointer_target(resolved_tid)?;
+                            tl.resolve_alias(&self.sema.types, target)
+                        };
+                        let field = tl.lookup_field(lookup_tid, field_name)?;
+                        let field_ty = {
+                            let s = field.llvm_type.to_ir();
+                            if s == "void" { "i32".into() } else { s }
+                        };
+                        Some((
+                            tl.get_type_str(lookup_tid),
+                            field_ty,
+                            field.index,
+                            field.m2_type,
+                        ))
+                    })();
+
+                    if let Some((record_llvm_ty, field_ty_str, field_idx, field_m2_type)) = tl_result {
+                        let gep = self.next_tmp();
+                        self.emitln(&format!("  {} = getelementptr inbounds {}, ptr {}, i32 0, i32 {}",
+                            gep, record_llvm_ty, current_addr, field_idx));
+                        current_addr = gep;
+                        current_ty = field_ty_str.clone();
+                        current_type_id = Some(field_m2_type);
+                        trace_step!(&format!("field.tl({})", field_name));
+                        resolved = true;
+                        if let Some(tn) = self.sema.symtab.find_type_by_id(field_m2_type) {
+                            current_type_name = tn;
+                        } else {
+                            current_type_name = String::new();
+                        }
+                    }
+
+                    // LEGACY FALLBACK: string-based field resolution
+                    if !resolved {
                         let lookup_name = if self.record_fields.contains_key(&current_type_name) {
                             current_type_name.clone()
                         } else if let Some(target) = self.pointer_target_types.get(&current_type_name) {
@@ -340,47 +380,7 @@ impl LLVMCodeGen {
                         }
                     }
 
-                    // NEW PATH: TypeLowering fallback (for cases legacy can't resolve)
-                    let tl_result: Option<(String, String, usize, TypeId)> = if resolved { None } else { (|| {
-                        let tid = current_type_id?;
-                        let tl = self.type_lowering.as_ref()?;
-                        let resolved_tid = tl.resolve_alias(&self.sema.types, tid);
-                        let lookup_tid = if tl.get_record_layout(resolved_tid).is_some() {
-                            resolved_tid
-                        } else {
-                            let target = tl.pointer_target(resolved_tid)?;
-                            tl.resolve_alias(&self.sema.types, target)
-                        };
-                        let field = tl.lookup_field(lookup_tid, field_name)?;
-                        let field_ty = {
-                            let s = field.llvm_type.to_ir();
-                            if s == "void" { "i32".into() } else { s }
-                        };
-                        Some((
-                            tl.get_type_str(lookup_tid),
-                            field_ty,
-                            field.index,
-                            field.m2_type,
-                        ))
-                    })() };
-
-                    if let Some((record_llvm_ty, field_ty_str, field_idx, field_m2_type)) = tl_result {
-                        let gep = self.next_tmp();
-                        self.emitln(&format!("  {} = getelementptr inbounds {}, ptr {}, i32 0, i32 {}",
-                            gep, record_llvm_ty, current_addr, field_idx));
-                        current_addr = gep;
-                        current_ty = field_ty_str.clone();
-                        current_type_id = Some(field_m2_type);
-                        trace_step!(&format!("field.tl({})", field_name));
-                        // Update legacy tracking
-                        current_type_name = String::new();
-                        for (tn, ty_str) in &self.type_map {
-                            if *ty_str == field_ty_str && field_ty_str != "ptr" && field_ty_str != "i32" {
-                                current_type_name = tn.clone();
-                                break;
-                            }
-                        }
-                    }
+                    // (old TL fallback path removed — TL is now primary above)
 
                 }
                 Selector::Index(indices, _) => {
