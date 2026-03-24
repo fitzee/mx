@@ -165,6 +165,7 @@ pub struct ObjectMethod {
 pub struct RecordField {
     pub name: String,
     pub typ: TypeId,
+    pub type_name: String,
     pub offset: usize,
 }
 

@@ -71,6 +71,43 @@ impl SemanticAnalyzer {
         self.analyze_definition_module(def);
     }
 
+    /// Re-resolve all Record field types in the TypeRegistry.
+    /// After all modules are analyzed, some Record fields may still have
+    /// TY_VOID TypeIds from when the .def was analyzed before the field's
+    /// type was in scope. This pass fixes them.
+    pub fn fixup_record_field_types(&mut self) {
+        let count = self.types.len();
+        for id in 0..count {
+            if let Type::Record { ref fields, .. } = self.types.get(id).clone() {
+                let mut updated_fields = fields.clone();
+                let mut changed = false;
+                for field in &mut updated_fields {
+                    if field.typ == TY_VOID || matches!(self.types.get(field.typ), Type::Void) {
+                        if let Some(resolved) = self.symtab.find_type(&field.type_name) {
+                            if resolved != TY_VOID {
+                                field.typ = resolved;
+                                changed = true;
+                            } else {
+                            }
+                        } else {
+                            if !field.type_name.is_empty() {
+                            }
+                        }
+                    }
+                }
+                if changed {
+                    *self.types.get_mut(id) = Type::Record {
+                        fields: updated_fields,
+                        variants: match self.types.get(id) {
+                            Type::Record { variants, .. } => variants.clone(),
+                            _ => None,
+                        },
+                    };
+                }
+            }
+        }
+    }
+
     /// Run full semantic analysis on an implementation module.
     /// Registers all types (including private impl-only types), resolves
     /// imports, analyzes all declarations and statements, and finalizes
@@ -844,8 +881,12 @@ impl SemanticAnalyzer {
                 for fl in fields {
                     for f in &fl.fixed {
                         let typ = self.resolve_type_node(&f.typ);
+                        let tname = match &f.typ {
+                            crate::ast::TypeNode::Named(qi) => qi.name.clone(),
+                            _ => String::new(),
+                        };
                         for name in &f.names {
-                            record_fields.push(RecordField {
+                            record_fields.push(RecordField { type_name: tname.clone(),
                                 name: name.clone(),
                                 typ,
                                 offset: 0,
@@ -857,7 +898,7 @@ impl SemanticAnalyzer {
 
                         // Add tag field to record's fixed fields
                         if let Some(tag_name) = &vp.tag_name {
-                            record_fields.push(RecordField {
+                            record_fields.push(RecordField { type_name: String::new(),
                                 name: tag_name.clone(),
                                 typ: tag_type,
                                 offset: 0,
@@ -881,7 +922,7 @@ impl SemanticAnalyzer {
                                 for f in &vfl.fixed {
                                     let typ = self.resolve_type_node(&f.typ);
                                     for name in &f.names {
-                                        vfields.push(RecordField {
+                                        vfields.push(RecordField { type_name: String::new(),
                                             name: name.clone(),
                                             typ,
                                             offset: 0,
@@ -893,7 +934,7 @@ impl SemanticAnalyzer {
                                     // Add nested tag field
                                     if let Some(nested_tag) = &nested_vp.tag_name {
                                         let nested_tag_type = self.resolve_named_type(&nested_vp.tag_type);
-                                        vfields.push(RecordField {
+                                        vfields.push(RecordField { type_name: String::new(),
                                             name: nested_tag.clone(),
                                             typ: nested_tag_type,
                                             offset: 0,
@@ -904,7 +945,7 @@ impl SemanticAnalyzer {
                                             for f in &nvfl.fixed {
                                                 let typ = self.resolve_type_node(&f.typ);
                                                 for name in &f.names {
-                                                    vfields.push(RecordField {
+                                                    vfields.push(RecordField { type_name: String::new(),
                                                         name: name.clone(),
                                                         typ,
                                                         offset: 0,
@@ -928,7 +969,7 @@ impl SemanticAnalyzer {
                                 for f in &efl.fixed {
                                     let typ = self.resolve_type_node(&f.typ);
                                     for name in &f.names {
-                                        vfields.push(RecordField {
+                                        vfields.push(RecordField { type_name: String::new(),
                                             name: name.clone(),
                                             typ,
                                             offset: 0,
@@ -951,7 +992,7 @@ impl SemanticAnalyzer {
                             fields: Vec::new(), // variant fields accessed specially
                             variants: None,
                         });
-                        record_fields.push(RecordField {
+                        record_fields.push(RecordField { type_name: String::new(),
                             name: "variant".to_string(),
                             typ: variant_record_type,
                             offset: 0,
@@ -1055,7 +1096,7 @@ impl SemanticAnalyzer {
                 for (i, f) in fields.iter().enumerate() {
                     let typ = self.resolve_type_node(&f.typ);
                     for name in &f.names {
-                        rec_fields.push(RecordField {
+                        rec_fields.push(RecordField { type_name: String::new(),
                             name: name.clone(),
                             typ,
                             offset: i,

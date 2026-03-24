@@ -418,6 +418,7 @@ impl LLVMCodeGen {
     pub fn generate_or_errors(&mut self, unit: &CompilationUnit) -> Result<String, Vec<CompileError>> {
         self.sema.analyze(unit)?;
         self.analyze_all_impl_modules();
+        self.sema.fixup_record_field_types();
         self.build_module_exports();
         self.build_type_lowering();
         self.post_sema_generate(unit).map_err(|e| vec![e])?;
@@ -435,6 +436,7 @@ impl LLVMCodeGen {
             )
         })?;
         self.analyze_all_impl_modules();
+        self.sema.fixup_record_field_types();
         self.build_module_exports();
         self.build_type_lowering();
         self.post_sema_generate(unit)?;

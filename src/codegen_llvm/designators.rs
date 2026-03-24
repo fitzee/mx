@@ -266,9 +266,13 @@ impl LLVMCodeGen {
                     // Fall back to legacy string-based path if TL can't resolve
                     let mut resolved = false;
 
-                    // PRIMARY: TypeLowering path
+                    // PRIMARY: TypeLowering path (sema-derived, canonical)
                     let tl_result: Option<(String, String, usize, TypeId)> = (|| {
-                        let tid = current_type_id?;
+                        let mut tid = current_type_id?;
+                        // If TypeId is VOID, try to recover from var_types
+                        if tid == crate::types::TY_VOID {
+                            tid = *self.var_types.get(name)?;
+                        }
                         let tl = self.type_lowering.as_ref()?;
                         let resolved_tid = tl.resolve_alias(&self.sema.types, tid);
                         let lookup_tid = if tl.get_record_layout(resolved_tid).is_some() {
@@ -277,13 +281,21 @@ impl LLVMCodeGen {
                             let target = tl.pointer_target(resolved_tid)?;
                             tl.resolve_alias(&self.sema.types, target)
                         };
-                        let field = tl.lookup_field(lookup_tid, field_name)?;
+                        // Try direct lookup first, then fall back to IR-based recovery
+                        let (rec_tid, field) = if let Some(f) = tl.lookup_field(lookup_tid, field_name) {
+                            (lookup_tid, f.clone())
+                        } else if let Some(recovered_tid) = tl.find_record_by_ir_with_field(&current_ty, field_name) {
+                            let f = tl.lookup_field(recovered_tid, field_name)?;
+                            (recovered_tid, f.clone())
+                        } else {
+                            return None;
+                        };
                         let field_ty = {
                             let s = field.llvm_type.to_ir();
                             if s == "void" { "i32".into() } else { s }
                         };
                         Some((
-                            tl.get_type_str(lookup_tid),
+                            tl.get_type_str(rec_tid),
                             field_ty,
                             field.index,
                             field.m2_type,
@@ -297,6 +309,19 @@ impl LLVMCodeGen {
                         current_addr = gep;
                         current_ty = field_ty_str.clone();
                         current_type_id = Some(field_m2_type);
+                        // If the field's type is a struct but the sema TypeId doesn't
+                        // point to a Record, recover by searching all records with matching
+                        // LLVM type that contain the field from the next selector.
+                        if field_ty_str.contains('{') && !matches!(
+                            self.sema.types.get(field_m2_type),
+                            crate::types::Type::Record { .. })
+                        {
+                            if let Some(ref tl) = self.type_lowering {
+                                if let Some(recovered) = tl.find_record_by_ir(&field_ty_str) {
+                                    current_type_id = Some(recovered);
+                                }
+                            }
+                        }
                         trace_step!(&format!("field.tl({})", field_name));
                         resolved = true;
                         if let Some(tn) = self.sema.symtab.find_type_by_id(field_m2_type) {
@@ -306,79 +331,7 @@ impl LLVMCodeGen {
                         }
                     }
 
-                    // LEGACY FALLBACK: string-based field resolution
-                    if !resolved {
-                        let lookup_name = if self.record_fields.contains_key(&current_type_name) {
-                            current_type_name.clone()
-                        } else if let Some(target) = self.pointer_target_types.get(&current_type_name) {
-                            target.clone()
-                        } else {
-                            current_type_name.clone()
-                        };
-                        let field_info = self.record_fields.get(&lookup_name)
-                            .and_then(|fields| fields.iter().find(|(n, _, _)| n == field_name))
-                            .map(|(_, ft, idx)| (ft.clone(), *idx));
-                        if let Some((ft, idx)) = field_info {
-                            let record_ty = self.type_map.get(&lookup_name).cloned().unwrap_or_else(|| current_ty.clone());
-                            let gep = self.next_tmp();
-                            self.emitln(&format!("  {} = getelementptr inbounds {}, ptr {}, i32 0, i32 {}",
-                                gep, record_ty, current_addr, idx));
-                            current_addr = gep;
-                            current_ty = ft.clone();
-                            // Update current_type_id from sema directly.
-                            // Try the record type first, then pointer-to-record.
-                            if let Some(tid) = current_type_id {
-                                let resolved = resolve_tid(&self.sema.types, tid);
-                                let rec_tid = if let Some(target) = pointer_target(&self.sema.types, resolved) {
-                                    resolve_tid(&self.sema.types, target)
-                                } else {
-                                    resolved
-                                };
-                                if trace_enabled && name == "b" && self.module_name == "ExprEval" {
-                                    let ty = self.sema.types.get(rec_tid);
-                                    let fields_desc = match ty {
-                                        Type::Record { fields, .. } => {
-                                            let names: Vec<_> = fields.iter()
-                                                .map(|f| format!("{}:{}", f.name, f.typ)).collect();
-                                            format!("Record[{}]", names.join(", "))
-                                        }
-                                        other => format!("{:?}", other),
-                                    };
-                                    let result = record_field_tid(&self.sema.types, rec_tid, field_name);
-                                    eprintln!("  FIELD-LOOKUP: {}.{} | tid={} resolved={} rec_tid={} | {} | result={:?}",
-                                        name, field_name, tid, resolved, rec_tid, fields_desc, result);
-                                }
-                                current_type_id = record_field_tid(&self.sema.types, rec_tid, field_name);
-                            }
-                            // Update legacy current_type_name
-                            let mut found_type = false;
-                            if ft == "ptr" {
-                                for (tn, ty) in &self.type_map {
-                                    if *ty == "ptr" && self.pointer_target_types.contains_key(tn) {
-                                        if let Some(fields) = self.record_fields.get(&current_type_name) {
-                                            if fields.iter().any(|(_, fty, fidx)| fty == "ptr" && *fidx == idx) {
-                                                current_type_name = tn.clone();
-                                                found_type = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if !found_type {
-                                for (tn, ty) in &self.type_map {
-                                    if *ty == ft && ft != "ptr" {
-                                        current_type_name = tn.clone();
-                                        found_type = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if !found_type { current_type_name = String::new(); }
-                            trace_step!(&format!("field.legacy({})", field_name));
-                            resolved = true;
-                        }
-                    }
+                    // (unresolved fields fall back to codegen-derived types)
 
                     // (old TL fallback path removed — TL is now primary above)
 

@@ -283,6 +283,19 @@ impl TypeLowering {
         None
     }
 
+    /// Find a record TypeId by LLVM IR string that also has a specific field.
+    /// Handles ambiguous types where multiple records have the same LLVM layout.
+    pub(crate) fn find_record_by_ir_with_field(&self, ir: &str, field_name: &str) -> Option<TypeId> {
+        for (&id, layout) in &self.record_layouts {
+            if layout.llvm_type.to_ir() == ir {
+                if layout.fields.iter().any(|f| f.name == field_name) {
+                    return Some(id);
+                }
+            }
+        }
+        None
+    }
+
     /// Look up a field by name in a record type
     pub(crate) fn lookup_field(&self, record_type: TypeId, field_name: &str) -> Option<&FieldInfo> {
         self.record_layouts.get(&record_type)
