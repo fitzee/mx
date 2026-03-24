@@ -472,6 +472,49 @@ impl LLVMCodeGen {
         false
     }
 
+    /// Resolve a procedure variable's ProcedureType to get ParamLLVMInfo.
+    /// Used for indirect calls to correctly distinguish open array params
+    /// (need ptr + HIGH) from fixed array params (ptr only).
+    pub(crate) fn resolve_proc_var_params(&self, var_name: &str) -> Vec<super::ParamLLVMInfo> {
+        let tid = match self.var_types.get(var_name) {
+            Some(&t) => t,
+            None => {
+                let mangled = self.mangle(var_name);
+                match self.var_types.get(&mangled) {
+                    Some(&t) => t,
+                    None => return Vec::new(),
+                }
+            }
+        };
+        // Resolve through aliases
+        let mut resolved = tid;
+        for _ in 0..10 {
+            match self.sema.types.get(resolved) {
+                crate::types::Type::Alias { target, .. } => resolved = *target,
+                crate::types::Type::ProcedureType { params, .. } => {
+                    return params.iter().map(|p| {
+                        let pt = self.sema.types.get(p.typ);
+                        let is_open = matches!(pt, crate::types::Type::OpenArray { .. });
+                        let llvm_ty = self.tl_type_str(p.typ);
+                        super::ParamLLVMInfo {
+                            name: String::new(),
+                            is_var: p.is_var,
+                            is_open_array: is_open,
+                            llvm_type: if p.is_var { "ptr".to_string() } else { llvm_ty },
+                            open_array_elem_type: if is_open {
+                                if let crate::types::Type::OpenArray { elem_type } = pt {
+                                    Some(self.tl_type_str(*elem_type))
+                                } else { None }
+                            } else { None },
+                        }
+                    }).collect();
+                }
+                _ => return Vec::new(),
+            }
+        }
+        Vec::new()
+    }
+
     pub(crate) fn is_open_array_param(&self, name: &str) -> bool {
         for scope in self.open_array_params.iter().rev() {
             if scope.contains(name) {

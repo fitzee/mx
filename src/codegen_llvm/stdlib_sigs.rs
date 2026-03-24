@@ -382,12 +382,14 @@ impl LLVMCodeGen {
                 Val::new(tmp, expected_ret.to_string())
             }
         } else {
+            // SSA values (%tN) are indirect call targets — don't prefix with @
+            let prefix = if name.starts_with('%') { "" } else { "@" };
             if expected_ret == "void" {
-                self.emitln(&format!("  call void @{}({})", name, args_str));
+                self.emitln(&format!("  call void {}{}({})", prefix, name, args_str));
                 Val::new("", "void")
             } else {
                 let tmp = self.next_tmp();
-                self.emitln(&format!("  {} = call {} @{}({})", tmp, expected_ret, name, args_str));
+                self.emitln(&format!("  {} = call {} {}{}({})", tmp, expected_ret, prefix, name, args_str));
                 Val::new(tmp, expected_ret.to_string())
             }
         }

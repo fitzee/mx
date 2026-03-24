@@ -423,7 +423,27 @@ impl LLVMCodeGen {
 
         if is_proc_var {
             let fn_ptr = self.gen_designator_load(desig);
-            self.gen_indirect_call(&fn_ptr, args);
+            // Look up the proc variable's ProcedureType to get param info.
+            // This is needed to correctly expand open array args (ptr + HIGH)
+            // vs fixed array args (ptr only) in indirect calls.
+            let var_name = &desig.ident.name;
+            let proc_type_params = self.resolve_proc_var_params(var_name);
+            if !proc_type_params.is_empty() {
+                // Use gen_call which handles param info correctly
+                let call_target = fn_ptr.name.clone();
+                let param_info = self.proc_params.get(&call_target).cloned();
+                // Temporarily register the param info under the call target name
+                self.proc_params.insert(call_target.clone(), proc_type_params);
+                self.gen_call(&call_target, args, "void");
+                // Restore
+                if let Some(old) = param_info {
+                    self.proc_params.insert(call_target, old);
+                } else {
+                    self.proc_params.remove(&call_target);
+                }
+            } else {
+                self.gen_indirect_call(&fn_ptr, args);
+            }
             return;
         }
 
