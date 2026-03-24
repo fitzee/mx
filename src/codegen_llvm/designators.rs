@@ -537,7 +537,6 @@ impl LLVMCodeGen {
                 _ => {}
             }
 
-            // Check if this is a function name being used as a value (proc variable)
             let resolved = if let Some(module) = self.import_map.get(name) {
                 let orig = self.import_alias_map.get(name).cloned()
                     .unwrap_or_else(|| name.to_string());

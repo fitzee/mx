@@ -332,6 +332,16 @@ impl LLVMCodeGen {
         self.gen_exception_decls(&imp.block.decls);
         self.gen_var_decls_global(&imp.block.decls);
 
+        // Pre-register ALL procedure names before generating bodies,
+        // so forward references (e.g., passing a later procedure as a value)
+        // can find the function in declared_fns.
+        for decl in &imp.block.decls {
+            if let Declaration::Procedure(p) = decl {
+                let name = self.mangle(&p.heading.name);
+                self.declared_fns.insert(name);
+                self.declared_fns.insert(p.heading.name.clone());
+            }
+        }
         for decl in &imp.block.decls {
             if let Declaration::Procedure(p) = decl {
                 self.gen_proc_decl(p)?;

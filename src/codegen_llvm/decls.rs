@@ -642,6 +642,12 @@ impl LLVMCodeGen {
                 let nested_name = format!("{}_{}", proc_name, nested_p.heading.name);
                 self.declared_fns.insert(nested_name.clone());
                 self.declared_fns.insert(nested_p.heading.name.clone());
+                // Also register the module-level mangled name so procedure-value
+                // passing (e.g., SetCallback(NestedProc)) can find it
+                let module_name = format!("{}_{}", self.module_name, nested_p.heading.name);
+                if module_name != nested_name {
+                    self.declared_fns.insert(module_name);
+                }
 
                 // Find captured variables: names used in nested body that are parent locals
                 let captured = self.collect_free_vars(&nested_p.block, &parent_locals);
