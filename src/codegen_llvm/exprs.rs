@@ -133,11 +133,11 @@ impl LLVMCodeGen {
                             if let Some(arg) = args.first() {
                                 if let HirExprKind::Place(ref place) = arg.kind {
                                     let addr = self.emit_place_addr(place);
-                                    return Val::with_tid(addr.name, "ptr".to_string(), expr.ty);
+                                    return Val::with_tid(addr.name, "ptr".to_string(), crate::types::TY_ADDRESS);
                                 }
                                 // Non-place arg (e.g., string literal)
                                 let val = self.gen_hir_expr(arg);
-                                return Val::with_tid(val.name, "ptr".to_string(), expr.ty);
+                                return Val::with_tid(val.name, "ptr".to_string(), crate::types::TY_ADDRESS);
                             }
                         }
                         "HIGH" => {
@@ -561,8 +561,12 @@ impl LLVMCodeGen {
         args: &[crate::hir::HirExpr],
     ) -> Vec<String> {
         args.iter().map(|a| {
-            // AddrOf = VAR parameter: always pass as ptr, never load
-            let is_var_param = matches!(a.kind, crate::hir::HirExprKind::AddrOf(_));
+            // VAR parameters: always pass as ptr, never load the struct.
+            // AddrOf wraps explicit VAR args; Place with is_var_param covers
+            // passing a VAR param through to another function.
+            let is_var_param = matches!(a.kind, crate::hir::HirExprKind::AddrOf(_))
+                || matches!(&a.kind, crate::hir::HirExprKind::Place(p)
+                    if matches!(&p.base, crate::hir::PlaceBase::Local(sid) if sid.is_var_param));
             let val = self.gen_hir_expr(a);
             // By-value struct args: gen_hir_expr returns "ptr" for aggregates,
             // but the callee expects the struct value. Load it.

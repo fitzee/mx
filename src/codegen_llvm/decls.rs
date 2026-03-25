@@ -1,5 +1,28 @@
 use super::*;
 
+/// Count statements recursively (for detecting huge functions).
+fn count_stmts(stmts: &[crate::ast::Statement]) -> usize {
+    stmts.iter().map(|s| {
+        1 + match &s.kind {
+            crate::ast::StatementKind::If { then_body, elsifs, else_body, .. } => {
+                count_stmts(then_body)
+                    + elsifs.iter().map(|e| count_stmts(&e.1)).sum::<usize>()
+                    + else_body.as_ref().map(|b| count_stmts(b)).unwrap_or(0)
+            }
+            crate::ast::StatementKind::While { body, .. }
+            | crate::ast::StatementKind::Repeat { body, .. }
+            | crate::ast::StatementKind::Loop { body, .. }
+            | crate::ast::StatementKind::With { body, .. } => count_stmts(body),
+            crate::ast::StatementKind::For { body, .. } => count_stmts(body),
+            crate::ast::StatementKind::Case { branches, else_body, .. } => {
+                branches.iter().map(|b| count_stmts(&b.body)).sum::<usize>()
+                    + else_body.as_ref().map(|b| count_stmts(b)).unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }).sum()
+}
+
 impl LLVMCodeGen {
     // ── Declaration generation ──────────────────────────────────────
 
@@ -530,7 +553,13 @@ impl LLVMCodeGen {
         let has_exceptions = p.block.except.is_some()
             || p.block.decls.iter().any(|d| matches!(d, Declaration::Procedure(pp) if pp.block.except.is_some()))
             || self.m2plus; // M2+ procs may use TRY
-        let fn_attrs = if has_exceptions { "" } else { " nounwind" };
+        // Large functions can crash LLVM's DAGCombiner at -O2.
+        // Add optnone+noinline to prevent optimization on huge functions.
+        let stmt_count = p.block.body.as_ref().map(|s| count_stmts(s)).unwrap_or(0);
+        let is_huge = stmt_count > 500;
+        let fn_attrs = if is_huge {
+            " optnone noinline"
+        } else if has_exceptions { "" } else { " nounwind" };
 
         if let Some(sp) = dbg_sp {
             self.emitln(&format!("define {} @{}({}){}{} !dbg !{} {{", ret_ty, proc_name, params_str, fn_attrs, personality, sp));
