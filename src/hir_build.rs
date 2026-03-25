@@ -800,8 +800,10 @@ impl<'a> HirBuilder<'a> {
         } else if !desig.selectors.is_empty() {
             // Module.Proc pattern: name is a module, first selector is the procedure
             if let Some(crate::ast::Selector::Field(proc_name, _)) = desig.selectors.first() {
-                self.scope_lookup(proc_name)
-                    .or_else(|| self.symtab.lookup_qualified(name, proc_name))
+                // Prefer qualified lookup (Module.Proc) over scope_lookup which
+                // might find a different "Create" from another module.
+                self.symtab.lookup_qualified(name, proc_name)
+                    .or_else(|| self.scope_lookup(proc_name))
             } else {
                 self.scope_lookup(name)
             }
