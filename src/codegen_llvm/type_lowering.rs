@@ -158,6 +158,8 @@ impl TypeLowering {
             Type::Ref { .. } | Type::RefAny => LLVMType::Ptr,
             Type::Object { .. } => LLVMType::Ptr,
             Type::Exception { .. } => LLVMType::I32,
+            // Error/poison type — should never reach codegen, but lower to i32 as fallback
+            Type::Error => LLVMType::I32,
         };
 
         self.types.insert(id, llvm_ty);
@@ -271,31 +273,6 @@ impl TypeLowering {
         self.record_layouts.get(&id)
     }
 
-    /// Reverse-lookup: find a record TypeId whose LLVM IR type string matches.
-    /// Used to recover type tracking when the TypeId is lost but the IR
-    /// type string is still known (e.g. after cross-module deref/index).
-    pub(crate) fn find_record_by_ir(&self, ir: &str) -> Option<TypeId> {
-        for (&id, layout) in &self.record_layouts {
-            if layout.llvm_type.to_ir() == ir {
-                return Some(id);
-            }
-        }
-        None
-    }
-
-    /// Find a record TypeId by LLVM IR string that also has a specific field.
-    /// Handles ambiguous types where multiple records have the same LLVM layout.
-    pub(crate) fn find_record_by_ir_with_field(&self, ir: &str, field_name: &str) -> Option<TypeId> {
-        for (&id, layout) in &self.record_layouts {
-            if layout.llvm_type.to_ir() == ir {
-                if layout.fields.iter().any(|f| f.name == field_name) {
-                    return Some(id);
-                }
-            }
-        }
-        None
-    }
-
     /// Look up a field by name in a record type
     pub(crate) fn lookup_field(&self, record_type: TypeId, field_name: &str) -> Option<&FieldInfo> {
         self.record_layouts.get(&record_type)
@@ -391,8 +368,8 @@ mod tests {
         let mut reg = TypeRegistry::new();
         let rec_id = reg.register(Type::Record {
             fields: vec![
-                RecordField { name: "x".into(), typ: TY_INTEGER, offset: 0 },
-                RecordField { name: "y".into(), typ: TY_INTEGER, offset: 1 },
+                RecordField { name: "x".into(), typ: TY_INTEGER, type_name: String::new(), offset: 0 },
+                RecordField { name: "y".into(), typ: TY_INTEGER, type_name: String::new(), offset: 1 },
             ],
             variants: None,
         });
@@ -408,8 +385,8 @@ mod tests {
         let mut reg = TypeRegistry::new();
         let rec_id = reg.register(Type::Record {
             fields: vec![
-                RecordField { name: "x".into(), typ: TY_INTEGER, offset: 0 },
-                RecordField { name: "y".into(), typ: TY_CHAR, offset: 1 },
+                RecordField { name: "x".into(), typ: TY_INTEGER, type_name: String::new(), offset: 0 },
+                RecordField { name: "y".into(), typ: TY_CHAR, type_name: String::new(), offset: 1 },
             ],
             variants: None,
         });
@@ -434,7 +411,7 @@ mod tests {
         let mut reg = TypeRegistry::new();
         let rec_id = reg.register(Type::Record {
             fields: vec![
-                RecordField { name: "val".into(), typ: TY_INTEGER, offset: 0 },
+                RecordField { name: "val".into(), typ: TY_INTEGER, type_name: String::new(), offset: 0 },
             ],
             variants: None,
         });

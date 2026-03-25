@@ -66,7 +66,7 @@ fn def_proc_doc(
             exported: true,
             module: None,
             loc: SourceLoc::default(),
-            doc: doc.map(|s| s.to_string()),
+            doc: doc.map(|s| s.to_string()), is_var_param: false, is_open_array: false,
         },
     );
 }
@@ -85,7 +85,7 @@ fn def_var_doc(symtab: &mut SymbolTable, scope: usize, name: &str, typ: TypeId, 
             exported: true,
             module: None,
             loc: SourceLoc::default(),
-            doc: doc.map(|s| s.to_string()),
+            doc: doc.map(|s| s.to_string()), is_var_param: false, is_open_array: false,
         },
     );
 }
@@ -243,7 +243,7 @@ fn register_system(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         exported: true,
         module: Some("SYSTEM".to_string()),
         loc: SourceLoc::default(),
-        doc: Some("Machine word type. Compatible with all types of the same size.".to_string()),
+        doc: Some("Machine word type. Compatible with all types of the same size.".to_string()), is_var_param: false, is_open_array: false,
     });
     let _ = symtab.define(scope, Symbol {
         name: "BYTE".to_string(),
@@ -253,6 +253,8 @@ fn register_system(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         module: Some("SYSTEM".to_string()),
         loc: SourceLoc::default(),
         doc: Some("Single byte type. Compatible with CHAR and small ordinal types.".to_string()),
+        is_var_param: false,
+        is_open_array: false,
     });
     let _ = symtab.define(scope, Symbol {
         name: "ADDRESS".to_string(),
@@ -262,6 +264,8 @@ fn register_system(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         module: Some("SYSTEM".to_string()),
         loc: SourceLoc::default(),
         doc: Some("Machine address type. Compatible with all pointer types.".to_string()),
+        is_var_param: false,
+        is_open_array: false,
     });
 
     // Procedures
@@ -316,6 +320,8 @@ fn register_filesystem(symtab: &mut SymbolTable, types: &mut TypeRegistry, scope
         module: Some("FileSystem".to_string()),
         loc: SourceLoc::default(),
         doc: None,
+        is_var_param: false,
+        is_open_array: false,
     });
 
     def_proc_doc(symtab, scope, "Lookup", vec![
@@ -410,6 +416,8 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
         doc: None,
+        is_var_param: false,
+        is_open_array: false,
     });
     let _ = symtab.define(scope, Symbol {
         name: "allRight".to_string(),
@@ -419,6 +427,8 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
         doc: None,
+        is_var_param: false,
+        is_open_array: false,
     });
     let _ = symtab.define(scope, Symbol {
         name: "outOfRange".to_string(),
@@ -428,6 +438,8 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
         doc: None,
+        is_var_param: false,
+        is_open_array: false,
     });
     let _ = symtab.define(scope, Symbol {
         name: "wrongFormat".to_string(),
@@ -437,6 +449,8 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
         doc: None,
+        is_var_param: false,
+        is_open_array: false,
     });
     let _ = symtab.define(scope, Symbol {
         name: "endOfInput".to_string(),
@@ -446,6 +460,8 @@ fn register_sioresult(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         module: Some("SIOResult".to_string()),
         loc: SourceLoc::default(),
         doc: None,
+        is_var_param: false,
+        is_open_array: false,
     });
 }
 
@@ -535,6 +551,8 @@ fn register_thread(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: u
         module: None,
         loc: SourceLoc::default(),
         doc: Some("Opaque thread handle type.".to_string()),
+        is_var_param: false,
+        is_open_array: false,
     });
     def_proc_doc(symtab, scope, "Fork", vec![p("p", TY_ADDRESS, false)], Some(TY_ADDRESS),
         Some("Create a new thread that executes parameterless procedure `p`. Returns a thread handle."));
@@ -558,6 +576,8 @@ fn register_mutex(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope: us
         module: None,
         loc: SourceLoc::default(),
         doc: Some("Opaque mutex handle type.".to_string()),
+        is_var_param: false,
+        is_open_array: false,
     });
     def_proc_doc(symtab, scope, "New", vec![], Some(TY_ADDRESS),
         Some("Create and return a new mutex."));
@@ -579,6 +599,8 @@ fn register_condition(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
         module: None,
         loc: SourceLoc::default(),
         doc: Some("Opaque condition variable handle type.".to_string()),
+        is_var_param: false,
+        is_open_array: false,
     });
     def_proc_doc(symtab, scope, "New", vec![], Some(TY_ADDRESS),
         Some("Create and return a new condition variable."));

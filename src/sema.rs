@@ -7,28 +7,29 @@ use crate::errors::{CompileError, CompileResult, SourceLoc};
 use crate::symtab::*;
 use crate::types::*;
 
+#[derive(Clone)]
 pub struct SemanticAnalyzer {
+    // ── Persistent results (survive across analysis passes) ─────────
     pub types: TypeRegistry,
     pub symtab: SymbolTable,
+    pub foreign_modules: HashSet<String>,
     errors: Vec<CompileError>,
+    scope_map: ScopeMap,
+    ref_index: ReferenceIndex,
+
+    // ── Configuration (set once) ────────────────────────────────────
+    pub m2plus: bool,
+
+    // ── Transient walk state (valid only during an AST traversal) ───
+    // Reset via reset_walk_state() between independent analysis passes.
     current_scope: usize,
     scope_stack: Vec<usize>,
     in_loop: usize,
     current_proc_return: Option<TypeId>,
-    pub foreign_modules: HashSet<String>,
-    /// Scope map for LSP: maps source regions to scope IDs.
-    scope_map: ScopeMap,
-    /// Stack of (scope_id, start_line, start_col) for scope span recording.
+    in_procedure: bool,
     scope_start_stack: Vec<(usize, usize, usize)>,
-    /// Tracks the last source position seen (for estimating scope end).
     last_line: usize,
     last_col: usize,
-    /// Reference index: all symbol references with resolved identity.
-    ref_index: ReferenceIndex,
-    /// Whether we are currently inside a procedure body.
-    in_procedure: bool,
-    /// m2plus mode: enables ADDRESS^[i] byte-level indexing.
-    pub m2plus: bool,
 }
 
 impl SemanticAnalyzer {
@@ -65,16 +66,47 @@ impl SemanticAnalyzer {
         builtins::register_builtin_procs(&mut self.symtab, &self.types, 0);
     }
 
+    /// Reset transient walk state to defaults. Called between independent
+    /// analysis passes to ensure no stale state leaks across modules.
+    fn reset_walk_state(&mut self) {
+        self.current_scope = 0;
+        self.scope_stack = vec![0];
+        self.in_loop = 0;
+        self.current_proc_return = None;
+        self.in_procedure = false;
+        self.scope_start_stack.clear();
+        self.last_line = 0;
+        self.last_col = 0;
+    }
+
     /// Pre-register an external definition module so its types and procedures
     /// are available when analyzing imports in the main program module.
     pub fn register_def_module(&mut self, def: &DefinitionModule) {
+        self.reset_walk_state();
         self.analyze_definition_module(def);
     }
 
+    /// Lightweight pre-pass: register just type NAMES as Opaques in the
+    /// TypeRegistry so that cross-module type references resolve during
+    /// the full analyze_definition_module pass. No scopes, no imports,
+    /// no procedure signatures — just type name → Opaque TypeId.
+    pub fn pre_register_type_names(&mut self, def: &DefinitionModule) {
+        for d in &def.definitions {
+            if let Definition::Type(t) = d {
+                // Register in the global type registry so resolve_named_type
+                // can find it. The actual scope registration happens later
+                // in analyze_definition_module.
+                let _placeholder = self.types.register(Type::Opaque {
+                    name: t.name.clone(),
+                    module: def.name.clone(),
+                });
+            }
+        }
+    }
+
     /// Re-resolve all Record field types in the TypeRegistry.
-    /// After all modules are analyzed, some Record fields may still have
-    /// TY_VOID TypeIds from when the .def was analyzed before the field's
-    /// type was in scope. This pass fixes them.
+    /// Safety net: after two-pass registration, most fields should already
+    /// be resolved. This catches any stragglers from edge cases.
     pub fn fixup_record_field_types(&mut self) {
         let count = self.types.len();
         for id in 0..count {
@@ -82,9 +114,11 @@ impl SemanticAnalyzer {
                 let mut updated_fields = fields.clone();
                 let mut changed = false;
                 for field in &mut updated_fields {
-                    if field.typ == TY_VOID || matches!(self.types.get(field.typ), Type::Void) {
+                    if field.typ == TY_VOID || field.typ == TY_ERROR
+                        || matches!(self.types.get(field.typ), Type::Void | Type::Error)
+                    {
                         if let Some(resolved) = self.symtab.find_type(&field.type_name) {
-                            if resolved != TY_VOID {
+                            if resolved != TY_VOID && resolved != TY_ERROR {
                                 field.typ = resolved;
                                 changed = true;
                             } else {
@@ -113,6 +147,7 @@ impl SemanticAnalyzer {
     /// imports, analyzes all declarations and statements, and finalizes
     /// parameter types back to the .def scope.
     pub fn analyze_impl_module(&mut self, imp: &crate::ast::ImplementationModule) {
+        self.reset_walk_state();
         self.analyze_implementation_module(imp);
     }
 
@@ -120,17 +155,35 @@ impl SemanticAnalyzer {
     /// Creates a scope named after the module containing all TYPE declarations,
     /// so that resolve_type_node_to_id can find module-specific types.
     pub fn register_impl_types(&mut self, imp: &crate::ast::ImplementationModule) {
-        let scope_id = self.enter_scope(&imp.name);
+        self.reset_walk_state();
+        // Reuse the existing .def scope if available
+        let scope_id = if let Some(existing) = self.symtab.lookup_module_scope(&imp.name) {
+            self.symtab.reenter_scope(existing);
+            self.scope_stack.push(existing);
+            self.current_scope = existing;
+            existing
+        } else {
+            self.enter_scope(&imp.name)
+        };
         // Import the .def scope's types first
         if let Some(def_sym) = self.symtab.lookup_any(&imp.name).cloned() {
             if let SymbolKind::Module { scope_id: def_scope } = def_sym.kind {
                 let def_types: Vec<Symbol> = self.symtab
                     .scope_symbols(def_scope)
                     .filter(|s| s.exported && matches!(s.kind,
-                        SymbolKind::Type | SymbolKind::Constant(_)))
+                        SymbolKind::Type | SymbolKind::Constant(_) | SymbolKind::EnumVariant(_)))
                     .cloned()
                     .collect();
                 for sym in def_types {
+                    let _ = self.symtab.define(scope_id, sym);
+                }
+                // Also import non-exported enum variants (visible via their exported type)
+                let enum_variants: Vec<Symbol> = self.symtab
+                    .scope_symbols(def_scope)
+                    .filter(|s| !s.exported && matches!(s.kind, SymbolKind::EnumVariant(_)))
+                    .cloned()
+                    .collect();
+                for sym in enum_variants {
                     let _ = self.symtab.define(scope_id, sym);
                 }
             }
@@ -151,7 +204,7 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: None,
                     loc: crate::errors::SourceLoc::default(),
-                    doc: None,
+                    doc: None, is_var_param: false, is_open_array: false,
                 };
                 let _ = self.symtab.define(self.current_scope, sym);
             }
@@ -269,6 +322,7 @@ impl SemanticAnalyzer {
     }
 
     pub fn analyze(&mut self, unit: &CompilationUnit) -> Result<(), Vec<CompileError>> {
+        self.reset_walk_state();
         match unit {
             CompilationUnit::ProgramModule(m) => self.analyze_program_module(m),
             CompilationUnit::DefinitionModule(m) => self.analyze_definition_module(m),
@@ -374,7 +428,8 @@ impl SemanticAnalyzer {
             module,
             loc: SourceLoc::default(),
             doc,
-        }
+            is_var_param: false,
+            is_open_array: false,        }
     }
 
     fn make_type_symbol(
@@ -388,6 +443,20 @@ impl SemanticAnalyzer {
             module,
             loc: SourceLoc::default(),
             doc,
+            is_var_param: false,
+            is_open_array: false,        }
+    }
+
+    /// When a TYPE is exported, its enum variants must also be exported
+    /// (PIM4 §10: enumeration constants are visible wherever the type is).
+    fn export_enum_variants(&mut self, type_id: TypeId) {
+        let variant_names = match self.types.get(type_id) {
+            Type::Enumeration { variants, .. } => variants.clone(),
+            _ => return,
+        };
+        let scope_id = self.current_scope;
+        for name in &variant_names {
+            self.symtab.set_exported(scope_id, name, true);
         }
     }
 
@@ -404,6 +473,8 @@ impl SemanticAnalyzer {
                 module: module.clone(),
                 loc: SourceLoc::default(),
                 doc: v.doc.clone(),
+                is_var_param: false,
+                is_open_array: false,
             };
             let loc = v.name_locs.get(i).unwrap_or(&v.loc);
             self.define_sym(sym, loc);
@@ -426,6 +497,8 @@ impl SemanticAnalyzer {
             module,
             loc: SourceLoc::default(),
             doc: h.doc.clone(),
+            is_var_param: false,
+            is_open_array: false,
         };
         (sym, params, ret)
     }
@@ -442,7 +515,8 @@ impl SemanticAnalyzer {
             module,
             loc: SourceLoc::default(),
             doc,
-        }
+            is_var_param: false,
+            is_open_array: false,        }
     }
 
     fn make_module_symbol(&self, name: &str, scope_id: usize) -> Symbol {
@@ -453,7 +527,7 @@ impl SemanticAnalyzer {
             exported: false,
             module: None,
             loc: SourceLoc::default(),
-            doc: None,
+            doc: None, is_var_param: false, is_open_array: false,
         }
     }
 
@@ -533,8 +607,12 @@ impl SemanticAnalyzer {
                             module: m.name.clone(),
                         })
                     };
-                    let sym = self.make_type_symbol(&t.name, type_id, is_exported(&t.name), mod_name, t.doc.clone());
+                    let type_exported = is_exported(&t.name);
+                    let sym = self.make_type_symbol(&t.name, type_id, type_exported, mod_name, t.doc.clone());
                     self.define_sym(sym, &t.loc);
+                    if type_exported {
+                        self.export_enum_variants(type_id);
+                    }
                 }
                 Definition::Var(v) => {
                     // Var needs per-name export check, can't use define_var_symbols directly
@@ -548,6 +626,8 @@ impl SemanticAnalyzer {
                             module: mod_name.clone(),
                             loc: SourceLoc::default(),
                             doc: v.doc.clone(),
+                            is_var_param: false,
+                            is_open_array: false,
                         };
                         let loc = v.name_locs.get(i).unwrap_or(&v.loc);
                         self.define_sym(sym, loc);
@@ -570,7 +650,19 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_implementation_module(&mut self, m: &ImplementationModule) {
-        let scope_id = self.enter_scope_at(&m.name, &m.loc);
+        // Reuse the existing .def scope if it exists, rather than creating
+        // a second scope. This ensures procedure parameters (with VAR/open
+        // array flags) are in the same scope that the Module symbol points to.
+        let scope_id = if let Some(existing) = self.symtab.lookup_module_scope(&m.name) {
+            self.symtab.reenter_scope(existing);
+            self.scope_stack.push(existing);
+            self.current_scope = existing;
+            self.scope_start_stack.push((existing, m.loc.line, m.loc.col));
+            self.update_last_pos(&m.loc);
+            existing
+        } else {
+            self.enter_scope_at(&m.name, &m.loc)
+        };
 
         // Import types, constants, and exceptions from the own definition module.
         // In Modula-2, an implementation module implicitly sees these names
@@ -581,10 +673,21 @@ impl SemanticAnalyzer {
                 let def_symbols: Vec<Symbol> = self.symtab
                     .scope_symbols(def_scope)
                     .filter(|s| s.exported && matches!(s.kind,
-                        SymbolKind::Type | SymbolKind::Constant(_)))
+                        SymbolKind::Type | SymbolKind::Constant(_) | SymbolKind::EnumVariant(_)
+                        | SymbolKind::Variable))
                     .cloned()
                     .collect();
                 for sym in def_symbols {
+                    let _ = self.symtab.define(scope_id, sym);
+                }
+                // Also import enum variants that aren't exported but are
+                // visible because their type is exported (PIM4 §10).
+                let enum_variants: Vec<Symbol> = self.symtab
+                    .scope_symbols(def_scope)
+                    .filter(|s| !s.exported && matches!(s.kind, SymbolKind::EnumVariant(_)))
+                    .cloned()
+                    .collect();
+                for sym in enum_variants {
                     let _ = self.symtab.define(scope_id, sym);
                 }
             }
@@ -665,8 +768,19 @@ impl SemanticAnalyzer {
 
         for import_name in names {
             let local = import_name.local_name().to_string();
-            if let Some(sym) = self.symtab.lookup_in_scope(scope_id, &import_name.name) {
-                let imported = sym.clone();
+            // Try exact match first, then case-insensitive for native stdlib
+            let sym_match = self.symtab.lookup_in_scope(scope_id, &import_name.name)
+                .cloned()
+                .or_else(|| {
+                    if !crate::stdlib::is_native_stdlib(from_mod) { return None; }
+                    let lower = import_name.name.to_ascii_lowercase();
+                    self.symtab.symbols_in_scope(scope_id)
+                        .into_iter()
+                        .find(|s| s.name.to_ascii_lowercase() == lower)
+                        .cloned()
+                });
+            if let Some(imported) = sym_match {
+                let imported_typ = imported.typ;
                 let _ = self.symtab.define(self.current_scope, Symbol {
                     name: local,
                     kind: imported.kind,
@@ -674,8 +788,28 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: Some(from_mod.to_string()),
                     loc: imported.loc,
-                    doc: imported.doc,
+                    doc: imported.doc, is_var_param: imported.is_var_param, is_open_array: imported.is_open_array,
                 });
+                // PIM4 §10: importing an enumeration type also makes its
+                // variant constants visible in the importing scope.
+                if let Type::Enumeration { variants, .. } = self.types.get(imported_typ) {
+                    let variants = variants.clone();
+                    for (i, v) in variants.iter().enumerate() {
+                        // Don't overwrite existing symbols (e.g., if the
+                        // variant was explicitly imported or a local shadows it)
+                        if self.symtab.lookup_in_scope_direct(self.current_scope, v).is_none() {
+                            let _ = self.symtab.define(self.current_scope, Symbol {
+                                name: v.clone(),
+                                kind: SymbolKind::EnumVariant(i as i64),
+                                typ: imported_typ,
+                                exported: false,
+                                module: Some(from_mod.to_string()),
+                                loc: SourceLoc::default(),
+                                doc: None, is_var_param: false, is_open_array: false,
+                            });
+                        }
+                    }
+                }
             } else {
                 // Register as unknown procedure stub (permissive for unresolved imports)
                 let sym = Symbol {
@@ -689,7 +823,7 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: Some(from_mod.to_string()),
                     loc: SourceLoc::default(),
-                    doc: None,
+                    doc: None, is_var_param: false, is_open_array: false,
                 };
                 let _ = self.symtab.define(self.current_scope, sym);
             }
@@ -728,7 +862,7 @@ impl SemanticAnalyzer {
                     exported: false,
                     module: None,
                     loc: SourceLoc::default(),
-                    doc: None,
+                    doc: None, is_var_param: false, is_open_array: false,
                 };
                 let _ = self.symtab.define(self.current_scope, sym);
             }
@@ -754,7 +888,7 @@ impl SemanticAnalyzer {
                 let type_id = if let Some(tn) = &t.typ {
                     self.resolve_type_node(tn)
                 } else {
-                    TY_VOID
+                    TY_ERROR
                 };
                 // Type was already pre-registered in first pass; update its resolved type.
                 // We don't re-define; just look up and update the placeholder's target.
@@ -796,8 +930,9 @@ impl SemanticAnalyzer {
                 self.in_procedure = true;
                 self.enter_scope_at(&p.heading.name, &p.loc);
 
-                // Define parameters as local variables
+                // Define parameters as local variables with VAR/open-array flags
                 for param in &params {
+                    let is_open = matches!(self.types.get(param.typ), Type::OpenArray { .. });
                     let sym = Symbol {
                         name: param.name.clone(),
                         kind: SymbolKind::Variable,
@@ -806,6 +941,8 @@ impl SemanticAnalyzer {
                         module: None,
                         loc: SourceLoc::default(),
                         doc: None,
+                        is_var_param: param.is_var,
+                        is_open_array: is_open,
                     };
                     let _ = self.symtab.define(self.current_scope, sym);
                 }
@@ -1033,7 +1170,7 @@ impl SemanticAnalyzer {
                         exported: false,
                         module: None,
                         loc: SourceLoc::default(),
-                        doc: None,
+                        doc: None, is_var_param: false, is_open_array: false,
                     };
                     let _ = self.symtab.define(self.current_scope, sym);
                 }
@@ -1166,10 +1303,27 @@ impl SemanticAnalyzer {
                 "PROC" => TY_PROC,
                 _ => {
                     self.error(&qi.loc, format!("undefined type '{}'", qi.name));
-                    TY_VOID
+                    TY_ERROR
                 }
             }
         }
+    }
+
+    /// Unwrap Alias types to get the underlying concrete type.
+    fn resolve_alias(&self, type_id: TypeId) -> TypeId {
+        let mut id = type_id;
+        let mut depth = 0;
+        loop {
+            match self.types.get(id) {
+                Type::Alias { target, .. } => {
+                    id = *target;
+                    depth += 1;
+                    if depth > 50 { break; } // guard against cycles
+                }
+                _ => break,
+            }
+        }
+        id
     }
 
     fn get_ordinal_range(&self, type_id: TypeId) -> (i64, i64) {
@@ -1193,8 +1347,8 @@ impl SemanticAnalyzer {
             StatementKind::Assign { desig, expr } => {
                 let lhs_type = self.analyze_designator(desig);
                 let rhs_type = self.analyze_expr(expr);
-                if lhs_type != TY_VOID
-                    && rhs_type != TY_VOID
+                if lhs_type != TY_ERROR && lhs_type != TY_VOID
+                    && rhs_type != TY_ERROR && rhs_type != TY_VOID
                     && !assignment_compatible(&self.types, lhs_type, rhs_type)
                 {
                     self.error(
@@ -1226,7 +1380,7 @@ impl SemanticAnalyzer {
                 else_body,
             } => {
                 let ct = self.analyze_expr(cond);
-                if ct != TY_VOID && ct != TY_BOOLEAN {
+                if ct != TY_ERROR && ct != TY_VOID && ct != TY_BOOLEAN {
                     self.error(&stmt.loc, "IF condition must be BOOLEAN");
                 }
                 for s in then_body {
@@ -1234,7 +1388,7 @@ impl SemanticAnalyzer {
                 }
                 for (ec, eb) in elsifs {
                     let ect = self.analyze_expr(ec);
-                    if ect != TY_VOID && ect != TY_BOOLEAN {
+                    if ect != TY_ERROR && ect != TY_VOID && ect != TY_BOOLEAN {
                         self.error(&stmt.loc, "ELSIF condition must be BOOLEAN");
                     }
                     for s in eb {
@@ -1253,7 +1407,7 @@ impl SemanticAnalyzer {
                 else_body,
             } => {
                 let et = self.analyze_expr(expr);
-                if et != TY_VOID && !self.types.get(et).is_ordinal() {
+                if et != TY_ERROR && et != TY_VOID && !self.types.get(et).is_ordinal() {
                     self.error(&stmt.loc, "CASE expression must be ordinal type");
                 }
                 for branch in branches {
@@ -1280,7 +1434,7 @@ impl SemanticAnalyzer {
             }
             StatementKind::While { cond, body } => {
                 let ct = self.analyze_expr(cond);
-                if ct != TY_VOID && ct != TY_BOOLEAN {
+                if ct != TY_ERROR && ct != TY_VOID && ct != TY_BOOLEAN {
                     self.error(&stmt.loc, "WHILE condition must be BOOLEAN");
                 }
                 self.in_loop += 1;
@@ -1296,7 +1450,7 @@ impl SemanticAnalyzer {
                 }
                 self.in_loop -= 1;
                 let ct = self.analyze_expr(cond);
-                if ct != TY_VOID && ct != TY_BOOLEAN {
+                if ct != TY_ERROR && ct != TY_VOID && ct != TY_BOOLEAN {
                     self.error(&stmt.loc, "UNTIL condition must be BOOLEAN");
                 }
             }
@@ -1337,7 +1491,7 @@ impl SemanticAnalyzer {
             }
             StatementKind::With { desig, body } => {
                 let dt = self.analyze_designator(desig);
-                if dt != TY_VOID {
+                if dt != TY_ERROR && dt != TY_VOID {
                     if !matches!(self.types.get(dt), Type::Record { .. }) {
                         self.error(&stmt.loc, "WITH requires a record variable");
                     }
@@ -1350,7 +1504,7 @@ impl SemanticAnalyzer {
                 if let Some(e) = expr {
                     let et = self.analyze_expr(e);
                     if let Some(ret_ty) = self.current_proc_return {
-                        if et != TY_VOID && !assignment_compatible(&self.types, ret_ty, et) {
+                        if et != TY_ERROR && et != TY_VOID && !assignment_compatible(&self.types, ret_ty, et) {
                             self.error(&stmt.loc, "RETURN type mismatch");
                         }
                     } else if self.in_procedure {
@@ -1453,10 +1607,10 @@ impl SemanticAnalyzer {
                             }
                             return_type.unwrap_or(TY_VOID)
                         }
-                        _ => TY_VOID,
+                        _ => TY_ERROR,
                     }
                 } else {
-                    TY_VOID
+                    TY_ERROR
                 };
 
                 for arg in args {
@@ -1468,7 +1622,7 @@ impl SemanticAnalyzer {
                 let t = self.analyze_expr(operand);
                 match op {
                     UnaryOp::Pos | UnaryOp::Neg => {
-                        if t != TY_VOID && !self.types.get(t).is_numeric() {
+                        if t != TY_ERROR && t != TY_VOID && !self.types.get(t).is_numeric() {
                             self.error(&expr.loc, "unary +/- requires numeric operand");
                         }
                         t
@@ -1477,24 +1631,25 @@ impl SemanticAnalyzer {
             }
             ExprKind::Not(operand) => {
                 let t = self.analyze_expr(operand);
-                if t != TY_VOID && t != TY_BOOLEAN {
+                if t != TY_ERROR && t != TY_VOID && t != TY_BOOLEAN {
                     self.error(&expr.loc, "NOT requires BOOLEAN operand");
                 }
                 TY_BOOLEAN
             }
             ExprKind::Deref(operand) => {
-                let t = self.analyze_expr(operand);
-                if t != TY_VOID {
+                let t_raw = self.analyze_expr(operand);
+                let t = self.resolve_alias(t_raw);
+                if t != TY_ERROR && t != TY_VOID {
                     match self.types.get(t) {
                         Type::Pointer { base } => *base,
                         Type::Address if self.m2plus => TY_CHAR,
                         _ => {
                             self.error(&expr.loc, "dereference of non-pointer type");
-                            TY_VOID
+                            TY_ERROR
                         }
                     }
                 } else {
-                    TY_VOID
+                    TY_ERROR
                 }
             }
             ExprKind::BinaryOp { op, left, right } => {
@@ -1502,7 +1657,7 @@ impl SemanticAnalyzer {
                 let rt = self.analyze_expr(right);
                 match op {
                     BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => {
-                        if lt != TY_VOID && rt != TY_VOID {
+                        if lt != TY_ERROR && lt != TY_VOID && rt != TY_ERROR && rt != TY_VOID {
                             if self.types.get(lt).is_set() && self.types.get(rt).is_set() {
                                 return lt; // set operations
                             }
@@ -1524,7 +1679,7 @@ impl SemanticAnalyzer {
                     }
                     BinaryOp::RealDiv => {
                         // '/' is overloaded: symmetric difference for sets, real division for numbers
-                        if lt != TY_VOID && rt != TY_VOID {
+                        if lt != TY_ERROR && lt != TY_VOID && rt != TY_ERROR && rt != TY_VOID {
                             if self.types.get(lt).is_set() && self.types.get(rt).is_set() {
                                 return lt; // set symmetric difference
                             }
@@ -1535,7 +1690,7 @@ impl SemanticAnalyzer {
                         TY_REAL
                     }
                     BinaryOp::IntDiv | BinaryOp::Mod => {
-                        if lt != TY_VOID && !self.types.get(lt).is_integer_type() && lt != TY_ADDRESS {
+                        if lt != TY_ERROR && lt != TY_VOID && !self.types.get(lt).is_integer_type() && lt != TY_ADDRESS {
                             self.error(&expr.loc, "DIV/MOD requires integer operands");
                         }
                         if lt == TY_ADDRESS || rt == TY_ADDRESS {
@@ -1545,7 +1700,7 @@ impl SemanticAnalyzer {
                         }
                     }
                     BinaryOp::And | BinaryOp::Or => {
-                        if lt != TY_VOID && lt != TY_BOOLEAN {
+                        if lt != TY_ERROR && lt != TY_VOID && lt != TY_BOOLEAN {
                             self.error(&expr.loc, "AND/OR requires BOOLEAN operands");
                         }
                         TY_BOOLEAN
@@ -1595,7 +1750,7 @@ impl SemanticAnalyzer {
                     self.record_use_ref(&desig.ident.loc, &desig.ident.name, def_scope);
                     typ
                 } else {
-                    TY_VOID
+                    TY_ERROR
                 }
             }
         } else {
@@ -1606,15 +1761,17 @@ impl SemanticAnalyzer {
                 typ
             } else {
                 // Don't error for imported names that might be forward-declared
-                TY_VOID
+                TY_ERROR
             }
         };
 
         let mut current_type = sym_type;
         for sel in &desig.selectors {
+            // Unwrap aliases so selectors see the concrete type
+            current_type = self.resolve_alias(current_type);
             match sel {
                 Selector::Field(name, loc) => {
-                    if current_type != TY_VOID {
+                    if current_type != TY_ERROR && current_type != TY_VOID {
                         match self.types.get(current_type) {
                             Type::Record { fields, variants, .. } => {
                                 if let Some(f) = fields.iter().find(|f| &f.name == name) {
@@ -1623,7 +1780,7 @@ impl SemanticAnalyzer {
                                     // Allow variant field access through union/struct syntax
                                     // (variant, v0, v1, etc.) - trust the programmer
                                     // We can't fully type-check variant access at this point
-                                    current_type = TY_VOID; // unknown but allowed
+                                    current_type = TY_ERROR; // unknown but allowed
                                 } else if variants.is_some() {
                                     // In a variant record, variant fields may be accessed directly
                                     // Check variant fields
@@ -1639,23 +1796,23 @@ impl SemanticAnalyzer {
                                     }
                                     if !found {
                                         self.error(loc, format!("no field '{}' in record", name));
-                                        current_type = TY_VOID;
+                                        current_type = TY_ERROR;
                                     }
                                 } else {
                                     self.error(loc, format!("no field '{}' in record", name));
-                                    current_type = TY_VOID;
+                                    current_type = TY_ERROR;
                                 }
                             }
                             Type::Opaque { .. } => {
                                 // Opaque type - allow field access (trust the programmer)
-                                current_type = TY_VOID;
+                                current_type = TY_ERROR;
                             }
-                            Type::Void => {
-                                // Already void (e.g. from variant access) - stay void
+                            Type::Error => {
+                                // Already error — don't cascade
                             }
                             _ => {
                                 self.error(loc, "field access on non-record type");
-                                current_type = TY_VOID;
+                                current_type = TY_ERROR;
                             }
                         }
                     }
@@ -1664,21 +1821,21 @@ impl SemanticAnalyzer {
                     for idx in indices {
                         self.analyze_expr(idx);
                         // Peel off one array dimension per index
-                        if current_type != TY_VOID {
+                        if current_type != TY_ERROR && current_type != TY_VOID {
                             match self.types.get(current_type) {
                                 Type::Array { elem_type, .. } => current_type = *elem_type,
                                 Type::OpenArray { elem_type } => current_type = *elem_type,
                                 Type::StringLit(_) => current_type = TY_CHAR,
                                 _ => {
                                     self.error(loc, "indexing non-array type");
-                                    current_type = TY_VOID;
+                                    current_type = TY_ERROR;
                                 }
                             }
                         }
                     }
                 }
                 Selector::Deref(loc) => {
-                    if current_type != TY_VOID {
+                    if current_type != TY_ERROR && current_type != TY_VOID {
                         match self.types.get(current_type) {
                             Type::Pointer { base } => {
                                 current_type = *base;
@@ -1695,7 +1852,7 @@ impl SemanticAnalyzer {
                             }
                             _ => {
                                 self.error(loc, "dereference of non-pointer type");
-                                current_type = TY_VOID;
+                                current_type = TY_ERROR;
                             }
                         }
                     }

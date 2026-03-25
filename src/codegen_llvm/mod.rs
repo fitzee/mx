@@ -324,9 +324,31 @@ impl LLVMCodeGen {
         self.debug_mode = enabled;
     }
 
-    pub fn register_def_module(&mut self, def: &DefinitionModule) {
-        self.sema.register_def_module(def);
+    /// Replace the LLVM backend's sema with a pre-populated one.
+    /// Used to share sema between C and LLVM backends so .def modules
+    /// are registered once.
+    pub fn set_sema(&mut self, sema: SemanticAnalyzer) {
+        self.sema = sema;
+    }
 
+    /// Pre-register type names as Opaques for cross-module resolution.
+    pub fn pre_register_type_names(&mut self, def: &DefinitionModule) {
+        self.sema.pre_register_type_names(def);
+    }
+
+    pub fn register_def_module(&mut self, def: &DefinitionModule) {
+        self.register_def_module_impl(def, true);
+    }
+
+    /// Register a .def module's non-sema state only (when sema is shared).
+    pub fn register_def_module_no_sema(&mut self, def: &DefinitionModule) {
+        self.register_def_module_impl(def, false);
+    }
+
+    fn register_def_module_impl(&mut self, def: &DefinitionModule, run_sema: bool) {
+        if run_sema {
+            self.sema.register_def_module(def);
+        }
         if def.foreign_lang.is_none() {
             self.def_modules.insert(def.name.clone(), def.clone());
         }
@@ -416,31 +438,37 @@ impl LLVMCodeGen {
     }
 
     pub fn generate_or_errors(&mut self, unit: &CompilationUnit) -> Result<String, Vec<CompileError>> {
-        self.sema.analyze(unit)?;
-        self.analyze_all_impl_modules();
+        // Sema already fully populated by driver.
         self.sema.fixup_record_field_types();
         self.build_module_exports();
         self.build_type_lowering();
+        let _hir_module = self.build_hir_module(unit);
         self.post_sema_generate(unit).map_err(|e| vec![e])?;
         Ok(self.finalize())
     }
 
     pub fn generate(&mut self, unit: &CompilationUnit) -> CompileResult<String> {
-        self.sema.analyze(unit).map_err(|errors| {
-            let msg = errors.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join("\n");
-            CompileError::codegen(
-                errors.first().map(|e| e.loc.clone()).unwrap_or_else(|| {
-                    crate::errors::SourceLoc::new("<codegen>", 0, 0)
-                }),
-                msg,
-            )
-        })?;
-        self.analyze_all_impl_modules();
+        // Sema already fully populated by driver.
         self.sema.fixup_record_field_types();
         self.build_module_exports();
         self.build_type_lowering();
+        // Build HIR module (parallel path — built but not consumed yet)
+        let _hir_module = self.build_hir_module(unit);
         self.post_sema_generate(unit)?;
         Ok(self.finalize())
+    }
+
+    /// Build an HIR module from the current compilation unit.
+    /// Call after sema is complete and before codegen.
+    /// The HIR module is a fully-resolved, typed representation that
+    /// backends can consume instead of walking the AST.
+    pub fn build_hir_module(&self, unit: &CompilationUnit) -> Option<crate::hir::HirModule> {
+        let mut hb = self.make_hir_builder();
+        match unit {
+            CompilationUnit::ProgramModule(m) => Some(hb.build_module_from_program(m)),
+            CompilationUnit::ImplementationModule(m) => Some(hb.build_module_from_impl(m)),
+            CompilationUnit::DefinitionModule(_) => None, // def modules don't produce HIR
+        }
     }
 
     /// Run full semantic analysis on all imported implementation modules.
@@ -668,6 +696,7 @@ impl LLVMCodeGen {
     pub(crate) fn mangle(&self, name: &str) -> String {
         format!("{}_{}", self.module_name, name)
     }
+
 
     /// Set the current debug source location from a SourceLoc.
     pub(crate) fn set_debug_loc(&mut self, loc: &crate::errors::SourceLoc) {

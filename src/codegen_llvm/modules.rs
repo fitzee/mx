@@ -184,9 +184,9 @@ impl LLVMCodeGen {
             self.emitln(&format!("{}:", body_label));
             self.in_sjlj_context = true;
             if let Some(stmts) = &m.block.body {
-                for stmt in stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(stmts);
+                self.gen_hir_statements(&hir_stmts);
             }
             self.in_sjlj_context = false;
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
@@ -196,23 +196,24 @@ impl LLVMCodeGen {
             self.emitln(&format!("{}:", except_label));
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
             if let Some(except_stmts) = &m.block.except {
-                for stmt in except_stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(except_stmts);
+                self.gen_hir_statements(&hir_stmts);
             }
             self.emitln(&format!("  br label %{}", end_label));
 
             self.emitln(&format!("{}:", end_label));
             if let Some(finally_stmts) = &m.block.finally {
-                for stmt in finally_stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(finally_stmts);
+                self.gen_hir_statements(&hir_stmts);
             }
         } else {
             if let Some(stmts) = &m.block.body {
-                for stmt in stmts {
-                    self.gen_statement(stmt);
-                }
+                // Lower AST statements to HIR, then generate through HIR path
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(stmts);
+                self.gen_hir_statements(&hir_stmts);
             }
         }
 
@@ -272,9 +273,9 @@ impl LLVMCodeGen {
                 self.tmp_counter = 0;
                 self.locals.push(HashMap::new());
 
-                for stmt in stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(stmts);
+                self.gen_hir_statements(&hir_stmts);
 
                 self.emitln("  ret void");
                 self.emitln("}");
@@ -290,6 +291,7 @@ impl LLVMCodeGen {
         let saved_module = self.module_name.clone();
         let saved_import_map = self.import_map.clone();
         let saved_import_alias_map = self.import_alias_map.clone();
+        let saved_imported_modules = self.imported_modules.clone();
 
         self.module_name = imp.name.clone();
         // Note: register_impl_types already called in finalize_all_impl_modules
@@ -358,9 +360,9 @@ impl LLVMCodeGen {
                 self.tmp_counter = 0;
                 self.locals.push(HashMap::new());
 
-                for stmt in stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(stmts);
+                self.gen_hir_statements(&hir_stmts);
 
                 self.emitln("  ret void");
                 self.emitln("}");
@@ -373,6 +375,7 @@ impl LLVMCodeGen {
         self.module_name = saved_module;
         self.import_map = saved_import_map;
         self.import_alias_map = saved_import_alias_map;
+        self.imported_modules = saved_imported_modules;
         Ok(())
     }
 

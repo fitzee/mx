@@ -96,7 +96,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
                 exported: true,
                 module: None,
                 loc: SourceLoc::default(),
-                doc: None,
+                doc: None, is_var_param: false, is_open_array: false,
             },
         );
     }
@@ -111,7 +111,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
             exported: true,
             module: None,
             loc: SourceLoc::default(),
-            doc: None,
+            doc: None, is_var_param: false, is_open_array: false,
         },
     );
     let _ = symtab.define(
@@ -123,7 +123,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
             exported: true,
             module: None,
             loc: SourceLoc::default(),
-            doc: None,
+            doc: None, is_var_param: false, is_open_array: false,
         },
     );
     let _ = symtab.define(
@@ -135,7 +135,7 @@ pub fn register_builtin_types(symtab: &mut SymbolTable, _types: &TypeRegistry, s
             exported: true,
             module: None,
             loc: SourceLoc::default(),
-            doc: None,
+            doc: None, is_var_param: false, is_open_array: false,
         },
     );
 }
@@ -197,7 +197,7 @@ pub fn register_builtin_procs(symtab: &mut SymbolTable, _types: &TypeRegistry, s
                 exported: true,
                 module: None,
                 loc: SourceLoc::default(),
-                doc: None,
+                doc: None, is_var_param: false, is_open_array: false,
             },
         );
     }

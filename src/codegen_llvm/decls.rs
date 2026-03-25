@@ -412,7 +412,7 @@ impl LLVMCodeGen {
             let mut params = Vec::new();
             for fp in &p.heading.params {
                 let tid = self.resolve_type_node_to_id(&fp.typ)
-                    .unwrap_or(crate::types::TY_VOID);
+                    .unwrap_or(crate::types::TY_ERROR);
                 for name in &fp.names {
                     params.push(crate::symtab::ParamInfo {
                         name: name.clone(),
@@ -649,8 +649,11 @@ impl LLVMCodeGen {
                     self.declared_fns.insert(module_name);
                 }
 
-                // Find captured variables: names used in nested body that are parent locals
-                let captured = self.collect_free_vars(&nested_p.block, &parent_locals);
+                // Find captured variables via unified HIR closure analysis
+                let outer_vars = self.build_outer_vars_for_captures();
+                let hir_captures = self.compute_captures_hir(nested_p, &outer_vars);
+                let captured: std::collections::HashSet<String> = hir_captures.iter()
+                    .map(|c| c.name.clone()).collect();
                 for cap_name in &captured {
                     // Skip if already promoted (multiple nested procs capturing same var)
                     if self.globals.contains_key(cap_name) {
@@ -702,9 +705,9 @@ impl LLVMCodeGen {
             self.emitln(&format!("{}:", body_label));
             self.in_sjlj_context = true;
             if let Some(stmts) = &p.block.body {
-                for stmt in stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(stmts);
+                self.gen_hir_statements(&hir_stmts);
             }
             self.in_sjlj_context = false;
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
@@ -721,15 +724,15 @@ impl LLVMCodeGen {
             self.emitln(&format!("{}:", except_label));
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
             if let Some(except_stmts) = &p.block.except {
-                for stmt in except_stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(except_stmts);
+                self.gen_hir_statements(&hir_stmts);
             }
         } else {
             if let Some(stmts) = &p.block.body {
-                for stmt in stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(stmts);
+                self.gen_hir_statements(&hir_stmts);
             }
         }
 

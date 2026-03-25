@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::ast::CompilationUnit;
-use crate::codegen::CodeGen;
+use crate::codegen_c::CodeGen;
 use crate::codegen_llvm::LLVMCodeGen;
 use crate::errors::{CompileError, CompileResult};
 use crate::lexer::Lexer;
@@ -729,19 +729,22 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
     }
 
-    // Generate C
-    let mut codegen = CodeGen::new();
-    codegen.set_m2plus(opts.m2plus);
-    codegen.set_debug(opts.debug);
-    codegen.multi_tu = opts.emit_per_module;
+    // ── Shared sema pipeline ──────────────────────────────────────────
+    // Parse all .def and .mod files, run sema ONCE, then hand the result
+    // to whichever backend is selected. No backend drives sema.
 
-    // First pass: parse all definition modules for non-stdlib imports (transitive)
+    let mut sema = crate::sema::SemanticAnalyzer::new();
+    sema.m2plus = opts.m2plus;
+
+    // Track which defs/mods we've parsed
     let mut registered_defs = std::collections::HashSet::new();
-    // Phase 1: parse all .def files and collect them (including the own def)
+    // Collected .def and .mod for backend-specific (non-sema) registration
+    let mut all_sorted_defs: Vec<crate::ast::DefinitionModule> = Vec::new();
+    let mut all_impl_mods: Vec<crate::ast::ImplementationModule> = Vec::new();
+
+    // Phase 1: parse all .def files transitively
     let mut parsed_defs: std::collections::HashMap<String, crate::ast::DefinitionModule> = std::collections::HashMap::new();
-    // Include the own .def in parsed_defs so it participates in topological sort
     if let Some(ref def_mod) = own_def {
-        // Seed queue with the own def's imports
         for imp in &def_mod.imports {
             if let Some(ref from_mod) = imp.from_module {
                 all_imported_modules.push(from_mod.clone());
@@ -764,7 +767,6 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
             let def_unit = parse_file(&def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
             if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
-                // Transitively discover imports of this def module
                 for imp in &def_mod.imports {
                     if let Some(ref from_mod) = imp.from_module {
                         if !registered_defs.contains(from_mod) && !parsed_defs.contains_key(from_mod) {
@@ -782,7 +784,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
         }
     }
-    // Phase 2: topologically sort def modules so dependencies are registered first
+
+    // Phase 2: topologically sort .defs, register with sema
     {
         let mut sorted = Vec::new();
         let mut visited = std::collections::HashSet::new();
@@ -793,9 +796,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             sorted: &mut Vec<String>,
             registered: &std::collections::HashSet<String>,
         ) {
-            if visited.contains(name) || registered.contains(name) {
-                return;
-            }
+            if visited.contains(name) || registered.contains(name) { return; }
             visited.insert(name.to_string());
             if let Some(def) = parsed.get(name) {
                 for imp in &def.imports {
@@ -814,31 +815,32 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         for name in &names {
             topo_visit(name, &parsed_defs, &mut visited, &mut sorted, &registered_defs);
         }
-        // Register in dependency order
-        for name in &sorted {
-            if let Some(def_mod) = parsed_defs.remove(name) {
-                if opts.verbose {
-                    eprintln!("{}: registering definition module: {}", identity::COMPILER_NAME, name);
-                }
-                codegen.register_def_module(&def_mod);
-                registered_defs.insert(name.clone());
+        let sorted_defs: Vec<_> = sorted.iter()
+            .filter_map(|name| parsed_defs.remove(name).map(|d| (name.clone(), d)))
+            .collect();
+        // Pre-register type names for cross-module resolution
+        for (_name, def_mod) in &sorted_defs {
+            sema.pre_register_type_names(def_mod);
+        }
+        // Full sema registration in dependency order
+        for (name, def_mod) in &sorted_defs {
+            if opts.verbose {
+                eprintln!("{}: registering definition module: {}", identity::COMPILER_NAME, name);
             }
+            sema.register_def_module(def_mod);
+            registered_defs.insert(name.clone());
+            all_sorted_defs.push(def_mod.clone());
         }
     }
 
-    // Second pass: load implementation modules for all non-stdlib imported modules
-    // Also transitively discover implementation module dependencies
+    // Phase 3: load .mod files transitively, register with sema
     let mut loaded_modules = std::collections::HashSet::new();
     let mut mod_queue: Vec<String> = all_imported_modules.clone();
     while let Some(mod_name) = mod_queue.pop() {
         if (crate::stdlib::is_stdlib_module(&mod_name) && !crate::stdlib::is_native_stdlib(&mod_name)) || loaded_modules.contains(&mod_name) {
             continue;
         }
-        // Skip .mod lookup for foreign (C ABI) modules — they have no M2 implementation
-        if codegen.is_foreign_module(&mod_name) {
-            if opts.verbose {
-                eprintln!("{}: skipping .mod lookup for foreign module {}", identity::COMPILER_NAME, mod_name);
-            }
+        if sema.foreign_modules.contains(&mod_name) {
             loaded_modules.insert(mod_name.clone());
             continue;
         }
@@ -858,11 +860,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
         }
         if let Some(imp_mod) = found_impl {
-            // Transitively discover dependencies of this implementation module
+            // Transitively discover dependencies
             for imp in &imp_mod.imports {
                 if let Some(ref from_mod) = imp.from_module {
                     if !loaded_modules.contains(from_mod) {
-                        // Register the def module first if not already done
                         if !registered_defs.contains(from_mod) && (!crate::stdlib::is_stdlib_module(from_mod) || crate::stdlib::is_native_stdlib(from_mod)) {
                             if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
                                 if opts.verbose {
@@ -870,19 +871,18 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                                 }
                                 let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
                                 if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
-                                    codegen.register_def_module(&dep_def);
+                                    sema.register_def_module(&dep_def);
                                     registered_defs.insert(from_mod.clone());
+                                    all_sorted_defs.push(dep_def);
                                 }
                             }
                         }
                         mod_queue.push(from_mod.clone());
                     }
                 } else {
-                    // Whole-module import: IMPORT Module1, Module2;
                     for name in &imp.names {
                         let n = &name.name;
                         if !loaded_modules.contains(n) {
-                            // Also register the def module if not already done
                             if !registered_defs.contains(n) && (!crate::stdlib::is_stdlib_module(n) || crate::stdlib::is_native_stdlib(n)) {
                                 if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
                                     if opts.verbose {
@@ -890,8 +890,9 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                                     }
                                     if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features) {
                                         if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
-                                            codegen.register_def_module(&dep_def);
+                                            sema.register_def_module(&dep_def);
                                             registered_defs.insert(n.clone());
+                                            all_sorted_defs.push(dep_def);
                                         }
                                     }
                                 }
@@ -901,9 +902,46 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                     }
                 }
             }
-            codegen.add_imported_module(imp_mod);
+            // Register impl module types with sema
+            sema.register_impl_types(&imp_mod);
+            all_impl_mods.push(imp_mod);
             loaded_modules.insert(mod_name.clone());
         }
+    }
+
+    // Phase 4: analyze the main compilation unit FIRST (sets up imports/scopes)
+    sema.reset_position_artifacts();
+    sema.analyze(&unit).map_err(|errors| {
+        let msg = errors.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join("\n");
+        CompileError::codegen(
+            errors.first().map(|e| e.loc.clone()).unwrap_or_else(|| {
+                crate::errors::SourceLoc::new("<driver>", 0, 0)
+            }),
+            msg,
+        )
+    })?;
+
+    // Phase 5: full sema analysis of all impl modules (after main unit)
+    for imp in &all_impl_mods {
+        sema.analyze_impl_module(imp);
+    }
+    sema.fixup_record_field_types();
+
+    // ── Backend selection ───────────────────────────────────────────
+    // Both backends receive the same fully-populated sema.
+
+    // Generate C (always created — needed for C output or as a no-op when LLVM is selected)
+    let mut codegen = CodeGen::new();
+    codegen.set_m2plus(opts.m2plus);
+    codegen.set_debug(opts.debug);
+    codegen.multi_tu = opts.emit_per_module;
+    // Transfer shared sema and register backend-specific metadata
+    codegen.set_sema(sema.clone());
+    for def_mod in &all_sorted_defs {
+        codegen.register_def_module_no_sema(def_mod);
+    }
+    for imp_mod in &all_impl_mods {
+        codegen.add_imported_module_no_sema(imp_mod.clone());
     }
 
     // ── LLVM IR backend ──────────────────────────────────────────────
@@ -912,140 +950,14 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         llvm_codegen.set_m2plus(opts.m2plus);
         llvm_codegen.set_debug(opts.debug);
 
-        // Re-register def modules with the LLVM backend
-        // Re-parse and register all definition modules that the C codegen registered
-        let mut ll_registered = std::collections::HashSet::new();
-        let mut ll_def_queue: Vec<String> = all_imported_modules.clone();
-        let mut ll_parsed_defs: std::collections::HashMap<String, crate::ast::DefinitionModule> = std::collections::HashMap::new();
-        if let Some(ref def_mod) = own_def {
-            for imp in &def_mod.imports {
-                if let Some(ref from_mod) = imp.from_module {
-                    ll_def_queue.push(from_mod.clone());
-                } else {
-                    for name in &imp.names {
-                        ll_def_queue.push(name.name.clone());
-                    }
-                }
-            }
-            ll_parsed_defs.insert(def_mod.name.clone(), def_mod.clone());
+        // Share sema from the driver — all .def/.mod already registered.
+        llvm_codegen.set_sema(sema.clone());
+        // Register backend-specific metadata (def_modules, foreign_modules, exports)
+        for def_mod in &all_sorted_defs {
+            llvm_codegen.register_def_module_no_sema(def_mod);
         }
-        while let Some(mod_name) = ll_def_queue.pop() {
-            if (crate::stdlib::is_stdlib_module(&mod_name) && !crate::stdlib::is_native_stdlib(&mod_name)) || ll_registered.contains(&mod_name) || ll_parsed_defs.contains_key(&mod_name) {
-                continue;
-            }
-            if let Some(def_path) = find_def_file(&mod_name, &opts.input, &opts.include_paths) {
-                let def_unit = parse_file(&def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
-                if let CompilationUnit::DefinitionModule(def_mod) = def_unit {
-                    for imp in &def_mod.imports {
-                        if let Some(ref from_mod) = imp.from_module {
-                            if !ll_registered.contains(from_mod) && !ll_parsed_defs.contains_key(from_mod) {
-                                ll_def_queue.push(from_mod.clone());
-                            }
-                        } else {
-                            for name in &imp.names {
-                                if !ll_registered.contains(&name.name) && !ll_parsed_defs.contains_key(&name.name) {
-                                    ll_def_queue.push(name.name.clone());
-                                }
-                            }
-                        }
-                    }
-                    ll_parsed_defs.insert(mod_name.clone(), def_mod);
-                }
-            }
-        }
-        // Topological sort and register
-        {
-            let mut sorted = Vec::new();
-            let mut visited = std::collections::HashSet::new();
-            fn ll_topo_visit(
-                name: &str,
-                parsed: &std::collections::HashMap<String, crate::ast::DefinitionModule>,
-                visited: &mut std::collections::HashSet<String>,
-                sorted: &mut Vec<String>,
-                registered: &std::collections::HashSet<String>,
-            ) {
-                if visited.contains(name) || registered.contains(name) { return; }
-                visited.insert(name.to_string());
-                if let Some(def) = parsed.get(name) {
-                    for imp in &def.imports {
-                        if let Some(ref from_mod) = imp.from_module {
-                            ll_topo_visit(from_mod, parsed, visited, sorted, registered);
-                        } else {
-                            for n in &imp.names {
-                                ll_topo_visit(&n.name, parsed, visited, sorted, registered);
-                            }
-                        }
-                    }
-                }
-                sorted.push(name.to_string());
-            }
-            let names: Vec<String> = ll_parsed_defs.keys().cloned().collect();
-            for name in &names {
-                ll_topo_visit(name, &ll_parsed_defs, &mut visited, &mut sorted, &ll_registered);
-            }
-            for name in &sorted {
-                if let Some(def_mod) = ll_parsed_defs.remove(name) {
-                    llvm_codegen.register_def_module(&def_mod);
-                    ll_registered.insert(name.clone());
-                }
-            }
-        }
-
-        // Load implementation modules
-        let mut ll_loaded = std::collections::HashSet::new();
-        let mut ll_mod_queue: Vec<String> = all_imported_modules.clone();
-        while let Some(mod_name) = ll_mod_queue.pop() {
-            if (crate::stdlib::is_stdlib_module(&mod_name) && !crate::stdlib::is_native_stdlib(&mod_name)) || ll_loaded.contains(&mod_name) { continue; }
-            if llvm_codegen.is_foreign_module(&mod_name) {
-                ll_loaded.insert(mod_name.clone());
-                continue;
-            }
-            let mod_candidates = find_mod_file_candidates(&mod_name, &opts.input, &opts.include_paths);
-            let mut found_impl = None;
-            for mod_path in &mod_candidates {
-                let mod_unit = parse_file(mod_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
-                if let CompilationUnit::ImplementationModule(imp) = mod_unit {
-                    found_impl = Some(imp);
-                    break;
-                }
-            }
-            if let Some(imp_mod) = found_impl {
-                for imp in &imp_mod.imports {
-                    if let Some(ref from_mod) = imp.from_module {
-                        if !ll_loaded.contains(from_mod) {
-                            if !ll_registered.contains(from_mod) && (!crate::stdlib::is_stdlib_module(from_mod) || crate::stdlib::is_native_stdlib(from_mod)) {
-                                if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
-                                    let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
-                                    if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
-                                        llvm_codegen.register_def_module(&dep_def);
-                                        ll_registered.insert(from_mod.clone());
-                                    }
-                                }
-                            }
-                            ll_mod_queue.push(from_mod.clone());
-                        }
-                    } else {
-                        for name in &imp.names {
-                            let n = &name.name;
-                            if !ll_loaded.contains(n) {
-                                if !ll_registered.contains(n) && (!crate::stdlib::is_stdlib_module(n) || crate::stdlib::is_native_stdlib(n)) {
-                                    if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
-                                        if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features) {
-                                            if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
-                                                llvm_codegen.register_def_module(&dep_def);
-                                                ll_registered.insert(n.clone());
-                                            }
-                                        }
-                                    }
-                                }
-                                ll_mod_queue.push(n.clone());
-                            }
-                        }
-                    }
-                }
-                llvm_codegen.add_imported_module(imp_mod);
-                ll_loaded.insert(mod_name.clone());
-            }
+        for imp_mod in &all_impl_mods {
+            llvm_codegen.add_imported_module(imp_mod.clone());
         }
 
         // Generate LLVM IR

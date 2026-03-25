@@ -426,6 +426,7 @@ impl LLVMCodeGen {
             Type::Exception { .. } => "i32".to_string(),
             Type::Complex => "{ float, float }".to_string(),
             Type::LongComplex => "{ double, double }".to_string(),
+            Type::Error => "i32".to_string(), // poison type — should not reach codegen
         }
     }
 
@@ -461,15 +462,6 @@ impl LLVMCodeGen {
             }
         }
         None
-    }
-
-    pub(crate) fn is_var_param(&self, name: &str) -> bool {
-        for scope in self.var_params.iter().rev() {
-            if scope.contains(name) {
-                return true;
-            }
-        }
-        false
     }
 
     /// Resolve a procedure variable's ProcedureType to get ParamLLVMInfo.
@@ -513,15 +505,6 @@ impl LLVMCodeGen {
             }
         }
         Vec::new()
-    }
-
-    pub(crate) fn is_open_array_param(&self, name: &str) -> bool {
-        for scope in self.open_array_params.iter().rev() {
-            if scope.contains(name) {
-                return true;
-            }
-        }
-        false
     }
 
     pub(crate) fn is_named_array_param(&self, name: &str) -> bool {

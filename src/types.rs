@@ -30,6 +30,7 @@ impl TypeRegistry {
         reg.register(Type::LongComplex); // 16
         reg.register(Type::RefAny);      // 17
         reg.register(Type::ProcedureType { params: vec![], return_type: None }); // 18 - PROC
+        reg.register(Type::Error);        // 19 - error/poison type
         reg
     }
 
@@ -72,6 +73,7 @@ pub const TY_COMPLEX: TypeId = 15;
 pub const TY_LONGCOMPLEX: TypeId = 16;
 pub const TY_REFANY: TypeId = 17;
 pub const TY_PROC: TypeId = 18;
+pub const TY_ERROR: TypeId = 19;
 
 #[derive(Debug, Clone)]
 pub enum Type {
@@ -152,6 +154,9 @@ pub enum Type {
     Exception {
         name: String,
     },
+    /// Poison type: represents a failed type resolution.
+    /// Compatible with everything — prevents cascading errors.
+    Error,
 }
 
 #[derive(Debug, Clone)]
@@ -186,6 +191,25 @@ pub struct VariantCase {
 pub struct ParamType {
     pub is_var: bool,
     pub typ: TypeId,
+}
+
+/// Check if a TypeId represents an unsigned type.
+/// Used by codegen to select signed vs unsigned LLVM operations.
+pub fn is_unsigned_type(reg: &TypeRegistry, tid: TypeId) -> bool {
+    match tid {
+        TY_CARDINAL | TY_LONGCARD | TY_WORD | TY_BYTE | TY_ADDRESS | TY_BITSET | TY_CHAR => true,
+        _ => {
+            // Check through aliases and subranges
+            match reg.get(tid) {
+                Type::Cardinal | Type::LongCard | Type::Word | Type::Byte
+                | Type::Address | Type::Bitset | Type::Char => true,
+                Type::Alias { target, .. } => is_unsigned_type(reg, *target),
+                Type::Subrange { base, .. } => is_unsigned_type(reg, *base),
+                Type::Enumeration { .. } => true, // enums are unsigned ordinals
+                _ => false,
+            }
+        }
+    }
 }
 
 impl Type {
@@ -242,6 +266,10 @@ impl Type {
     pub fn is_string_like(&self) -> bool {
         matches!(self, Type::StringLit(_))
     }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self, Type::Error)
+    }
 }
 
 impl fmt::Display for Type {
@@ -278,6 +306,7 @@ impl fmt::Display for Type {
             Type::RefAny => write!(f, "REFANY"),
             Type::Object { name, .. } => write!(f, "{} (OBJECT)", name),
             Type::Exception { name } => write!(f, "EXCEPTION {}", name),
+            Type::Error => write!(f, "<error>"),
         }
     }
 }
@@ -285,6 +314,10 @@ impl fmt::Display for Type {
 /// Check if `src` type is assignment-compatible with `dst` type
 pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bool {
     if dst == src {
+        return true;
+    }
+    // Error/poison type is compatible with everything — prevents cascading errors
+    if dst == TY_ERROR || src == TY_ERROR {
         return true;
     }
     let dt = reg.get(dst);
@@ -416,6 +449,10 @@ pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bo
 /// Check if two types are expression-compatible (can appear in same binary op)
 pub fn expression_compatible(reg: &TypeRegistry, t1: TypeId, t2: TypeId) -> bool {
     if t1 == t2 {
+        return true;
+    }
+    // Error/poison type is compatible with everything — prevents cascading errors
+    if t1 == TY_ERROR || t2 == TY_ERROR {
         return true;
     }
     let ty1 = reg.get(t1);

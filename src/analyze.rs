@@ -599,6 +599,7 @@ pub fn type_to_string(types: &TypeRegistry, id: TypeId) -> String {
             }
         }
         Type::Exception { name } => format!("EXCEPTION {}", name),
+        Type::Error => "<error>".to_string(),
     }
 }
 

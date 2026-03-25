@@ -24,6 +24,10 @@ pub struct Symbol {
     pub module: Option<String>,
     pub loc: SourceLoc,
     pub doc: Option<String>,
+    /// True if this symbol is a VAR parameter (passed by reference).
+    pub is_var_param: bool,
+    /// True if this symbol is an open array parameter.
+    pub is_open_array: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +108,12 @@ impl SymbolTable {
         id
     }
 
+    /// Re-enter an existing scope by pushing its ID onto the stack.
+    /// Used for two-pass registration where the scope was already created.
+    pub fn reenter_scope(&mut self, scope_id: usize) {
+        self.scope_stack.push(scope_id);
+    }
+
     pub fn pop_scope(&mut self) -> usize {
         let current = self.current_scope();
         if self.scope_stack.len() > 1 {
@@ -139,12 +149,17 @@ impl SymbolTable {
         }
     }
 
-    pub fn define(&mut self, scope_id: usize, sym: Symbol) -> Result<(), String> {
+    pub fn define(&mut self, scope_id: usize, mut sym: Symbol) -> Result<(), String> {
         let scope = &mut self.scopes[scope_id];
         if let Some(existing) = scope.symbols.get(&sym.name) {
             // Local definitions shadow imported names (PIM4 §11)
             if existing.module.is_none() || sym.module.is_some() {
                 return Err(format!("'{}' is already defined in this scope", sym.name));
+            }
+            // Preserve exported flag: if .def exported it, .mod re-declaration
+            // must not lose that (unified scope reuse).
+            if existing.exported && !sym.exported {
+                sym.exported = true;
             }
         }
         scope.symbols.insert(sym.name.clone(), sym);
@@ -169,6 +184,11 @@ impl SymbolTable {
     /// Look up a symbol in a specific scope only (no parent chain walk).
     pub fn lookup_in_scope_direct(&self, scope_id: usize, name: &str) -> Option<&Symbol> {
         self.scopes.get(scope_id).and_then(|s| s.symbols.get(name))
+    }
+
+    /// Mutable lookup in a specific scope (direct, no parent chain).
+    pub fn lookup_in_scope_mut(&mut self, scope_id: usize, name: &str) -> Option<&mut Symbol> {
+        self.scopes.get_mut(scope_id).and_then(|s| s.symbols.get_mut(name))
     }
 
     pub fn lookup_in_scope(&self, scope_id: usize, name: &str) -> Option<&Symbol> {
