@@ -819,6 +819,17 @@ impl<'a> HirBuilder<'a> {
                     (p.is_var, is_open)
                 }).collect();
             }
+            // Procedure variable: look up ProcedureType from the type registry
+            let resolved = self.resolve_alias(sym.typ);
+            if let Type::ProcedureType { params, .. } = self.types.get(resolved) {
+                return params.iter().map(|p| {
+                    let is_open = matches!(
+                        self.types.get(self.resolve_alias(p.typ)),
+                        Type::OpenArray { .. }
+                    );
+                    (p.is_var, is_open)
+                }).collect();
+            }
         }
         Vec::new()
     }
