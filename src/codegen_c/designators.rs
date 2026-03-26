@@ -23,9 +23,17 @@ impl CodeGen {
             }
         }
         // Mirror WITH stack
-        for (record_var, _fields, _with_type) in &self.with_aliases {
-            if let Some(sym) = self.sema.symtab.lookup_any(record_var) {
-                hb.push_with(record_var, sym.typ);
+        for (record_var, _fields, with_type) in &self.with_aliases {
+            // Resolve type: prefer scope-aware lookup (avoids shadowing),
+            // then type name string (for nested WITH on field names).
+            let tid = hb.scope_lookup_type(record_var)
+                .or_else(|| {
+                    with_type.as_ref().and_then(|tn| {
+                        self.sema.symtab.find_type(tn)
+                    })
+                });
+            if let Some(tid) = tid {
+                hb.push_with(record_var, tid);
             }
         }
         if !self.parent_proc_stack.is_empty() {

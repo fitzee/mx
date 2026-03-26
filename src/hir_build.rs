@@ -808,6 +808,11 @@ impl<'a> HirBuilder<'a> {
 
     // ── Helpers ───────────────────────────────────────────────────────
 
+    /// Scope-aware type lookup for a variable name. Returns its TypeId.
+    pub fn scope_lookup_type(&self, name: &str) -> Option<TypeId> {
+        self.scope_lookup(name).map(|sym| sym.typ)
+    }
+
     /// Check if a resolved TypeId represents an open-array-like parameter.
     /// Matches OpenArray and StringLit (TY_STRING is used by stdlib for
     /// `ARRAY OF CHAR` parameters).
