@@ -835,7 +835,7 @@ impl<'a> HirBuilder<'a> {
 
     /// Look up a procedure's parameter info from sema.
     /// Returns (is_var, is_open_array) for each parameter.
-    fn lookup_proc_params(&self, desig: &crate::ast::Designator) -> Vec<(bool, bool)> {
+    fn lookup_proc_params(&mut self, desig: &crate::ast::Designator) -> Vec<(bool, bool)> {
         let name = &desig.ident.name;
 
         // Try the designator's resolved name
@@ -864,6 +864,17 @@ impl<'a> HirBuilder<'a> {
             }
             // Procedure variable: look up ProcedureType from the type registry
             let resolved = self.resolve_alias(sym.typ);
+            if let Type::ProcedureType { params, .. } = self.types.get(resolved) {
+                return params.iter().map(|p| {
+                    let is_open = Self::is_open_array_type(self.types, self.resolve_alias(p.typ));
+                    (p.is_var, is_open)
+                }).collect();
+            }
+        }
+        // Fallback: resolve the full designator to get its type.
+        // Handles indirect calls through record fields (cp^.genFn).
+        if let Some(place) = self.resolve_designator(desig) {
+            let resolved = self.resolve_alias(place.ty);
             if let Type::ProcedureType { params, .. } = self.types.get(resolved) {
                 return params.iter().map(|p| {
                     let is_open = Self::is_open_array_type(self.types, self.resolve_alias(p.typ));
@@ -909,19 +920,44 @@ impl<'a> HirBuilder<'a> {
                 // or value + HIGH for string literals.
                 if let ExprKind::Designator(ref d) = arg.kind {
                     if let Some(place) = self.resolve_designator(d) {
-                        result.push(HirExpr {
-                            kind: HirExprKind::AddrOf(place),
-                            ty: TY_ADDRESS,
-                            loc: loc.clone(),
-                        });
+                        // If the arg is already a pointer-like (open array param,
+                        // VAR param, ADDRESS, or a fixed array that decays to
+                        // pointer in C), pass directly without AddrOf.
+                        let resolved_ty = self.resolve_alias(place.ty);
+                        let is_array_type = matches!(self.types.get(resolved_ty),
+                            Type::Array { .. } | Type::OpenArray { .. });
+                        let already_ptr = match &place.base {
+                            PlaceBase::Local(sid) | PlaceBase::Global(sid) =>
+                                sid.is_open_array || sid.is_var_param,
+                            _ => false,
+                        } || place.ty == TY_ADDRESS || is_array_type;
+                        if already_ptr {
+                            result.push(HirExpr {
+                                kind: HirExprKind::Place(place),
+                                ty: TY_ADDRESS,
+                                loc: loc.clone(),
+                            });
+                        } else {
+                            result.push(HirExpr {
+                                kind: HirExprKind::AddrOf(place),
+                                ty: TY_ADDRESS,
+                                loc: loc.clone(),
+                            });
+                        }
                         let high = self.compute_high_for_arg(arg, loc);
                         result.push(high);
                         continue;
                     }
                 }
                 // Non-designator (e.g., string literal): emit value + HIGH
+                // Promote single-char TY_CHAR strings to TY_STRING for open array context
                 let lowered = self.lower_expr(arg);
-                result.push(lowered);
+                let arg_val = if lowered.ty == TY_CHAR {
+                    if let HirExprKind::StringLit(ref s) = lowered.kind {
+                        HirExpr { kind: HirExprKind::StringLit(s.clone()), ty: TY_STRING, loc: lowered.loc.clone() }
+                    } else { lowered }
+                } else { lowered };
+                result.push(arg_val);
                 let high = self.compute_high_for_arg(arg, loc);
                 result.push(high);
                 continue;
@@ -1303,7 +1339,7 @@ impl<'a> HirBuilder<'a> {
                 // WriteString (open array), but a char when assigned to a
                 // CHAR variable. The backend handles the coercion based on
                 // the target type at the use site.
-                let ty = TY_STRING;
+                let ty = if s.is_empty() || s.len() == 1 { TY_CHAR } else { TY_STRING };
                 HirExpr { kind: HirExprKind::StringLit(s.clone()), ty, loc }
             }
             ExprKind::CharLit(c) => HirExpr {

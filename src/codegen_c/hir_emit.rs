@@ -29,12 +29,10 @@ impl super::CodeGen {
             }
             HirExprKind::StringLit(s) => {
                 if expr.ty == TY_CHAR {
-                    // Single-char string used as char
                     if s.is_empty() {
                         "'\\0'".to_string()
                     } else {
-                        let ch = s.chars().next().unwrap();
-                        format!("'{}'", super::escape_c_char(ch))
+                        format!("'{}'", super::escape_c_char(s.chars().next().unwrap()))
                     }
                 } else {
                     format!("\"{}\"", super::escape_c_string(s))
