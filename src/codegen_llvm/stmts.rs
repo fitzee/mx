@@ -128,19 +128,64 @@ impl LLVMCodeGen {
                                 self.emitln(&format!("{}:", dead));
                             }
                             "NEW" => {
-                                // NEW(p) → p := malloc(sizeof(*p))
                                 if let Some(arg) = args.first() {
-                                    if let HirExprKind::Place(ref place) = arg.kind {
+                                    // NEW arg may be Place or AddrOf(Place) depending on HIR lowering
+                                    let place_ref = match &arg.kind {
+                                        HirExprKind::Place(ref p) => Some(p),
+                                        HirExprKind::AddrOf(ref p) => Some(p),
+                                        _ => None,
+                                    };
+                                    if let Some(place) = place_ref {
                                         let addr = self.emit_place_addr(place);
                                         let pointee_ty = self.tl_type_str(place.ty);
                                         let size = self.emit_sizeof(&pointee_ty);
-                                        if !self.declared_fns.contains("malloc") {
-                                            self.emit_preambleln("declare ptr @malloc(i64) nounwind");
-                                            self.declared_fns.insert("malloc".to_string());
+                                        // Check if the variable's pointer type has a type descriptor
+                                        let td_name = self.sema.symtab.find_type_by_id(place.ty)
+                                            .and_then(|tn| {
+                                                self.ref_type_descs.get(&tn).cloned()
+                                                    .or_else(|| {
+                                                        // Try module-prefixed key
+                                                        let prefixed = format!("{}_{}", self.module_name, tn);
+                                                        self.ref_type_descs.get(&prefixed).cloned()
+                                                    })
+                                            })
+                                            .or_else(|| {
+                                                // Try all TypeIds in the alias chain
+                                                let mut tid = place.ty;
+                                                for _ in 0..20 {
+                                                    if let Some(tn) = self.sema.symtab.find_type_by_id(tid) {
+                                                        if let Some(td) = self.ref_type_descs.get(&tn) {
+                                                            return Some(td.clone());
+                                                        }
+                                                    }
+                                                    match self.sema.types.get(tid) {
+                                                        crate::types::Type::Alias { target, .. } => tid = *target,
+                                                        _ => break,
+                                                    }
+                                                }
+                                                None
+                                            });
+
+                                        if let Some(td) = td_name {
+                                            // REF type: use M2_ref_alloc
+                                            if !self.declared_fns.contains("M2_ref_alloc") {
+                                                self.emit_preambleln("declare ptr @M2_ref_alloc(i64, ptr)");
+                                                self.declared_fns.insert("M2_ref_alloc".to_string());
+                                            }
+                                            let tmp = self.next_tmp();
+                                            let td_ref = if td.starts_with('@') { td.clone() } else { format!("@{}", td) };
+                                            self.emitln(&format!("  {} = call ptr @M2_ref_alloc(i64 {}, ptr {})", tmp, size, td_ref));
+                                            self.emitln(&format!("  store ptr {}, ptr {}", tmp, addr.name));
+                                        } else {
+                                            // Regular pointer: plain malloc
+                                            if !self.declared_fns.contains("malloc") {
+                                                self.emit_preambleln("declare ptr @malloc(i64) nounwind");
+                                                self.declared_fns.insert("malloc".to_string());
+                                            }
+                                            let tmp = self.next_tmp();
+                                            self.emitln(&format!("  {} = call ptr @malloc(i64 {})", tmp, size));
+                                            self.emitln(&format!("  store ptr {}, ptr {}", tmp, addr.name));
                                         }
-                                        let tmp = self.next_tmp();
-                                        self.emitln(&format!("  {} = call ptr @malloc(i64 {})", tmp, size));
-                                        self.emitln(&format!("  store ptr {}, ptr {}", tmp, addr.name));
                                     }
                                 }
                             }
@@ -612,6 +657,15 @@ impl LLVMCodeGen {
                 let tc_end = self.next_label("tc.end");
                 let mut has_else = else_body.is_some();
 
+                // Pre-allocate TYPECASE binding variables
+                for branch in branches {
+                    if let Some(ref var_name) = branch.var {
+                        let alloca = self.next_tmp();
+                        self.emitln(&format!("  {} = alloca ptr", alloca));
+                        self.locals.last_mut().unwrap().insert(var_name.clone(), (alloca, "ptr".to_string()));
+                    }
+                }
+
                 for (i, branch) in branches.iter().enumerate() {
                     let tc_match = self.next_label(&format!("tc.match.{}", i));
                     let tc_next = self.next_label(&format!("tc.next.{}", i));
@@ -620,20 +674,18 @@ impl LLVMCodeGen {
                     // OR them together if multiple types
                     let mut isa_result = None;
                     for ty in &branch.types {
+                        // Use module-prefixed name to match emitted type descriptors
                         let td_name = if let Some(ref m) = ty.module {
                             format!("@M2_TD_{}_{}", m, ty.source_name)
                         } else {
-                            format!("@M2_TD_{}", ty.source_name)
+                            format!("@M2_TD_{}_{}", self.module_name, ty.source_name)
                         };
-                        // Declare the type descriptor as external global
-                        let decl = format!("@M2_TD_{}", ty.source_name);
-                        if !self.declared_fns.contains(&decl) {
-                            self.emit_preambleln(&format!("{} = external global %M2_TypeDesc", td_name));
+                        if !self.declared_fns.contains(&td_name) {
                             if !self.declared_fns.contains("M2_TypeDesc_type") {
                                 self.emit_preambleln("%M2_TypeDesc = type { i32, ptr, ptr, i32 }");
                                 self.declared_fns.insert("M2_TypeDesc_type".to_string());
                             }
-                            self.declared_fns.insert(decl);
+                            self.declared_fns.insert(td_name.clone());
                         }
 
                         let isa = self.next_tmp();

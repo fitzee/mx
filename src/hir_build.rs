@@ -734,7 +734,7 @@ impl<'a> HirBuilder<'a> {
             }
             Selector::Deref(_) => {
                 match self.types.get(resolved) {
-                    Type::Pointer { base } => {
+                    Type::Pointer { base } | Type::Ref { target: base, .. } => {
                         let target = self.resolve_alias(*base);
                         Some(Projection {
                             kind: ProjectionKind::Deref,
