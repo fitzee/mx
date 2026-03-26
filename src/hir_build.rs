@@ -196,10 +196,46 @@ impl<'a> HirBuilder<'a> {
                 }
             }
         }
-        // Fallback: any scope with this name that is NOT a module scope
+        // Fallback: nested proc mangled name (e.g., "Outer_Inner").
+        // Walk the scope chain: split on '_', find each segment as a child scope.
+        if proc_name.contains('_') {
+            let parts: Vec<&str> = proc_name.splitn(2, '_').collect();
+            if parts.len() == 2 {
+                let parent_name = parts[0];
+                let child_name = parts[1];
+                // Find the parent scope
+                if let Some(cur) = self.scope_stack.last().copied().flatten() {
+                    for id in 0..count {
+                        if self.symtab.scope_name(id) == Some(parent_name)
+                            && self.symtab.scope_parent(id) == Some(cur)
+                        {
+                            // Found parent; now find child within it
+                            for cid in 0..count {
+                                if self.symtab.scope_name(cid) == Some(child_name)
+                                    && self.symtab.scope_parent(cid) == Some(id)
+                                {
+                                    self.current_scope = Some(cid);
+                                    return;
+                                }
+                            }
+                            // Child not found by exact name — try recursively
+                            // for deeper nesting (A_B_C)
+                            self.current_scope = Some(id);
+                            if child_name.contains('_') {
+                                // Recurse by re-entering with remaining name
+                                self.scope_stack.push(Some(id));
+                                self.enter_procedure_named(child_name);
+                                return;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // Last resort: any scope with this name that is NOT a module scope
         for id in 0..count {
             if self.symtab.scope_name(id) == Some(proc_name) {
-                // Skip module scopes — those are MODULE declarations, not procedures
                 if self.symtab.lookup_module_scope(proc_name) == Some(id) {
                     continue;
                 }

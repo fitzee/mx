@@ -425,7 +425,14 @@ impl CodeGen {
                     self.gen_expr(right);
                     self.emit(&format!("){})", cmp_op));
                 } else {
-                    self.emit("(");
+                    // Skip outer parens for comparison/logical ops — they have
+                    // low precedence so the if() wrapper suffices. This avoids
+                    // ((x == y)) which triggers -Wparentheses-equality.
+                    let is_cmp_or_logical = matches!(op,
+                        BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt |
+                        BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge |
+                        BinaryOp::And | BinaryOp::Or);
+                    if !is_cmp_or_logical { self.emit("("); }
                     self.gen_expr_for_binop(left);
                     let c_op = match op {
                         BinaryOp::Add => " + ",
@@ -443,7 +450,7 @@ impl CodeGen {
                     };
                     self.emit(c_op);
                     self.gen_expr_for_binop(right);
-                    self.emit(")");
+                    if !is_cmp_or_logical { self.emit(")"); }
                 }
             }
             ExprKind::SetConstructor { elements, .. } => {
