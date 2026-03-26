@@ -123,21 +123,32 @@ impl LLVMCodeGen {
                 }
             }
             PlaceBase::Constant(cv) => {
-                let val = match cv {
-                    ConstVal::Integer(v) => format!("{}", v),
-                    ConstVal::Real(v) => format!("0x{:016X}", v.to_bits()),
-                    ConstVal::Boolean(v) => if *v { "1".into() } else { "0".into() },
-                    ConstVal::Char(v) => format!("{}", *v as u32),
-                    ConstVal::String(s) => {
-                        let (name, _len) = self.intern_string(s);
-                        return Val::with_tid(name, "ptr".to_string(), place.ty);
+                match cv {
+                    ConstVal::String(s) if !place.projections.is_empty() => {
+                        // String constant with projections (e.g., "ABCDEF"[i]):
+                        // intern the string and fall through to the projection loop.
+                        let (name, len) = self.intern_string(s);
+                        let arr_ty = format!("[{} x i8]", len);
+                        (name, arr_ty, Some(place.ty))
                     }
-                    ConstVal::Set(v) => format!("{}", v),
-                    ConstVal::Nil => "null".into(),
-                    ConstVal::EnumVariant(v) => format!("{}", v),
-                };
-                let ty = self.tl_type_str(place.ty);
-                return Val::with_tid(val, ty, place.ty);
+                    _ => {
+                        let val = match cv {
+                            ConstVal::Integer(v) => format!("{}", v),
+                            ConstVal::Real(v) => format!("0x{:016X}", v.to_bits()),
+                            ConstVal::Boolean(v) => if *v { "1".into() } else { "0".into() },
+                            ConstVal::Char(v) => format!("{}", *v as u32),
+                            ConstVal::String(s) => {
+                                let (name, _len) = self.intern_string(s);
+                                return Val::with_tid(name, "ptr".to_string(), place.ty);
+                            }
+                            ConstVal::Set(v) => format!("{}", v),
+                            ConstVal::Nil => "null".into(),
+                            ConstVal::EnumVariant(v) => format!("{}", v),
+                        };
+                        let ty = self.tl_type_str(place.ty);
+                        return Val::with_tid(val, ty, place.ty);
+                    }
+                }
             }
             PlaceBase::FuncRef(sid) => {
                 return Val::with_tid(

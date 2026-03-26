@@ -681,6 +681,11 @@ impl<'a> HirBuilder<'a> {
                         kind: ProjectionKind::Index(Box::new(idx_expr)),
                         ty: *elem_type,
                     }),
+                    // String constants can be indexed: "ABCD"[i] → CHAR
+                    Type::StringLit(_) => Some(Projection {
+                        kind: ProjectionKind::Index(Box::new(idx_expr)),
+                        ty: TY_CHAR,
+                    }),
                     _ => None,
                 }
             }
@@ -1268,19 +1273,23 @@ impl<'a> HirBuilder<'a> {
                     let ty = place.ty;
                     // Unwrap constants to literal expressions — they don't
                     // have addresses and shouldn't go through emit_place_addr.
-                    if let PlaceBase::Constant(ref cv) = place.base {
-                        return match cv {
-                            ConstVal::Integer(v) => HirExpr { kind: HirExprKind::IntLit(*v), ty, loc },
-                            ConstVal::Real(v) => HirExpr { kind: HirExprKind::RealLit(*v), ty, loc },
-                            ConstVal::Boolean(v) => HirExpr { kind: HirExprKind::BoolLit(*v), ty, loc },
-                            ConstVal::Char(v) => HirExpr { kind: HirExprKind::CharLit(*v), ty, loc },
-                            ConstVal::String(s) => {
-                                HirExpr { kind: HirExprKind::StringLit(s.clone()), ty, loc }
-                            }
-                            ConstVal::Nil => HirExpr { kind: HirExprKind::NilLit, ty, loc },
-                            ConstVal::Set(v) => HirExpr { kind: HirExprKind::IntLit(*v as i64), ty, loc },
-                            ConstVal::EnumVariant(v) => HirExpr { kind: HirExprKind::IntLit(*v), ty, loc },
-                        };
+                    // BUT: constants with projections (e.g., "ABCDEF"[i]) must
+                    // stay as Place so the index is preserved.
+                    if place.projections.is_empty() {
+                        if let PlaceBase::Constant(ref cv) = place.base {
+                            return match cv {
+                                ConstVal::Integer(v) => HirExpr { kind: HirExprKind::IntLit(*v), ty, loc },
+                                ConstVal::Real(v) => HirExpr { kind: HirExprKind::RealLit(*v), ty, loc },
+                                ConstVal::Boolean(v) => HirExpr { kind: HirExprKind::BoolLit(*v), ty, loc },
+                                ConstVal::Char(v) => HirExpr { kind: HirExprKind::CharLit(*v), ty, loc },
+                                ConstVal::String(s) => {
+                                    HirExpr { kind: HirExprKind::StringLit(s.clone()), ty, loc }
+                                }
+                                ConstVal::Nil => HirExpr { kind: HirExprKind::NilLit, ty, loc },
+                                ConstVal::Set(v) => HirExpr { kind: HirExprKind::IntLit(*v as i64), ty, loc },
+                                ConstVal::EnumVariant(v) => HirExpr { kind: HirExprKind::IntLit(*v), ty, loc },
+                            };
+                        }
                     }
                     HirExpr { kind: HirExprKind::Place(place), ty, loc }
                 } else {

@@ -65,10 +65,14 @@ impl LLVMCodeGen {
             }
 
             HirExprKind::Place(place) => {
-                // Constants are unwrapped to literals during HIR lowering
-                // and should not reach here. If they do, handle gracefully.
+                // Constants without projections are unwrapped to literals.
+                // Constants WITH projections (e.g., "ABCDEF"[i]) need the
+                // address emitted then loaded like any other place.
                 if let crate::hir::PlaceBase::Constant(_) = &place.base {
-                    return self.emit_place_addr(place);
+                    if place.projections.is_empty() {
+                        return self.emit_place_addr(place);
+                    }
+                    // Fall through to normal addr+load path for indexed constants
                 }
 
                 // FuncRef used as a value (procedure variable): the address is the value

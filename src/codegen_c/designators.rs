@@ -122,16 +122,30 @@ impl CodeGen {
                 }
             }
             PlaceBase::Constant(cv) => {
-                return match cv {
+                let base_str = match cv {
                     ConstVal::Integer(v) => format!("{}", v),
                     ConstVal::Real(v) => format!("{:e}", v),
                     ConstVal::Boolean(b) => if *b { "1".into() } else { "0".into() },
                     ConstVal::Char(c) => format!("'{}'", c),
-                    ConstVal::String(s) => format!("\"{}\"", s), // TODO: escape
+                    ConstVal::String(s) => format!("\"{}\"", s),
                     ConstVal::Set(v) => format!("{}u", v),
                     ConstVal::Nil => "NULL".into(),
                     ConstVal::EnumVariant(v) => format!("{}", v),
                 };
+                // Apply projections (e.g., string constant indexing: "ABC"[i])
+                if place.projections.is_empty() {
+                    return base_str;
+                }
+                let mut result = base_str;
+                for proj in &place.projections {
+                    if let ProjectionKind::Index(idx_expr) = &proj.kind {
+                        let idx_str = self.hir_expr_to_c_string(idx_expr);
+                        result.push('[');
+                        result.push_str(&idx_str);
+                        result.push(']');
+                    }
+                }
+                return result;
             }
             PlaceBase::FuncRef(sid) => {
                 return self.mangle(&sid.source_name);
