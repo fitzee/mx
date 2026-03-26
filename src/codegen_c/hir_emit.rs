@@ -401,6 +401,25 @@ impl super::CodeGen {
                             let arg_strs: Vec<String> = args.iter()
                                 .map(|a| self.hir_expr_to_string(a))
                                 .collect();
+                            // M2+ NEW/DISPOSE: use M2_ref_alloc for REF types
+                            if (sid.source_name == "NEW" || sid.source_name == "DISPOSE")
+                                && self.m2plus && !arg_strs.is_empty()
+                            {
+                                let var = &arg_strs[0];
+                                let td = self.resolve_var_type_name(var).and_then(|vt| {
+                                    self.ref_type_descs.get(&vt).cloned()
+                                        .or_else(|| self.object_type_descs.get(&vt).cloned())
+                                });
+                                if let Some(td_name) = td {
+                                    self.emit_indent();
+                                    if sid.source_name == "NEW" {
+                                        self.emit(&format!("{} = M2_ref_alloc(sizeof(*{}), &{});\n", var, var, td_name));
+                                    } else {
+                                        self.emit(&format!("M2_ref_free({});\n", var));
+                                    }
+                                    return;
+                                }
+                            }
                             let code = crate::builtins::codegen_builtin(&sid.source_name, &arg_strs);
                             self.emit_indent();
                             self.emit(&code);

@@ -1812,6 +1812,13 @@ impl<'a> HirBuilder<'a> {
             StatementKind::TypeCase { expr, branches, else_body } => {
                 let expr = self.lower_expr(expr);
                 let branches = branches.iter().map(|b| {
+                    // Register TYPECASE binding variable so the body can resolve it
+                    if let Some(ref var_name) = b.var {
+                        // The binding is a pointer type (REF) — register as ADDRESS
+                        self.register_var(var_name, TY_ADDRESS);
+                        self.register_local(var_name);
+                    }
+                    let body = self.lower_stmts(&b.body);
                     HirTypeCaseBranch {
                         types: b.types.iter().map(|qi| SymbolId {
                             mangled: qi.name.clone(),
@@ -1822,7 +1829,7 @@ impl<'a> HirBuilder<'a> {
                             is_open_array: false,
                         }).collect(),
                         var: b.var.clone(),
-                        body: self.lower_stmts(&b.body),
+                        body,
                     }
                 }).collect();
                 let else_body = else_body.as_ref().map(|b| self.lower_stmts(b));
