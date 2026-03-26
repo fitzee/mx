@@ -516,7 +516,15 @@ impl CodeGen {
     // ── Type mapping ────────────────────────────────────────────────
 
     /// Generate arguments for a procedure/function call, handling VAR and open array params
+    pub(crate) fn gen_call_args_for(&mut self, proc_name: &str, args: &[Expr], param_info: &[ParamCodegenInfo]) {
+        self.gen_call_args_inner(proc_name, args, param_info);
+    }
+
     pub(crate) fn gen_call_args(&mut self, args: &[Expr], param_info: &[ParamCodegenInfo]) {
+        self.gen_call_args_inner("", args, param_info);
+    }
+
+    fn gen_call_args_inner(&mut self, proc_name: &str, args: &[Expr], param_info: &[ParamCodegenInfo]) {
         let mut first = true;
         let mut pi = 0; // param info index
         for arg in args {
@@ -546,6 +554,11 @@ impl CodeGen {
                     self.emit(&format!("(sizeof({}) / sizeof({}[0])) - 1", arg_str, arg_str));
                 }
             } else if is_var {
+                // Cast first arg of ALLOCATE/DEALLOCATE to (void **) for
+                // clang 16+ which errors on typed-ptr* → void** conversion.
+                let is_alloc = pi == 0 && (proc_name == "ALLOCATE" || proc_name == "DEALLOCATE"
+                    || proc_name.ends_with("_ALLOCATE") || proc_name.ends_with("_DEALLOCATE"));
+                if is_alloc { self.emit("(void **)"); }
                 self.gen_var_arg(arg);
             } else if is_char {
                 // Convert single-char string literals to char literals for CHAR parameters

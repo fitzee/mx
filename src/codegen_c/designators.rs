@@ -97,7 +97,10 @@ impl CodeGen {
                     || self.embedded_local_procs.contains(name)
                 {
                     format!("{}_{}", self.module_name, name)
-                } else if let Some(module) = self.import_map.get(name).cloned() {
+                } else if let Some(module) = sid.module.as_ref()
+                    .filter(|m| m.as_str() != self.module_name)
+                    .cloned()
+                    .or_else(|| self.import_map.get(name).cloned()) {
                     // Imported from another module: Module_Name
                     let orig = self.original_import_name(name).to_string();
                     if self.foreign_modules.contains(module.as_str()) {
@@ -177,6 +180,21 @@ impl CodeGen {
                 ProjectionKind::Deref => {
                     // Optimize Deref+Field → ->field
                     if i + 1 < place.projections.len() {
+                        // Deref+Index: check if this is ADDRESS byte access
+                        // (Deref ty=Char, no further projections) vs array access
+                        // (Deref ty=Array, further field projections possible)
+                        if let ProjectionKind::Index(idx_expr) = &place.projections[i + 1].kind {
+                            let idx_str = self.hir_expr_to_c_string(idx_expr);
+                            if proj.ty == crate::types::TY_CHAR && i + 2 >= place.projections.len() {
+                                // ADDRESS^[i] — byte access, cast to char*
+                                result = format!("((char*){})[{}]", result, idx_str);
+                            } else {
+                                // POINTER TO ARRAY^[i] — normal array deref+index
+                                result = format!("(*{})[{}]", result, idx_str);
+                            }
+                            i += 2;
+                            continue;
+                        }
                         if let ProjectionKind::Field { name, .. } = &place.projections[i + 1].kind {
                             result.push_str("->");
                             result.push_str(name);
@@ -252,7 +270,8 @@ impl CodeGen {
             }
         }
 
-        panic!("C designator: HIR returned None for '{}' (module={:?}) —                symbol not in scope chain", desig.ident.name, desig.ident.module);
+        panic!("C designator: HIR returned None for '{}' (module={:?}) in {}, proc_stack={:?}",
+            desig.ident.name, desig.ident.module, self.module_name, self.parent_proc_stack);
     }
 
 

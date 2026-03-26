@@ -198,7 +198,7 @@ impl CodeGen {
                             self.emit(", ");
                         }
                     }
-                    self.gen_call_args(args, &param_info);
+                    self.gen_call_args_for(&actual_name, args, &param_info);
                     self.emit(");\n");
                 }
             }

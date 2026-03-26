@@ -332,7 +332,7 @@ impl SymbolTable {
     /// This bypasses the normal scope chain to handle cases where a type import shadows
     /// the module symbol (e.g., FROM Promise IMPORT Promise where Promise is both module and type).
     pub fn lookup_module_scope(&self, name: &str) -> Option<usize> {
-        // Scan all scopes for a Module symbol — scope-independent.
+        // First: scan all scopes for a Module symbol with this name.
         for scope in &self.scopes {
             if let Some(sym) = scope.symbols.get(name) {
                 if let SymbolKind::Module { scope_id } = &sym.kind {
@@ -340,7 +340,16 @@ impl SymbolTable {
                 }
             }
         }
-        None
+        // Fallback: find a scope whose name matches. Prefer the LAST
+        // matching scope — .def scopes are created first, .mod scopes
+        // (with procedure children) are created later by register_impl_types.
+        let mut best = None;
+        for (id, scope) in self.scopes.iter().enumerate() {
+            if scope.name == name {
+                best = Some(id);
+            }
+        }
+        best
     }
 
     /// Set the exported flag on a symbol in a specific scope.

@@ -923,8 +923,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                     }
                 }
             }
-            // Register impl module types with sema
-            sema.register_impl_types(&imp_mod);
+            // Fully analyze impl module so HIR has complete scope info
+            sema.register_impl_module(&imp_mod);
             all_impl_mods.push(imp_mod);
             loaded_modules.insert(mod_name.clone());
         }

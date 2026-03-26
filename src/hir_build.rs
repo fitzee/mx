@@ -207,8 +207,9 @@ impl<'a> HirBuilder<'a> {
                 return;
             }
         }
-        eprintln!("[HIR] enter_procedure_named('{}') FAILED: no scope found, saved_cur={:?}, module={}",
-            proc_name, self.scope_stack.last().copied().flatten(), self.module_name);
+        eprintln!("[HIR] enter_procedure_named('{}') FAILED: no scope found, saved_cur={:?}, module={}, mod_scope={:?}",
+            proc_name, self.scope_stack.last().copied().flatten(), self.module_name,
+            self.symtab.lookup_module_scope(&self.module_name));
     }
 
     pub fn leave_procedure(&mut self) {
@@ -683,6 +684,12 @@ impl<'a> HirBuilder<'a> {
                     }),
                     // String constants can be indexed: "ABCD"[i] → CHAR
                     Type::StringLit(_) => Some(Projection {
+                        kind: ProjectionKind::Index(Box::new(idx_expr)),
+                        ty: TY_CHAR,
+                    }),
+                    // ADDRESS^[i] — byte access through dereferenced ADDRESS pointer.
+                    // After Deref on ADDRESS gives Char, indexing is pointer arithmetic.
+                    Type::Char => Some(Projection {
                         kind: ProjectionKind::Index(Box::new(idx_expr)),
                         ty: TY_CHAR,
                     }),

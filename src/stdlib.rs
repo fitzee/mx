@@ -721,9 +721,7 @@ static inline void m2_raise(int id, const char *name, void *arg) {
 }
 
 static void m2_halt(void) {
-    fprintf(stderr, "HALT called\n");
-    m2_print_stack_trace();
-    exit(1);
+    exit(0);
 }
 
 /* Runtime type information (for TYPECASE / OBJECT) */

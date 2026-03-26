@@ -86,6 +86,19 @@ impl SemanticAnalyzer {
         self.analyze_definition_module(def);
     }
 
+    /// Fully analyze an external implementation module so all its
+    /// procedures, parameters, local variables, and constants are
+    /// registered in sema's scope chain. Required for HIR-based
+    /// designator resolution in both backends.
+    pub fn register_impl_module(&mut self, imp: &crate::ast::ImplementationModule) {
+        self.reset_walk_state();
+        let saved_errors = std::mem::take(&mut self.errors);
+        self.analyze_implementation_module(imp);
+        // Discard errors from embedded modules — they may reference
+        // types/names from the main module that aren't in scope yet.
+        self.errors = saved_errors;
+    }
+
     /// Lightweight pre-pass: register just type NAMES as Opaques in the
     /// TypeRegistry so that cross-module type references resolve during
     /// the full analyze_definition_module pass. No scopes, no imports,
@@ -223,6 +236,73 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
+            }
+        }
+        // Register procedure declarations with their parameter scopes.
+        // Without this, procedure parameters in embedded modules aren't
+        // visible to the HIR builder's scope-based lookups.
+        for decl in &imp.block.decls {
+            if let crate::ast::Declaration::Procedure(p) = decl {
+                let (params, ret) = self.analyze_proc_heading(&p.heading);
+                // Register the procedure symbol itself if not already from .def
+                if self.symtab.lookup_in_scope_direct(self.current_scope, &p.heading.name).is_none() {
+                    let sym = Symbol {
+                        name: p.heading.name.clone(),
+                        kind: SymbolKind::Procedure {
+                            params: params.clone(),
+                            return_type: ret,
+                            is_builtin: false,
+                        },
+                        typ: TY_VOID,
+                        exported: false,
+                        module: None,
+                        loc: SourceLoc::default(),
+                        doc: None, is_var_param: false, is_open_array: false,
+                    };
+                    let _ = self.symtab.define(self.current_scope, sym);
+                }
+                // Create the procedure's scope and register parameters
+                let proc_scope = self.enter_scope(&p.heading.name);
+                for param in &params {
+                    let is_open = matches!(self.types.get(param.typ), Type::OpenArray { .. });
+                    let sym = Symbol {
+                        name: param.name.clone(),
+                        kind: SymbolKind::Variable,
+                        typ: param.typ,
+                        exported: false,
+                        module: None,
+                        loc: SourceLoc::default(),
+                        doc: None,
+                        is_var_param: param.is_var,
+                        is_open_array: is_open,
+                    };
+                    let _ = self.symtab.define(proc_scope, sym);
+                }
+                // Also register local variables declared in the procedure
+                for local_decl in &p.block.decls {
+                    if let crate::ast::Declaration::Var(v) = local_decl {
+                        let typ = self.resolve_type_node(&v.typ);
+                        for vname in &v.names {
+                            let sym = Symbol {
+                                name: vname.clone(),
+                                kind: SymbolKind::Variable,
+                                typ,
+                                exported: false,
+                                module: None,
+                                loc: SourceLoc::default(),
+                                doc: None,
+                                is_var_param: false,
+                                is_open_array: false,
+                            };
+                            let _ = self.symtab.define(proc_scope, sym);
+                        }
+                    }
+                    if let crate::ast::Declaration::Const(c) = local_decl {
+                        let sym = self.make_const_symbol(&c.name, &c.expr, false, None, None);
+                        let _ = self.symtab.define(proc_scope, sym);
+                    }
+                }
+                self.leave_scope();
             }
         }
         self.errors = saved_errors;
