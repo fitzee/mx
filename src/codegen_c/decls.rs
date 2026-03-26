@@ -970,6 +970,10 @@ impl CodeGen {
                     if let Some(scope) = self.open_array_params.last_mut() {
                         scope.insert(mangled);
                     }
+                    // Register _high companion in var_types so HIR can
+                    // resolve HIGH(param) via the _high variable.
+                    let high_name = format!("{}_high", name);
+                    self.var_types.insert(high_name, "uint32_t".to_string());
                 }
             } else if fp.is_var {
                 for name in &fp.names {

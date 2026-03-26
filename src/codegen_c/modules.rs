@@ -548,8 +548,14 @@ impl CodeGen {
                 let saved_var_tracking = self.save_var_tracking();
                 let mut na_params = HashSet::new();
 
-                // Register param type names for designator type tracking (ptr deref+index)
+                // Register param type names and _high companions
                 for fp in &p.heading.params {
+                    if matches!(fp.typ, TypeNode::OpenArray { .. }) {
+                        for name in &fp.names {
+                            let high_name = format!("{}_high", name);
+                            self.var_types.insert(high_name, "uint32_t".to_string());
+                        }
+                    }
                     if let TypeNode::Named(qi) = &fp.typ {
                         if qi.module.is_none() {
                             for name in &fp.names {

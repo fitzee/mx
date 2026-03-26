@@ -20,6 +20,10 @@ impl CodeGen {
         for name in self.var_types.keys() {
             if let Some(sym) = self.sema.symtab.lookup_any(name) {
                 hb.register_var(name, sym.typ);
+            } else if name.ends_with("_high") {
+                // Synthetic _high companion for open array params
+                hb.register_var(name, crate::types::TY_INTEGER);
+                hb.register_local(name);
             }
         }
         // Mirror WITH stack
