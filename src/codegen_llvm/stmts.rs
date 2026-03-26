@@ -432,13 +432,254 @@ impl LLVMCodeGen {
                 self.emitln(&format!("{}:", end_label));
             }
 
-            HirStmtKind::Raise { .. } | HirStmtKind::Retry |
-            HirStmtKind::Try { .. } | HirStmtKind::Lock { .. } |
-            HirStmtKind::TypeCase { .. } => {
-                // M2+ features: delegate to AST-based handlers for now
-                // TODO: implement HIR-native M2+ statement generation
-                panic!("HIR statement: M2+ features (TRY/LOCK/TYPECASE/RAISE/RETRY) \
-                       not yet implemented in HIR statement path");
+            // ── M2+ Statements (setjmp/longjmp based) ────────────
+
+            HirStmtKind::Raise { expr } => {
+                self.declare_exc_runtime();
+                if let Some(e) = expr {
+                    let val = self.gen_hir_expr(e);
+                    // Look up exception name from TypeId for the name parameter
+                    let name_str = if let HirExprKind::IntLit(v) = &e.kind {
+                        if let crate::types::Type::Exception { name } = self.sema.types.get(*v as crate::types::TypeId) {
+                            let name_owned = name.clone();
+                            let (sname, _) = self.intern_string(&name_owned);
+                            sname
+                        } else { "null".to_string() }
+                    } else { "null".to_string() };
+                    self.emitln(&format!("  call void @m2_raise(i32 {}, ptr {}, ptr null)", val.name, name_str));
+                } else {
+                    self.emitln("  call void @m2_raise(i32 1, ptr null, ptr null)");
+                }
+                self.emitln("  unreachable");
+                let dead = self.next_label("raise.dead");
+                self.emitln(&format!("{}:", dead));
+            }
+
+            HirStmtKind::Retry => {
+                // longjmp back to the TRY body — needs the exception buf
+                self.emitln("  ; RETRY not fully supported in LLVM backend");
+                self.emitln("  unreachable");
+                let dead = self.next_label("retry.dead");
+                self.emitln(&format!("{}:", dead));
+            }
+
+            HirStmtKind::Try { body, excepts, finally_body } => {
+                self.declare_exc_runtime();
+                // Allocate exception frame (256 bytes — enough for m2_ExcFrame)
+                let frame = self.next_tmp();
+                self.emitln(&format!("  {} = alloca [256 x i8], align 16", frame));
+
+                // Push frame: m2_exc_push(&frame)
+                // setjmp returns 0 for normal, non-0 for exception
+                let sjret = self.next_tmp();
+                self.emitln(&format!("  call void @m2_exc_push(ptr {})", frame));
+                self.emitln(&format!("  {} = call i32 @setjmp(ptr {})", sjret, frame));
+
+                let try_body = self.next_label("try.body");
+                let try_catch = self.next_label("try.catch");
+                let try_end = self.next_label("try.end");
+
+                let cond = self.next_tmp();
+                self.emitln(&format!("  {} = icmp eq i32 {}, 0", cond, sjret));
+                self.emitln(&format!("  br i1 {}, label %{}, label %{}", cond, try_body, try_catch));
+
+                // TRY body
+                self.emitln(&format!("{}:", try_body));
+                for s in body { self.gen_hir_statement(s); }
+                // Pop frame on normal exit
+                self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
+                self.emitln(&format!("  br label %{}", try_end));
+
+                // CATCH
+                self.emitln(&format!("{}:", try_catch));
+                self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
+
+                if excepts.is_empty() {
+                    // No handlers — re-raise
+                    self.emitln(&format!("  call void @m2_exc_reraise(ptr {})", frame));
+                    self.emitln("  unreachable");
+                    let dead = self.next_label("exc.dead");
+                    self.emitln(&format!("{}:", dead));
+                    self.emitln(&format!("  br label %{}", try_end));
+                } else {
+                    let exc_id = self.next_tmp();
+                    self.emitln(&format!("  {} = call i32 @m2_exc_get_id(ptr {})", exc_id, frame));
+
+                    let mut labels = Vec::new();
+                    let mut has_catch_all = false;
+
+                    for (i, ec) in excepts.iter().enumerate() {
+                        let handler_label = self.next_label(&format!("exc.handler.{}", i));
+                        let next_label = self.next_label(&format!("exc.next.{}", i));
+
+                        if let Some(ref exc) = ec.exception {
+                            // Named exception handler — resolve TypeId from sema
+                            let exc_type_id = self.sema.symtab.lookup_any(&exc.source_name)
+                                .and_then(|sym| {
+                                    if let crate::symtab::SymbolKind::Constant(crate::symtab::ConstValue::Integer(v)) = &sym.kind {
+                                        Some(*v as i32)
+                                    } else { None }
+                                })
+                                .unwrap_or(0);
+
+                            let cmp = self.next_tmp();
+                            self.emitln(&format!("  {} = icmp eq i32 {}, {}", cmp, exc_id, exc_type_id));
+                            self.emitln(&format!("  br i1 {}, label %{}, label %{}", cmp, handler_label, next_label));
+                        } else {
+                            // Catch-all
+                            has_catch_all = true;
+                            self.emitln(&format!("  br label %{}", handler_label));
+                        }
+
+                        self.emitln(&format!("{}:", handler_label));
+                        for s in &ec.body { self.gen_hir_statement(s); }
+                        self.emitln(&format!("  br label %{}", try_end));
+
+                        if !has_catch_all {
+                            self.emitln(&format!("{}:", next_label));
+                        }
+                        labels.push((handler_label, next_label));
+                    }
+
+                    if !has_catch_all {
+                        // Unhandled: re-raise
+                        self.emitln(&format!("  call void @m2_exc_reraise(ptr {})", frame));
+                        self.emitln("  unreachable");
+                        // Dead block needed for LLVM label validity
+                        let dead = self.next_label("exc.unhandled");
+                        self.emitln(&format!("{}:", dead));
+                        self.emitln(&format!("  br label %{}", try_end));
+                    }
+                }
+
+                self.emitln(&format!("{}:", try_end));
+                if let Some(fb) = finally_body {
+                    for s in fb { self.gen_hir_statement(s); }
+                }
+            }
+
+            HirStmtKind::Lock { mutex, body } => {
+                self.declare_exc_runtime();
+                // Lock mutex
+                let mutex_val = self.gen_hir_expr(mutex);
+                if !self.declared_fns.contains("m2_Mutex_Lock") {
+                    self.emit_preambleln("declare void @m2_Mutex_Lock(ptr)");
+                    self.emit_preambleln("declare void @m2_Mutex_Unlock(ptr)");
+                    self.declared_fns.insert("m2_Mutex_Lock".to_string());
+                    self.declared_fns.insert("m2_Mutex_Unlock".to_string());
+                }
+                self.emitln(&format!("  call void @m2_Mutex_Lock(ptr {})", mutex_val.name));
+
+                // TRY body with unlock on exception
+                let frame = self.next_tmp();
+                self.emitln(&format!("  {} = alloca [256 x i8], align 16", frame));
+                let sjret = self.next_tmp();
+                self.emitln(&format!("  call void @m2_exc_push(ptr {})", frame));
+                self.emitln(&format!("  {} = call i32 @setjmp(ptr {})", sjret, frame));
+
+                let lock_body = self.next_label("lock.body");
+                let lock_catch = self.next_label("lock.catch");
+                let lock_end = self.next_label("lock.end");
+
+                let cond = self.next_tmp();
+                self.emitln(&format!("  {} = icmp eq i32 {}, 0", cond, sjret));
+                self.emitln(&format!("  br i1 {}, label %{}, label %{}", cond, lock_body, lock_catch));
+
+                self.emitln(&format!("{}:", lock_body));
+                for s in body { self.gen_hir_statement(s); }
+                self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
+                self.emitln(&format!("  call void @m2_Mutex_Unlock(ptr {})", mutex_val.name));
+                self.emitln(&format!("  br label %{}", lock_end));
+
+                self.emitln(&format!("{}:", lock_catch));
+                self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
+                self.emitln(&format!("  call void @m2_Mutex_Unlock(ptr {})", mutex_val.name));
+                self.emitln(&format!("  call void @m2_exc_reraise(ptr {})", frame));
+                self.emitln("  unreachable");
+                let dead = self.next_label("lock.dead");
+                self.emitln(&format!("{}:", dead));
+
+                self.emitln(&format!("{}:", lock_end));
+            }
+
+            HirStmtKind::TypeCase { expr, branches, else_body } => {
+                let val = self.gen_hir_expr(expr);
+                if !self.declared_fns.contains("M2_ISA") {
+                    self.emit_preambleln("declare i32 @M2_ISA(ptr, ptr)");
+                    self.declared_fns.insert("M2_ISA".to_string());
+                }
+
+                let tc_end = self.next_label("tc.end");
+                let mut has_else = else_body.is_some();
+
+                for (i, branch) in branches.iter().enumerate() {
+                    let tc_match = self.next_label(&format!("tc.match.{}", i));
+                    let tc_next = self.next_label(&format!("tc.next.{}", i));
+
+                    // Check M2_ISA for each type in the branch
+                    // OR them together if multiple types
+                    let mut isa_result = None;
+                    for ty in &branch.types {
+                        let td_name = if let Some(ref m) = ty.module {
+                            format!("@M2_TD_{}_{}", m, ty.source_name)
+                        } else {
+                            format!("@M2_TD_{}", ty.source_name)
+                        };
+                        // Declare the type descriptor as external global
+                        let decl = format!("@M2_TD_{}", ty.source_name);
+                        if !self.declared_fns.contains(&decl) {
+                            self.emit_preambleln(&format!("{} = external global %M2_TypeDesc", td_name));
+                            if !self.declared_fns.contains("M2_TypeDesc_type") {
+                                self.emit_preambleln("%M2_TypeDesc = type { i32, ptr, ptr, i32 }");
+                                self.declared_fns.insert("M2_TypeDesc_type".to_string());
+                            }
+                            self.declared_fns.insert(decl);
+                        }
+
+                        let isa = self.next_tmp();
+                        self.emitln(&format!("  {} = call i32 @M2_ISA(ptr {}, ptr {})", isa, val.name, td_name));
+                        let isa_bool = self.next_tmp();
+                        self.emitln(&format!("  {} = icmp ne i32 {}, 0", isa_bool, isa));
+
+                        if let Some(prev) = isa_result {
+                            let combined = self.next_tmp();
+                            self.emitln(&format!("  {} = or i1 {}, {}", combined, prev, isa_bool));
+                            isa_result = Some(combined);
+                        } else {
+                            isa_result = Some(isa_bool);
+                        }
+                    }
+
+                    // Also check for non-null
+                    let null_check = self.next_tmp();
+                    self.emitln(&format!("  {} = icmp ne ptr {}, null", null_check, val.name));
+                    let final_cond = self.next_tmp();
+                    self.emitln(&format!("  {} = and i1 {}, {}", final_cond, null_check,
+                        isa_result.unwrap_or(null_check.clone())));
+
+                    self.emitln(&format!("  br i1 {}, label %{}, label %{}", final_cond, tc_match, tc_next));
+
+                    self.emitln(&format!("{}:", tc_match));
+                    // Variable binding
+                    if let Some(ref var_name) = branch.var {
+                        if let Some((alloca, _)) = self.lookup_local(var_name) {
+                            let alloca = alloca.clone();
+                            self.emitln(&format!("  store ptr {}, ptr {}", val.name, alloca));
+                        }
+                    }
+                    for s in &branch.body { self.gen_hir_statement(s); }
+                    self.emitln(&format!("  br label %{}", tc_end));
+
+                    self.emitln(&format!("{}:", tc_next));
+                }
+
+                // ELSE
+                if let Some(eb) = else_body {
+                    for s in eb { self.gen_hir_statement(s); }
+                }
+                self.emitln(&format!("  br label %{}", tc_end));
+
+                self.emitln(&format!("{}:", tc_end));
             }
         }
     }

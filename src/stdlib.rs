@@ -702,6 +702,22 @@ static __thread m2_ExcFrame *m2_exc_stack = NULL;
 #define M2_ENDTRY(frame) \
     m2_exc_stack = (frame).prev
 
+/* Callable wrappers for LLVM backend (can't use macros from IR) */
+static void m2_exc_push(m2_ExcFrame *frame) {
+    frame->prev = m2_exc_stack;
+    frame->exception_id = 0;
+    frame->exception_name = NULL;
+    frame->exception_arg = NULL;
+    m2_exc_stack = frame;
+}
+static void m2_exc_pop(m2_ExcFrame *frame) {
+    m2_exc_stack = frame->prev;
+}
+static int m2_exc_get_id(m2_ExcFrame *frame) {
+    return frame->exception_id;
+}
+static void m2_exc_reraise(m2_ExcFrame *frame);  /* forward decl */
+
 static inline void m2_raise(int id, const char *name, void *arg) {
     if (m2_exc_stack) {
         m2_exc_stack->exception_id = id;
@@ -718,6 +734,10 @@ static inline void m2_raise(int id, const char *name, void *arg) {
     fprintf(stderr, "Unhandled exception: %s (id=%d)\n", name ? name : "unknown", id);
     m2_print_stack_trace();
     exit(1);
+}
+
+static void m2_exc_reraise(m2_ExcFrame *frame) {
+    m2_raise(frame->exception_id, frame->exception_name, frame->exception_arg);
 }
 
 static void m2_halt(void) {
