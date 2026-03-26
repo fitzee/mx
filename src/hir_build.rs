@@ -1,15 +1,169 @@
-//! HIR builder: constructs HIR Place expressions from AST Designators,
-//! and performs closure analysis (free variable computation).
+//! HIR builder: constructs HIR from AST + sema.
 //!
-//! Takes `&TypeRegistry` and `&SymbolTable` immutably — sema stays focused
-//! on type checking, HIR builder just resolves designator chains.
+//! Phase 4 of the compilation pipeline. Takes finalized sema (read-only)
+//! and produces a complete `HirModule` with all procedure bodies lowered.
+//!
+//! Entry point: `build_module()` for full module construction.
+//! `HirBuilder` is the internal workhorse — builds HIR Places, expressions,
+//! and statements from AST nodes using sema's scope chain and type registry.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{self, Designator, Selector, ExprKind, SetElement};
+use crate::ast::{CompilationUnit, Declaration, ProcDecl, Statement};
 use crate::hir::*;
+use crate::sema::SemanticAnalyzer;
 use crate::symtab::{SymbolTable, SymbolKind, ConstValue};
 use crate::types::*;
+
+// ══════════════════════════════════════════════════════════════════════
+// Phase 4: build_module — construct complete HirModule from AST + sema
+// ══════════════════════════════════════════════════════════════════════
+
+/// Build a complete `HirModule` from the main compilation unit and
+/// all embedded implementation modules. Sema must be finalized (Phases 0-3
+/// complete). This function is read-only over sema.
+pub fn build_module(
+    unit: &CompilationUnit,
+    impl_mods: &[crate::ast::ImplementationModule],
+    sema: &SemanticAnalyzer,
+) -> HirModule {
+    let (module_name, module_body, module_decls, module_loc) = match unit {
+        CompilationUnit::ProgramModule(m) => (
+            m.name.clone(),
+            m.block.body.as_ref(),
+            &m.block.decls,
+            &m.loc,
+        ),
+        CompilationUnit::ImplementationModule(m) => (
+            m.name.clone(),
+            m.block.body.as_ref(),
+            &m.block.decls,
+            &m.loc,
+        ),
+        CompilationUnit::DefinitionModule(m) => (
+            m.name.clone(),
+            None,
+            &Vec::new() as &Vec<Declaration>,
+            &m.loc,
+        ),
+    };
+
+    let mut procedures = Vec::new();
+    let mut string_pool = Vec::new();
+
+    // Lower main module procedures
+    for decl in module_decls {
+        if let Declaration::Procedure(p) = decl {
+            let hir_proc = build_proc(p, &module_name, sema);
+            procedures.push(hir_proc);
+        }
+    }
+
+    // Lower embedded implementation module procedures
+    for imp in impl_mods {
+        for decl in &imp.block.decls {
+            if let Declaration::Procedure(p) = decl {
+                let hir_proc = build_proc(p, &imp.name, sema);
+                procedures.push(hir_proc);
+            }
+        }
+    }
+
+    // Lower module init body
+    let init_body = module_body.map(|stmts| {
+        let mut hb = HirBuilder::new(
+            &sema.types,
+            &sema.symtab,
+            &module_name,
+            &sema.foreign_modules,
+        );
+        hb.lower_stmts(stmts)
+    });
+
+    HirModule {
+        name: module_name,
+        source_file: module_loc.file.clone(),
+        string_pool,
+        constants: Vec::new(),   // populated by backends from sema
+        types: Vec::new(),       // populated by backends from sema
+        globals: Vec::new(),     // populated by backends from sema
+        procedures,
+        init_body,
+        externals: Vec::new(),   // populated by backends from sema
+    }
+}
+
+/// Build an `HirProc` for a single procedure declaration.
+fn build_proc(
+    p: &ProcDecl,
+    module_name: &str,
+    sema: &SemanticAnalyzer,
+) -> HirProc {
+    let mut hb = HirBuilder::new(
+        &sema.types,
+        &sema.symtab,
+        module_name,
+        &sema.foreign_modules,
+    );
+    hb.enter_procedure_named(&p.heading.name);
+
+    // Register open array _high companions
+    for fp in &p.heading.params {
+        if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+            for name in &fp.names {
+                let high_name = format!("{}_high", name);
+                hb.register_var(&high_name, TY_INTEGER);
+                hb.register_local(&high_name);
+            }
+        }
+    }
+
+    // Lower body
+    let body = if let Some(stmts) = &p.block.body {
+        Some(hb.lower_stmts(stmts))
+    } else {
+        None
+    };
+
+    // Build nested procs
+    let mut nested = Vec::new();
+    for decl in &p.block.decls {
+        if let Declaration::Procedure(np) = decl {
+            let nested_proc = build_proc(np, module_name, sema);
+            nested.push(nested_proc);
+        }
+    }
+
+    // Build params
+    let params: Vec<HirParam> = p.heading.params.iter().flat_map(|fp| {
+        let is_open = matches!(fp.typ, ast::TypeNode::OpenArray { .. });
+        fp.names.iter().map(move |name| HirParam {
+            name: name.clone(),
+            ty: TY_INTEGER, // placeholder — backends use sema for actual types
+            is_var: fp.is_var,
+            is_open_array: is_open,
+        })
+    }).collect();
+
+    HirProc {
+        name: SymbolId {
+            mangled: format!("{}_{}", module_name, p.heading.name),
+            source_name: p.heading.name.clone(),
+            module: Some(module_name.to_string()),
+            ty: TY_VOID,
+            is_var_param: false,
+            is_open_array: false,
+        },
+        params,
+        return_type: None, // backends use sema
+        captures: Vec::new(),
+        locals: Vec::new(),
+        body,
+        nested_procs: nested,
+        is_exported: false,
+    }
+}
 
 /// WITH scope entry: tracks the record variable being opened and which
 /// field names are visible as bare identifiers.

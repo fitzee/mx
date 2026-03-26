@@ -948,8 +948,18 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     }
     sema.fixup_record_field_types();
 
-    // ── Backend selection ───────────────────────────────────────────
-    // Both backends receive the same fully-populated sema.
+    // ── Phase 4: HIR construction ──────────────────────────────────
+    // Build complete HirModule from AST + sema (read-only).
+    let hir_module = crate::hir_build::build_module(&unit, &all_impl_mods, &sema);
+    if opts.verbose {
+        eprintln!("{}: HIR: {} procedures, {} init stmts",
+            identity::COMPILER_NAME,
+            hir_module.procedures.len(),
+            hir_module.init_body.as_ref().map_or(0, |b| b.len()));
+    }
+
+    // ── Phase 5: Backend emission ───────────────────────────────────
+    // Both backends receive the same fully-populated sema + prebuilt HIR.
 
     // Generate C (always created — needed for C output or as a no-op when LLVM is selected)
     let mut codegen = CodeGen::new();
