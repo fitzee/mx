@@ -1,7 +1,40 @@
 use super::*;
 
 impl CodeGen {
+    /// Lower an AST statement to HIR, then emit C.
+    /// This is the primary path for PIM4 statements.
+    pub(crate) fn gen_statement_hir(&mut self, stmt: &Statement) {
+        let mut hb = self.make_hir_builder();
+        let hir_stmt = hb.lower_stmt(stmt);
+        self.emit_hir_stmt(&hir_stmt);
+    }
+
+    /// Lower and emit a list of AST statements via HIR.
+    pub(crate) fn gen_statements_hir(&mut self, stmts: &[Statement]) {
+        for stmt in stmts {
+            self.gen_statement_hir(stmt);
+        }
+    }
+
     pub(crate) fn gen_statement(&mut self, stmt: &Statement) {
+        // Route PIM4 statements through HIR; keep M2+ on AST path
+        match &stmt.kind {
+            // M2+ features stay on AST path for now
+            StatementKind::Try { .. } |
+            StatementKind::Raise { .. } |
+            StatementKind::Lock { .. } |
+            StatementKind::TypeCase { .. } => {
+                self.gen_statement_ast(stmt);
+            }
+            // All PIM4 statements (including WITH) go through HIR
+            _ => {
+                self.gen_statement_hir(stmt);
+            }
+        }
+    }
+
+    /// Legacy AST-walking statement handler. Used for M2+ and WITH.
+    fn gen_statement_ast(&mut self, stmt: &Statement) {
         self.emit_line_directive(&stmt.loc);
         match &stmt.kind {
             StatementKind::Empty => {}

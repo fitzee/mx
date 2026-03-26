@@ -6,7 +6,7 @@ impl CodeGen {
     // ── HIR integration ─────────────────────────────────────────────
 
     /// Build an HirBuilder from the current C codegen state.
-    fn make_hir_builder(&self) -> HirBuilder<'_> {
+    pub(crate) fn make_hir_builder(&self) -> HirBuilder<'_> {
         let mut hb = HirBuilder::new(
             &self.sema.types,
             &self.sema.symtab,
@@ -82,7 +82,7 @@ impl CodeGen {
     }
 
     /// Convert an HIR Place to a C expression string.
-    fn emit_place_c(&mut self, place: &hir::Place) -> String {
+    pub(crate) fn emit_place_c(&mut self, place: &hir::Place) -> String {
         use hir::*;
 
         let base_name = match &place.base {

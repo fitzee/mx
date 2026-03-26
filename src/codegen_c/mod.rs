@@ -5,6 +5,7 @@ mod types;
 mod m2plus;
 mod modules;
 mod decls;
+mod hir_emit;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -651,7 +652,7 @@ impl CodeGen {
 
 }
 
-fn escape_c_string(s: &str) -> String {
+pub(crate) fn escape_c_string(s: &str) -> String {
     let mut out = String::new();
     for ch in s.chars() {
         match ch {
@@ -667,7 +668,7 @@ fn escape_c_string(s: &str) -> String {
     out
 }
 
-fn escape_c_char(ch: char) -> String {
+pub(crate) fn escape_c_char(ch: char) -> String {
     match ch {
         '\n' => "\\n".to_string(),
         '\t' => "\\t".to_string(),
