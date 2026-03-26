@@ -52,28 +52,32 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 
 ### HIR (High-level IR)
 
-`src/hir.rs` defines a typed intermediate representation for designators and expressions. `src/hir_build.rs` provides `HirBuilder`, a shared layer used by both backends to resolve designators, determine local vs. global variable identity, expand open array call arguments with `_high` companions, and compute type-correct projections (field access, array indexing, pointer derefs).
+`src/hir.rs` defines a typed intermediate representation for designators, expressions, and statements. `src/hir_build.rs` provides `HirBuilder`, a shared layer used by both backends to lower AST statements and expressions to HIR. Both backends consume HIR for all statement and expression codegen — no AST walking remains in body codegen.
 
 Key responsibilities:
+- **Statement lowering**: Converts all AST statements (PIM4 and M2+) to `HirStmt`. WITH is desugared to field projections. FOR direction is pre-computed.
+- **Expression lowering**: Converts AST expressions to `HirExpr` with resolved types. Constants are unwrapped to literals (except when projections are present). Single-char strings carry `TY_CHAR` with promotion to `TY_STRING` for open array contexts.
 - **Designator resolution**: Maps AST designators to `Place` (base + projections), using sema's scope chain as the single source of truth for locality and type identity.
-- **Call argument expansion**: Inserts `_high` companions for open array parameters, wraps VAR arguments as `AddrOf`.
+- **Call argument expansion**: Inserts `_high` companions for open array parameters, wraps VAR arguments as `AddrOf`. Skips `AddrOf` for args that are already pointers (open arrays, VAR params, fixed arrays).
 - **WITH scope tracking**: Resolves bare field names to qualified record field accesses.
-- **Scope-aware lookup**: Uses `current_scope` from sema to distinguish procedure-local variables from module-level globals, even when names shadow.
+- **TYPECASE binding**: Registers branch variables with the correct REF type before lowering the body.
+- **Scope-aware lookup**: Uses `current_scope` from sema, with `var_types_owned` checked before context-provided var_types (so dynamically registered variables like TYPECASE bindings are visible).
 
 ### Code generation — C backend
 
-`src/codegen_c/` walks the AST and emits C code as a string, split across 8 modules:
+`src/codegen_c/` emits C code from HIR, split across 9 modules:
 
 | File | Purpose |
 |------|---------|
 | `mod.rs` | Core struct, state management, output buffer |
 | `modules.rs` | Module-level codegen, imports, embedded impl modules |
 | `decls.rs` | Procedure and variable declarations |
-| `stmts.rs` | Statement generation |
-| `exprs.rs` | Expression generation, builtin calls |
-| `designators.rs` | Designator resolution via HIR, C name mangling |
+| `stmts.rs` | Statement dispatch (all statements route through HIR) |
+| `hir_emit.rs` | HIR → C emission for all statements and expressions |
+| `exprs.rs` | Legacy AST expression helpers (escape functions, etc.) |
+| `designators.rs` | HIR Place → C designator strings, name mangling |
 | `types.rs` | TypeNode → C type strings, type name resolution |
-| `m2plus.rs` | Modula-2+ extensions (TRY/EXCEPT, REF, OBJECT) |
+| `m2plus.rs` | M2+ type/declaration codegen (REF, OBJECT, EXCEPTION) |
 
 Key design decisions:
 
@@ -95,9 +99,9 @@ Key design decisions:
 | `mod.rs` | Core struct, Val representation, semantic type queries |
 | `modules.rs` | Module-level codegen, `main()` entry, embedded impl modules |
 | `decls.rs` | Procedure and variable declarations, debug info |
-| `stmts.rs` | Statement generation, TRY/EXCEPT/FINALLY, RAISE, TYPECASE |
-| `exprs.rs` | Expression generation, function calls, NEW/DISPOSE |
-| `designators.rs` | Designator load/address with TypeId tracking |
+| `stmts.rs` | HIR statement emission, M2+ exception handling (setjmp/longjmp) |
+| `exprs.rs` | HIR expression emission, function calls, NEW/DISPOSE |
+| `designators.rs` | HIR Place → LLVM IR address/load with TypeId tracking |
 | `types.rs` | TypeNode → TypeId resolution, module-scoped lookup |
 | `type_lowering.rs` | M2 types → LLVM IR types |
 | `llvm_types.rs` | LLVM type representation and IR emission |
@@ -109,7 +113,7 @@ Key design decisions:
 - **Val carries TypeId**: Every codegen result is `{name, ty, type_id}` where `type_id` tracks the semantic identity from sema, enabling correct aggregate handling and cross-module type disambiguation.
 - **Aggregate invariant**: Records and arrays stay as addresses (pointers) in `gen_designator_load`. Callers that need values (return, struct-by-value) load explicitly. This prevents invalid SSA loads of aggregate types.
 - **Sema-driven types**: All semantic questions (is this a pointer? what are the record fields?) are answered from the sema TypeRegistry, not LLVM type strings.
-- **LLVM-native exception handling**: Custom `m2_eh_personality` function, `invoke`/`landingpad` for TRY/EXCEPT, LSDA parsing in the runtime. ISO procedure-level EXCEPT uses SjLj (setjmp/longjmp) as a separate mechanism.
+- **M2+ exception handling**: setjmp/longjmp-based `m2_ExcFrame` stack for TRY/EXCEPT/FINALLY, with callable runtime functions (`m2_exc_push`, `m2_exc_pop`, `m2_exc_get_id`, `m2_exc_reraise`). ISO procedure-level EXCEPT uses a separate SjLj mechanism. The `m2_eh_personality` function handles LLVM-native exception propagation for ISO EXCEPT blocks.
 - **RTTI**: `M2_TypeDesc` globals for REF/OBJECT types, `M2_RefHeader` prepended to allocations, `M2_ISA` for TYPECASE runtime type checking.
 - **DWARF debug info**: `DW_LANG_C99` (for lldb compatibility), `#dbg_declare` records (LLVM 19+ format), full DILocalVariable/DIGlobalVariable metadata.
 

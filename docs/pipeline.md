@@ -43,17 +43,19 @@ flowchart TB
     SEMAFINAL --> BACKEND{"Backend\nselection"}
 
     subgraph "C Backend"
-        BACKEND -->|"default"| CWALK["Walk AST\n(codegen_c/)"]
-        CWALK --> HIR_C["HIR Builder\n(on demand per designator)"]
-        HIR_C --> CCODE[".c file"]
+        BACKEND -->|"default"| CWALK["AST structure\n(modules, decls)"]
+        CWALK --> HIR_C["HIR Builder\nlower AST → HIR stmts/exprs"]
+        HIR_C --> CEMIT["hir_emit.rs\nHIR → C text"]
+        CEMIT --> CCODE[".c file"]
         CCODE --> CC["cc / clang"]
         CC --> BIN_C["Executable"]
     end
 
     subgraph "LLVM Backend"
-        BACKEND -->|"--llvm"| LWALK["Walk AST\n(codegen_llvm/)"]
-        LWALK --> HIR_L["HIR Builder\n(on demand per designator)"]
-        HIR_L --> LLCODE[".ll file"]
+        BACKEND -->|"--llvm"| LWALK["AST structure\n(modules, decls)"]
+        LWALK --> HIR_L["HIR Builder\nlower AST → HIR stmts/exprs"]
+        HIR_L --> LEMIT["stmts.rs + exprs.rs\nHIR → LLVM IR"]
+        LEMIT --> LLCODE[".ll file"]
         LLCODE --> CLANG["clang"]
         CLANG --> BIN_L["Executable"]
     end
@@ -75,9 +77,11 @@ flowchart TB
 ## Key Points
 
 - **Single sema, shared by both backends.** Sema runs once; both C and LLVM backends read the same symtab, types, and scope chain.
-- **HIR is on-demand, not a separate pass.** Each backend constructs an `HirBuilder` per designator during codegen. The builder uses sema's scope chain to resolve variables, apply field/index/deref projections, and expand open array arguments.
+- **HIR is the single codegen path for all statement/expression bodies.** Each backend constructs an `HirBuilder` per statement, which lowers the AST to `HirStmt`/`HirExpr`. The builder resolves designators, expands open array arguments, desugars WITH, and registers TYPECASE bindings. No AST walking remains in body codegen for either backend.
+- **AST is only used for structural codegen.** Module skeletons, type declarations, procedure prototypes, and variable declarations still use the AST directly — these are structural and don't have resolution issues.
 - **Phase 3 uses full analysis** (`register_impl_module` → `analyze_implementation_module`) so that procedure parameters, local variables, and constants in embedded modules are all registered in sema's scope chain. The HIR builder depends on this.
 - **Def modules are topologically sorted** (Phase 2) and recursively registered (Phase 3) so that cross-module type references (e.g., `URIRec` from `URI.def` used by `HTTPClient.def`) resolve in the correct order.
+- **M2+ exception handling** uses setjmp/longjmp-based `m2_ExcFrame` stack in both backends. The C backend emits `M2_TRY`/`M2_CATCH` macros; the LLVM backend calls `m2_exc_push`/`setjmp`/`m2_exc_pop` runtime functions directly.
 - **LSP skips codegen entirely.** The analysis-only path (`analyze_source`) produces the same sema artifacts without generating C or LLVM IR.
 
 ## Module Structure
@@ -99,18 +103,19 @@ src/
     mod.rs               C backend core
     modules.rs           Module-level codegen, embedded impl modules
     decls.rs             Procedure/variable declarations
-    stmts.rs             Statement generation
-    exprs.rs             Expression generation, builtin calls
-    designators.rs       HIR → C designator emission
+    stmts.rs             Statement dispatch (routes all to HIR)
+    hir_emit.rs          HIR → C emission (all statements + expressions)
+    exprs.rs             Legacy helpers (escape functions)
+    designators.rs       HIR Place → C designator strings
     types.rs             Type → C type string mapping
-    m2plus.rs            M2+ extensions (TRY/EXCEPT, REF, OBJECT)
+    m2plus.rs            M2+ type/declaration codegen (REF, OBJECT, EXCEPTION)
   codegen_llvm/
     mod.rs               LLVM backend core
     modules.rs           Module-level codegen, preamble
     decls.rs             Procedure declarations, debug info
-    stmts.rs             Statement generation
-    exprs.rs             Expression generation, function calls
-    designators.rs       HIR → LLVM IR designator emission
+    stmts.rs             HIR → LLVM IR statements (PIM4 + M2+ exceptions)
+    exprs.rs             HIR → LLVM IR expressions, function calls
+    designators.rs       HIR Place → LLVM IR address/load
     types.rs             Type resolution
     type_lowering.rs     M2 types → LLVM IR types
     llvm_types.rs        LLVM type representation
