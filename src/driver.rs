@@ -968,6 +968,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     codegen.multi_tu = opts.emit_per_module;
     // Transfer shared sema and register backend-specific metadata
     codegen.set_sema(sema.clone());
+    codegen.prebuilt_hir = Some(hir_module.clone());
     for def_mod in &all_sorted_defs {
         codegen.register_def_module_no_sema(def_mod);
     }

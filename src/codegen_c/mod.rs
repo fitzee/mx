@@ -200,6 +200,9 @@ pub struct CodeGen {
     embedded_enum_types: HashSet<String>,
     /// Multi-TU mode: emit per-module markers and non-static linkage for cross-module symbols
     pub multi_tu: bool,
+    /// Prebuilt HIR module (Phase 4). When set, procedure body codegen
+    /// uses prebuilt HirProc.body instead of building HIR on demand.
+    pub(crate) prebuilt_hir: Option<crate::hir::HirModule>,
 }
 
 
@@ -324,6 +327,7 @@ impl CodeGen {
             generating_for_module: None,
             embedded_enum_types: HashSet::new(),
             multi_tu: false,
+            prebuilt_hir: None,
         }
     }
 

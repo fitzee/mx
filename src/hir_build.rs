@@ -28,43 +28,55 @@ pub fn build_module(
     impl_mods: &[crate::ast::ImplementationModule],
     sema: &SemanticAnalyzer,
 ) -> HirModule {
-    let (module_name, module_body, module_decls, module_loc) = match unit {
+    let (module_name, module_body, module_decls, module_imports, module_loc) = match unit {
         CompilationUnit::ProgramModule(m) => (
             m.name.clone(),
             m.block.body.as_ref(),
             &m.block.decls,
+            &m.imports,
             &m.loc,
         ),
         CompilationUnit::ImplementationModule(m) => (
             m.name.clone(),
             m.block.body.as_ref(),
             &m.block.decls,
+            &m.imports,
             &m.loc,
         ),
         CompilationUnit::DefinitionModule(m) => (
             m.name.clone(),
             None,
             &Vec::new() as &Vec<Declaration>,
+            &m.imports,
             &m.loc,
         ),
     };
 
+    // Extract imported module names and aliases from AST
+    let (imported_modules, import_aliases) = extract_imports(module_imports);
+
     let mut procedures = Vec::new();
-    let mut string_pool = Vec::new();
 
     // Lower main module procedures
     for decl in module_decls {
         if let Declaration::Procedure(p) = decl {
-            let hir_proc = build_proc(p, &module_name, sema);
+            let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
             procedures.push(hir_proc);
         }
     }
 
     // Lower embedded implementation module procedures
     for imp in impl_mods {
+        let (imp_modules, imp_aliases) = extract_imports(&imp.imports);
+        // Merge main module imports with embedded module imports
+        let mut merged_modules = imported_modules.clone();
+        merged_modules.extend(imp_modules);
+        let mut merged_aliases = import_aliases.clone();
+        merged_aliases.extend(imp_aliases);
+
         for decl in &imp.block.decls {
             if let Declaration::Procedure(p) = decl {
-                let hir_proc = build_proc(p, &imp.name, sema);
+                let hir_proc = build_proc(p, &imp.name, &merged_modules, &merged_aliases, sema);
                 procedures.push(hir_proc);
             }
         }
@@ -78,13 +90,15 @@ pub fn build_module(
             &module_name,
             &sema.foreign_modules,
         );
+        hb.set_imported_modules(imported_modules.clone());
+        hb.set_import_alias_map(import_aliases.clone());
         hb.lower_stmts(stmts)
     });
 
     HirModule {
         name: module_name,
         source_file: module_loc.file.clone(),
-        string_pool,
+        string_pool: Vec::new(),
         constants: Vec::new(),   // populated by backends from sema
         types: Vec::new(),       // populated by backends from sema
         globals: Vec::new(),     // populated by backends from sema
@@ -94,10 +108,33 @@ pub fn build_module(
     }
 }
 
+/// Extract imported module names and alias mappings from AST imports.
+fn extract_imports(imports: &[crate::ast::Import]) -> (Vec<String>, HashMap<String, String>) {
+    let mut modules = Vec::new();
+    let mut aliases = HashMap::new();
+    for imp in imports {
+        if let Some(ref from_mod) = imp.from_module {
+            modules.push(from_mod.clone());
+            for name in &imp.names {
+                if let Some(ref alias) = name.alias {
+                    aliases.insert(alias.clone(), name.name.clone());
+                }
+            }
+        } else {
+            for name in &imp.names {
+                modules.push(name.name.clone());
+            }
+        }
+    }
+    (modules, aliases)
+}
+
 /// Build an `HirProc` for a single procedure declaration.
 fn build_proc(
     p: &ProcDecl,
     module_name: &str,
+    imported_modules: &[String],
+    import_aliases: &HashMap<String, String>,
     sema: &SemanticAnalyzer,
 ) -> HirProc {
     let mut hb = HirBuilder::new(
@@ -106,6 +143,8 @@ fn build_proc(
         module_name,
         &sema.foreign_modules,
     );
+    hb.set_imported_modules(imported_modules.to_vec());
+    hb.set_import_alias_map(import_aliases.clone());
     hb.enter_procedure_named(&p.heading.name);
 
     // Register open array _high companions
@@ -130,7 +169,7 @@ fn build_proc(
     let mut nested = Vec::new();
     for decl in &p.block.decls {
         if let Declaration::Procedure(np) = decl {
-            let nested_proc = build_proc(np, module_name, sema);
+            let nested_proc = build_proc(np, module_name, imported_modules, import_aliases, sema);
             nested.push(nested_proc);
         }
     }

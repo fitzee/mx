@@ -1065,7 +1065,19 @@ impl CodeGen {
             self.indent += 1;
         }
 
-        if let Some(stmts) = &p.block.body {
+        // Use prebuilt HIR body if available, otherwise fall back to on-demand
+        let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+            let proc_name = &p.heading.name;
+            hir.procedures.iter()
+                .find(|hp| hp.name.source_name == *proc_name
+                    && hp.name.module.as_deref() == Some(&self.module_name))
+                .and_then(|hp| hp.body.clone())
+        });
+        if let Some(body) = prebuilt_body {
+            for stmt in &body {
+                self.emit_hir_stmt(stmt);
+            }
+        } else if let Some(stmts) = &p.block.body {
             for stmt in stmts {
                 self.gen_statement(stmt);
             }
