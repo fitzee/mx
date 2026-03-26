@@ -250,6 +250,9 @@ pub struct LLVMCodeGen {
     // ── Debug info ──────────────────────────────────────────────────
     /// DWARF debug metadata builder. Only active when debug_mode is true.
     pub(crate) di: Option<debug_info::DebugInfoBuilder>,
+    /// Prebuilt HIR module (Phase 4). When set, procedure body codegen
+    /// uses prebuilt HirProc.body instead of building HIR on demand.
+    pub(crate) prebuilt_hir: Option<crate::hir::HirModule>,
 }
 
 impl LLVMCodeGen {
@@ -310,6 +313,7 @@ impl LLVMCodeGen {
             type_lowering: None,
             var_types: HashMap::new(),
             di: None,
+            prebuilt_hir: None,
         }
     }
 

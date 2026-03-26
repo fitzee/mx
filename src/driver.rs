@@ -984,6 +984,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
         // Share sema from the driver — all .def/.mod already registered.
         llvm_codegen.set_sema(sema.clone());
+        llvm_codegen.prebuilt_hir = Some(hir_module.clone());
         // Register backend-specific metadata (def_modules, foreign_modules, exports)
         for def_mod in &all_sorted_defs {
             llvm_codegen.register_def_module_no_sema(def_mod);

@@ -736,10 +736,20 @@ impl LLVMCodeGen {
 
             self.emitln(&format!("{}:", body_label));
             self.in_sjlj_context = true;
-            if let Some(stmts) = &p.block.body {
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(stmts);
-                self.gen_hir_statements(&hir_stmts);
+            {
+                let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+                    hir.procedures.iter()
+                        .find(|hp| hp.name.source_name == p.heading.name
+                            && hp.name.module.as_deref() == Some(&self.module_name))
+                        .and_then(|hp| hp.body.clone())
+                });
+                if let Some(body) = prebuilt_body {
+                    self.gen_hir_statements(&body);
+                } else if let Some(stmts) = &p.block.body {
+                    let mut hb = self.make_hir_builder();
+                    let hir_stmts = hb.lower_stmts(stmts);
+                    self.gen_hir_statements(&hir_stmts);
+                }
             }
             self.in_sjlj_context = false;
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
@@ -761,7 +771,15 @@ impl LLVMCodeGen {
                 self.gen_hir_statements(&hir_stmts);
             }
         } else {
-            if let Some(stmts) = &p.block.body {
+            let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+                hir.procedures.iter()
+                    .find(|hp| hp.name.source_name == p.heading.name
+                        && hp.name.module.as_deref() == Some(&self.module_name))
+                    .and_then(|hp| hp.body.clone())
+            });
+            if let Some(body) = prebuilt_body {
+                self.gen_hir_statements(&body);
+            } else if let Some(stmts) = &p.block.body {
                 let mut hb = self.make_hir_builder();
                 let hir_stmts = hb.lower_stmts(stmts);
                 self.gen_hir_statements(&hir_stmts);
