@@ -1987,13 +1987,7 @@ impl SemanticAnalyzer {
         match &expr.kind {
             ExprKind::IntLit(v) => ConstValue::Integer(*v),
             ExprKind::RealLit(v) => ConstValue::Real(*v),
-            ExprKind::StringLit(s) => {
-                if s.len() == 1 {
-                    ConstValue::Char(s.chars().next().unwrap())
-                } else {
-                    ConstValue::String(s.clone())
-                }
-            }
+            ExprKind::StringLit(s) => ConstValue::String(s.clone()),
             ExprKind::CharLit(c) => ConstValue::Char(*c),
             ExprKind::BoolLit(b) => ConstValue::Boolean(*b),
             ExprKind::NilLit => ConstValue::Nil,

@@ -54,14 +54,7 @@ impl super::CodeGen {
 
             HirExprKind::AddrOf(place) => {
                 let place_str = self.emit_place_c(place);
-                // Arrays and open arrays decay to pointers in C — don't take address.
-                // Pointer-typed variables are already addresses.
-                let resolved = self.resolve_hir_alias(place.ty);
-                match self.sema.types.get(resolved) {
-                    crate::types::Type::Array { .. }
-                    | crate::types::Type::OpenArray { .. } => place_str,
-                    _ => format!("&{}", place_str),
-                }
+                format!("&{}", place_str)
             }
 
             HirExprKind::DirectCall { target, args } => {
@@ -227,7 +220,11 @@ impl super::CodeGen {
         for param in &params {
             if hir_idx >= args.len() { break; }
             let (_name, is_var, _is_char, is_open) = param;
-            let s = self.hir_expr_to_string(&args[hir_idx]);
+            let mut s = self.hir_expr_to_string(&args[hir_idx]);
+            // Open array params: strip & (arrays decay to pointers in C)
+            if *is_open && s.starts_with('&') {
+                s = s[1..].to_string();
+            }
             // ALLOCATE/DEALLOCATE: cast first arg to (void **)
             let is_alloc = hir_idx == 0 && (proc.eq_ignore_ascii_case("ALLOCATE") || proc.eq_ignore_ascii_case("DEALLOCATE"));
             if is_alloc && s.starts_with('&') {
@@ -269,6 +266,10 @@ impl super::CodeGen {
     /// Resolve a call target SymbolId to a C function name.
     fn resolve_call_name(&self, target: &SymbolId) -> String {
         if let Some(ref module) = target.module {
+            // Same module AND it's the main module (not embedded): no prefix
+            if module == &self.module_name && !self.embedded_local_procs.contains(&target.source_name) {
+                return self.mangle(&target.source_name);
+            }
             if self.foreign_modules.contains(module.as_str()) {
                 return target.source_name.clone();
             }
@@ -326,7 +327,32 @@ impl super::CodeGen {
 
             HirStmtKind::Assign { target, value } => {
                 let target_str = self.emit_place_c(target);
-                let value_str = self.hir_expr_to_string(value);
+                // Coerce single-char string to char for CHAR targets
+                let value_str = if target.ty == TY_CHAR {
+                    // Check for string literal (direct or via constant)
+                    let str_val = match &value.kind {
+                        HirExprKind::StringLit(s) => Some(s.clone()),
+                        HirExprKind::Place(p) if p.projections.is_empty() => {
+                            if let PlaceBase::Constant(ConstVal::String(s)) = &p.base {
+                                Some(s.clone())
+                            } else { None }
+                        }
+                        _ => None,
+                    };
+                    if let Some(s) = str_val {
+                        if s.is_empty() {
+                            "'\\0'".to_string()
+                        } else if s.len() == 1 {
+                            format!("'{}'", super::escape_c_char(s.chars().next().unwrap()))
+                        } else {
+                            self.hir_expr_to_string(value)
+                        }
+                    } else {
+                        self.hir_expr_to_string(value)
+                    }
+                } else {
+                    self.hir_expr_to_string(value)
+                };
 
                 // Array/record assignment: memcpy
                 let resolved = self.resolve_hir_alias(target.ty);
@@ -486,15 +512,17 @@ impl super::CodeGen {
                         match label {
                             HirCaseLabel::Single(v) => {
                                 self.emit("case ");
-                                self.emit_hir_expr(v);
+                                let s = self.hir_expr_to_scalar_string(v);
+                                self.emit(&s);
                                 self.emit(":\n");
                             }
                             HirCaseLabel::Range(lo, hi) => {
-                                // GCC extension: case lo ... hi
                                 self.emit("case ");
-                                self.emit_hir_expr(lo);
+                                let ls = self.hir_expr_to_scalar_string(lo);
+                                self.emit(&ls);
                                 self.emit(" ... ");
-                                self.emit_hir_expr(hi);
+                                let hs = self.hir_expr_to_scalar_string(hi);
+                                self.emit(&hs);
                                 self.emit(":\n");
                             }
                         }
@@ -540,6 +568,19 @@ impl super::CodeGen {
                 self.emitln("/* M2+ HIR stmt not yet implemented */");
             }
         }
+    }
+
+    /// Emit an HIR expr as a scalar C value — single-char strings become 'c'.
+    fn hir_expr_to_scalar_string(&mut self, expr: &HirExpr) -> String {
+        if let HirExprKind::StringLit(s) = &expr.kind {
+            if s.len() == 1 {
+                return format!("'{}'", super::escape_c_char(s.chars().next().unwrap()));
+            }
+            if s.is_empty() {
+                return "'\\0'".to_string();
+            }
+        }
+        self.hir_expr_to_string(expr)
     }
 
     /// Check if a TypeId is an aggregate (record or array) — needs memcpy.

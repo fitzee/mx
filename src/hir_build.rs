@@ -1303,7 +1303,7 @@ impl<'a> HirBuilder<'a> {
                 // WriteString (open array), but a char when assigned to a
                 // CHAR variable. The backend handles the coercion based on
                 // the target type at the use site.
-                let ty = if s.is_empty() || s.len() == 1 { TY_CHAR } else { TY_STRING };
+                let ty = TY_STRING;
                 HirExpr { kind: HirExprKind::StringLit(s.clone()), ty, loc }
             }
             ExprKind::CharLit(c) => HirExpr {

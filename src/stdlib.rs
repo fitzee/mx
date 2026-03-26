@@ -1994,17 +1994,17 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         // Terminal
         ("TERMINAL", "READ") => Some(vec![sp("ch", true, true)]),
         ("TERMINAL", "WRITE") => Some(vec![sp("ch", false, true)]),
-        ("TERMINAL", "WRITESTRING") => Some(vec![sp("s", false, false)]),
+        ("TERMINAL", "WRITESTRING") => Some(vec![("s".to_string(), false, false, true)]),
         ("TERMINAL", "WRITELN") => Some(vec![]),
 
         // STextIO
         ("STEXTIO", "WRITECHAR") => Some(vec![sp("ch", false, true)]),
         ("STEXTIO", "READCHAR") => Some(vec![sp("ch", true, true)]),
-        ("STEXTIO", "WRITESTRING") => Some(vec![sp("s", false, false)]),
-        ("STEXTIO", "READSTRING") => Some(vec![sp("s", true, false)]),
+        ("STEXTIO", "WRITESTRING") => Some(vec![("s".to_string(), false, false, true)]),
+        ("STEXTIO", "READSTRING") => Some(vec![("s".to_string(), true, false, true)]),
         ("STEXTIO", "WRITELN") => Some(vec![]),
         ("STEXTIO", "SKIPLINE") => Some(vec![]),
-        ("STEXTIO", "READTOKEN") => Some(vec![sp("s", true, false)]),
+        ("STEXTIO", "READTOKEN") => Some(vec![("s".to_string(), true, false, true)]),
 
         // SWholeIO
         ("SWHOLEIO", "WRITEINT") => Some(vec![sp("n", false, false), sp("w", false, false)]),
@@ -2053,7 +2053,7 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         ("STRINGS", "COMPARESTR") => Some(vec![("s1".to_string(), false, false, true), ("s2".to_string(), false, false, true)]),
 
         // FileSystem
-        ("FILESYSTEM", "LOOKUP") => Some(vec![sp("f", true, false), sp("name", false, false), sp("new", false, false)]),
+        ("FILESYSTEM", "LOOKUP") => Some(vec![sp("f", true, false), ("name".to_string(), false, false, true), sp("new", false, false)]),
         ("FILESYSTEM", "CLOSE") => Some(vec![sp("f", true, false)]),
         ("FILESYSTEM", "READCHAR") => Some(vec![sp("f", true, false), sp("ch", true, true)]),
         ("FILESYSTEM", "WRITECHAR") => Some(vec![sp("f", true, false), sp("ch", false, true)]),
@@ -2070,13 +2070,13 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         ("ARGS", "GETARG") => Some(vec![sp("n", false, false), ("buf".to_string(), true, false, true)]),
 
         // BinaryIO
-        ("BINARYIO", "OPENREAD") => Some(vec![sp("name", false, false), sp("fh", true, false)]),
-        ("BINARYIO", "OPENWRITE") => Some(vec![sp("name", false, false), sp("fh", true, false)]),
+        ("BINARYIO", "OPENREAD") => Some(vec![("name".to_string(), false, false, true), sp("fh", true, false)]),
+        ("BINARYIO", "OPENWRITE") => Some(vec![("name".to_string(), false, false, true), sp("fh", true, false)]),
         ("BINARYIO", "CLOSE") => Some(vec![sp("fh", false, false)]),
         ("BINARYIO", "READBYTE") => Some(vec![sp("fh", false, false), sp("b", true, false)]),
         ("BINARYIO", "WRITEBYTE") => Some(vec![sp("fh", false, false), sp("b", false, false)]),
-        ("BINARYIO", "READBYTES") => Some(vec![sp("fh", false, false), sp("buf", true, false), sp("n", false, false), sp("actual", true, false)]),
-        ("BINARYIO", "WRITEBYTES") => Some(vec![sp("fh", false, false), sp("buf", false, false), sp("n", false, false)]),
+        ("BINARYIO", "READBYTES") => Some(vec![sp("fh", false, false), ("buf".to_string(), true, false, true), sp("n", false, false), sp("actual", true, false)]),
+        ("BINARYIO", "WRITEBYTES") => Some(vec![sp("fh", false, false), ("buf".to_string(), false, false, true), sp("n", false, false)]),
         ("BINARYIO", "FILESIZE") => Some(vec![sp("fh", false, false), sp("size", true, false)]),
         ("BINARYIO", "SEEK") => Some(vec![sp("fh", false, false), sp("pos", false, false)]),
         ("BINARYIO", "TELL") => Some(vec![sp("fh", false, false), sp("pos", true, false)]),

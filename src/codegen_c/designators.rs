@@ -159,7 +159,7 @@ impl CodeGen {
                 return result;
             }
             PlaceBase::FuncRef(sid) => {
-                return self.mangle(&sid.source_name);
+                return self.resolve_func_ref_name(sid);
             }
         };
 
@@ -425,6 +425,34 @@ impl CodeGen {
         } else {
             self.mangle(name)
         }
+    }
+
+    /// Resolve a FuncRef SymbolId to the correct C function name.
+    /// Handles: current module (no prefix), embedded modules (Module_Name),
+    /// native stdlib (m2_Module_Name), foreign modules (bare name).
+    pub(crate) fn resolve_func_ref_name(&self, sid: &crate::hir::SymbolId) -> String {
+        if let Some(ref module) = sid.module {
+            if module == &self.module_name && !self.embedded_local_procs.contains(&sid.source_name) {
+                // Same module and not embedded: no prefix
+                return self.mangle(&sid.source_name);
+            }
+            if self.foreign_modules.contains(module.as_str()) {
+                return sid.source_name.clone();
+            }
+            if crate::stdlib::is_native_stdlib(module) {
+                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, &sid.source_name) {
+                    return c_name;
+                }
+                return format!("{}_{}", module, sid.source_name);
+            }
+            if crate::stdlib::is_stdlib_module(module) && !crate::stdlib::is_native_stdlib(module) {
+                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, &sid.source_name) {
+                    return c_name;
+                }
+            }
+            return format!("{}_{}", module, sid.source_name);
+        }
+        self.mangle(&sid.source_name)
     }
 
     pub(crate) fn mangle(&self, name: &str) -> String {
