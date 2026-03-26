@@ -585,19 +585,21 @@ impl super::CodeGen {
             HirStmtKind::Raise { expr } => {
                 self.emit_indent();
                 if let Some(e) = expr {
-                    let s = self.hir_expr_to_string(e);
-                    // Check if it's a known exception constant (enum-like integer)
-                    if let HirExprKind::Place(ref place) = e.kind {
-                        if let PlaceBase::Constant(ConstVal::Integer(_)) = &place.base {
-                            let exc_name = match &place.base {
-                                PlaceBase::Constant(ConstVal::Integer(v)) => format!("{}", v),
-                                _ => s.clone(),
-                            };
-                            self.emit(&format!("m2_raise({}, NULL, NULL);\n", exc_name));
-                        } else {
-                            self.emit(&format!("m2_raise((int)({}), NULL, NULL);\n", s));
+                    // Check if the value is an exception TypeId — resolve to M2_EXC_Name
+                    let exc_c_name = match &e.kind {
+                        HirExprKind::IntLit(v) => {
+                            // Look up exception name from the TypeId
+                            if let crate::types::Type::Exception { name } = self.sema.types.get(*v as crate::types::TypeId) {
+                                Some(format!("M2_EXC_{}", self.mangle(&name)))
+                            } else { None }
                         }
+                        _ => None,
+                    };
+                    if let Some(c_name) = exc_c_name {
+                        self.emit(&format!("m2_raise({}, \"{}\", NULL);\n", c_name,
+                            c_name.strip_prefix("M2_EXC_").unwrap_or(&c_name)));
                     } else {
+                        let s = self.hir_expr_to_string(e);
                         self.emit(&format!("m2_raise((int)({}), NULL, NULL);\n", s));
                     }
                 } else {
