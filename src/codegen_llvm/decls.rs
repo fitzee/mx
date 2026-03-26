@@ -745,10 +745,6 @@ impl LLVMCodeGen {
                 });
                 if let Some(body) = prebuilt_body {
                     self.gen_hir_statements(&body);
-                } else if let Some(stmts) = &p.block.body {
-                    let mut hb = self.make_hir_builder();
-                    let hir_stmts = hb.lower_stmts(stmts);
-                    self.gen_hir_statements(&hir_stmts);
                 }
             }
             self.in_sjlj_context = false;
@@ -779,10 +775,6 @@ impl LLVMCodeGen {
             });
             if let Some(body) = prebuilt_body {
                 self.gen_hir_statements(&body);
-            } else if let Some(stmts) = &p.block.body {
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(stmts);
-                self.gen_hir_statements(&hir_stmts);
             }
         }
 

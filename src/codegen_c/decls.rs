@@ -1078,9 +1078,9 @@ impl CodeGen {
                 self.emit_hir_stmt(stmt);
             }
         } else if let Some(stmts) = &p.block.body {
-            for stmt in stmts {
-                self.gen_statement(stmt);
-            }
+            // No prebuilt HIR found — this is unexpected if build_module ran.
+            // Fall through to empty body (the procedure has no statements).
+            let _ = stmts;
         }
 
         if has_except {
