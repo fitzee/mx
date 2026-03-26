@@ -905,7 +905,8 @@ impl<'a> HirBuilder<'a> {
                 continue;
             }
             if is_var && is_open {
-                // VAR open array param: emit AddrOf + HIGH.
+                // VAR open array param: emit AddrOf + HIGH for designators,
+                // or value + HIGH for string literals.
                 if let ExprKind::Designator(ref d) = arg.kind {
                     if let Some(place) = self.resolve_designator(d) {
                         result.push(HirExpr {
@@ -918,7 +919,11 @@ impl<'a> HirBuilder<'a> {
                         continue;
                     }
                 }
-                result.push(self.lower_expr(arg));
+                // Non-designator (e.g., string literal): emit value + HIGH
+                let lowered = self.lower_expr(arg);
+                result.push(lowered);
+                let high = self.compute_high_for_arg(arg, loc);
+                result.push(high);
                 continue;
             }
 
