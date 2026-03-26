@@ -136,18 +136,20 @@ impl<'a> HirBuilder<'a> {
         self.foreign_modules.contains(name)
     }
     fn get_var_type(&self, name: &str) -> Option<TypeId> {
-        if let Some(ref ctx) = self.ctx {
-            ctx.var_types.get(name).copied()
-        } else {
-            self.var_types_owned.get(name).copied()
-        }
+        // Check owned first (dynamically registered, e.g. TYPECASE bindings),
+        // then context (backend-provided).
+        self.var_types_owned.get(name).copied()
+            .or_else(|| {
+                if let Some(ref ctx) = self.ctx {
+                    ctx.var_types.get(name).copied()
+                } else {
+                    None
+                }
+            })
     }
     fn is_local_name(&self, name: &str) -> bool {
-        if let Some(ref ctx) = self.ctx {
-            ctx.local_names.contains(name)
-        } else {
-            self.local_names_owned.iter().any(|n| n == name)
-        }
+        self.local_names_owned.iter().any(|n| n == name)
+            || self.ctx.as_ref().map_or(false, |ctx| ctx.local_names.contains(name))
     }
 
     // ── Configuration (populated from sema/driver before resolution) ──
@@ -1812,10 +1814,15 @@ impl<'a> HirBuilder<'a> {
             StatementKind::TypeCase { expr, branches, else_body } => {
                 let expr = self.lower_expr(expr);
                 let branches = branches.iter().map(|b| {
-                    // Register TYPECASE binding variable so the body can resolve it
+                    // Register TYPECASE binding variable with the branch's REF type
                     if let Some(ref var_name) = b.var {
-                        // The binding is a pointer type (REF) — register as ADDRESS
-                        self.register_var(var_name, TY_ADDRESS);
+                        let bind_ty = if let Some(first_type) = b.types.first() {
+                            // Look up the REF type from sema
+                            self.scope_lookup(&first_type.name)
+                                .map(|sym| sym.typ)
+                                .unwrap_or(TY_ADDRESS)
+                        } else { TY_ADDRESS };
+                        self.register_var(var_name, bind_ty);
                         self.register_local(var_name);
                     }
                     let body = self.lower_stmts(&b.body);
