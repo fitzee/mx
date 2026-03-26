@@ -17,16 +17,18 @@ impl CodeGen {
     }
 
     pub(crate) fn gen_statement(&mut self, stmt: &Statement) {
-        // Route PIM4 statements through HIR; keep M2+ on AST path
+        // Route through HIR for most PIM4 statements.
+        // Exceptions: M2+ features, and procedure calls (which need
+        // C-backend-specific native stdlib handling for arg conventions).
         match &stmt.kind {
-            // M2+ features stay on AST path for now
+            // M2+ features stay on AST path
             StatementKind::Try { .. } |
             StatementKind::Raise { .. } |
             StatementKind::Lock { .. } |
             StatementKind::TypeCase { .. } => {
                 self.gen_statement_ast(stmt);
             }
-            // All PIM4 statements (including WITH) go through HIR
+            // Everything else through HIR — including ProcCall
             _ => {
                 self.gen_statement_hir(stmt);
             }

@@ -54,9 +54,15 @@ impl super::CodeGen {
 
             HirExprKind::AddrOf(place) => {
                 let place_str = self.emit_place_c(place);
-                // ALLOCATE/DEALLOCATE: cast to (void **) for clang 16+
-                // This is handled at the call site level, not here.
-                format!("&{}", place_str)
+                // Arrays decay to pointers in C — don't take address
+                let resolved = self.resolve_hir_alias(place.ty);
+                if matches!(self.sema.types.get(resolved),
+                    crate::types::Type::Array { .. } | crate::types::Type::OpenArray { .. })
+                {
+                    place_str
+                } else {
+                    format!("&{}", place_str)
+                }
             }
 
             HirExprKind::DirectCall { target, args } => {
@@ -78,7 +84,18 @@ impl super::CodeGen {
                 }
                 // Regular function call
                 let c_name = self.resolve_call_name(target);
-                let arg_strs = self.hir_args_to_string(args, &c_name);
+                let native_module = target.module.as_ref()
+                    .filter(|m| crate::stdlib::is_native_stdlib(m)
+                        && crate::stdlib::map_stdlib_call(m, &target.source_name).is_some());
+                let arg_strs = if let Some(module) = native_module {
+                    // Native stdlib: strip _high companions (the inline C
+                    // functions don't take open array high params)
+                    let m = module.clone();
+                    let p = target.source_name.clone();
+                    self.hir_args_for_native_stdlib(args, &c_name, &m, &p)
+                } else {
+                    self.hir_args_to_string(args, &c_name)
+                };
                 format!("{}({})", c_name, arg_strs)
             }
 
@@ -199,6 +216,43 @@ impl super::CodeGen {
         expr.ty == TY_LONGINT || expr.ty == TY_LONGCARD
     }
 
+    /// Adapt HIR-expanded args for native stdlib C inline functions.
+    /// The HIR adds _high companions for ALL open array params, but native
+    /// C functions only need _high for VAR (writable) open array params.
+    /// Non-VAR open arrays (read-only sources) use strlen/implicit size.
+    fn hir_args_for_native_stdlib(&mut self, args: &[HirExpr], _proc_name: &str, module: &str, proc: &str) -> String {
+        let params = crate::stdlib::get_stdlib_proc_params(module, proc)
+            .unwrap_or_default();
+        let mut result = Vec::new();
+        let mut hir_idx = 0;
+        for param in &params {
+            if hir_idx >= args.len() { break; }
+            let (_name, is_var, _is_char, is_open) = param;
+            let s = self.hir_expr_to_string(&args[hir_idx]);
+            // ALLOCATE/DEALLOCATE: cast first arg to (void **)
+            let is_alloc = hir_idx == 0 && (proc.eq_ignore_ascii_case("ALLOCATE") || proc.eq_ignore_ascii_case("DEALLOCATE"));
+            if is_alloc && s.starts_with('&') {
+                result.push(format!("(void **){}", s));
+            } else {
+                result.push(s);
+            }
+            hir_idx += 1;
+            if *is_open && hir_idx < args.len() {
+                if *is_var {
+                    // VAR open array: keep _high (destination buffer needs size)
+                    result.push(self.hir_expr_to_string(&args[hir_idx]));
+                }
+                // Non-VAR open array: skip _high (source, C uses strlen)
+                hir_idx += 1;
+            }
+        }
+        while hir_idx < args.len() {
+            result.push(self.hir_expr_to_string(&args[hir_idx]));
+            hir_idx += 1;
+        }
+        result.join(", ")
+    }
+
     /// Convert HIR call args to a comma-separated C string.
     fn hir_args_to_string(&mut self, args: &[HirExpr], proc_name: &str) -> String {
         args.iter().enumerate().map(|(idx, a)| {
@@ -251,7 +305,15 @@ impl super::CodeGen {
             TY_LONGCARD => "uint64_t".to_string(),
             TY_WORD => "uint32_t".to_string(),
             TY_BYTE => "uint8_t".to_string(),
-            _ => "int32_t".to_string(), // fallback
+            _ => {
+                // Check type registry for pointer/record/enum types
+                let resolved = self.resolve_hir_alias(tid);
+                match self.sema.types.get(resolved) {
+                    crate::types::Type::Pointer { .. } => "void *".to_string(),
+                    crate::types::Type::Enumeration { .. } => "int".to_string(),
+                    _ => "int32_t".to_string(), // fallback
+                }
+            }
         }
     }
 
@@ -298,7 +360,16 @@ impl super::CodeGen {
                             self.emit(";\n");
                             return;
                         }
-                        let args_s = self.hir_args_to_string(args, &name);
+                        let native_mod = sid.module.as_ref()
+                            .filter(|m| crate::stdlib::is_native_stdlib(m)
+                                && crate::stdlib::map_stdlib_call(m, &sid.source_name).is_some());
+                        let args_s = if let Some(module) = native_mod {
+                            let m = module.clone();
+                            let p = sid.source_name.clone();
+                            self.hir_args_for_native_stdlib(args, &name, &m, &p)
+                        } else {
+                            self.hir_args_to_string(args, &name)
+                        };
                         (name, args_s)
                     }
                     HirCallTarget::Indirect(callee) => {

@@ -1976,18 +1976,18 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
     match (m.as_str(), p.as_str()) {
         // InOut
         ("INOUT", "READ") | ("INOUT", "READCHAR") => Some(vec![sp("ch", true, true)]),
-        ("INOUT", "READSTRING") => Some(vec![sp("s", true, false)]),
+        ("INOUT", "READSTRING") => Some(vec![("s".to_string(), true, false, true)]),
         ("INOUT", "READINT") => Some(vec![sp("n", true, false)]),
         ("INOUT", "READCARD") => Some(vec![sp("n", true, false)]),
         ("INOUT", "WRITE") | ("INOUT", "WRITECHAR") => Some(vec![sp("ch", false, true)]),
-        ("INOUT", "WRITESTRING") => Some(vec![sp("s", false, false)]),
+        ("INOUT", "WRITESTRING") => Some(vec![("s".to_string(), false, false, true)]),
         ("INOUT", "WRITEINT") => Some(vec![sp("n", false, false), sp("w", false, false)]),
         ("INOUT", "WRITECARD") => Some(vec![sp("n", false, false), sp("w", false, false)]),
         ("INOUT", "WRITEHEX") => Some(vec![sp("n", false, false), sp("w", false, false)]),
         ("INOUT", "WRITEOCT") => Some(vec![sp("n", false, false), sp("w", false, false)]),
         ("INOUT", "WRITELN") => Some(vec![]),
-        ("INOUT", "OPENINPUT") => Some(vec![sp("ext", false, false)]),
-        ("INOUT", "OPENOUTPUT") => Some(vec![sp("ext", false, false)]),
+        ("INOUT", "OPENINPUT") => Some(vec![("ext".to_string(), false, false, true)]),
+        ("INOUT", "OPENOUTPUT") => Some(vec![("ext".to_string(), false, false, true)]),
         ("INOUT", "CLOSEINPUT") => Some(vec![]),
         ("INOUT", "CLOSEOUTPUT") => Some(vec![]),
 
@@ -2042,15 +2042,15 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         ("MATHLIB0" | "MATHLIB", "RANDOMIZE") => Some(vec![sp("seed", false, false)]),
 
         // Strings — destination params are is_open_array so codegen emits HIGH bound
-        ("STRINGS", "ASSIGN") => Some(vec![sp("src", false, false), ("dst".to_string(), false, false, true)]),
-        ("STRINGS", "INSERT") => Some(vec![sp("sub", false, false), ("dst".to_string(), false, false, true), sp("pos", false, false)]),
-        ("STRINGS", "DELETE") => Some(vec![("s".to_string(), false, false, true), sp("pos", false, false), sp("len", false, false)]),
-        ("STRINGS", "POS") => Some(vec![sp("sub", false, false), sp("s", false, false)]),
-        ("STRINGS", "LENGTH") => Some(vec![sp("s", false, false)]),
+        ("STRINGS", "ASSIGN") => Some(vec![("src".to_string(), false, false, true), ("dst".to_string(), true, false, true)]),
+        ("STRINGS", "INSERT") => Some(vec![("sub".to_string(), false, false, true), ("dst".to_string(), true, false, true), sp("pos", false, false)]),
+        ("STRINGS", "DELETE") => Some(vec![("s".to_string(), true, false, true), sp("pos", false, false), sp("len", false, false)]),
+        ("STRINGS", "POS") => Some(vec![("sub".to_string(), false, false, true), ("s".to_string(), false, false, true)]),
+        ("STRINGS", "LENGTH") => Some(vec![("s".to_string(), false, false, true)]),
         ("STRINGS", "CAPS") => Some(vec![("s".to_string(), false, false, true)]),
-        ("STRINGS", "COPY") => Some(vec![sp("src", false, false), sp("pos", false, false), sp("len", false, false), ("dst".to_string(), false, false, true)]),
-        ("STRINGS", "CONCAT") => Some(vec![sp("s1", false, false), sp("s2", false, false), ("dst".to_string(), false, false, true)]),
-        ("STRINGS", "COMPARESTR") => Some(vec![sp("s1", false, false), sp("s2", false, false)]),
+        ("STRINGS", "COPY") => Some(vec![("src".to_string(), false, false, true), sp("pos", false, false), sp("len", false, false), ("dst".to_string(), true, false, true)]),
+        ("STRINGS", "CONCAT") => Some(vec![("s1".to_string(), false, false, true), ("s2".to_string(), false, false, true), ("dst".to_string(), true, false, true)]),
+        ("STRINGS", "COMPARESTR") => Some(vec![("s1".to_string(), false, false, true), ("s2".to_string(), false, false, true)]),
 
         // FileSystem
         ("FILESYSTEM", "LOOKUP") => Some(vec![sp("f", true, false), sp("name", false, false), sp("new", false, false)]),
