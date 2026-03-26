@@ -54,14 +54,13 @@ impl super::CodeGen {
 
             HirExprKind::AddrOf(place) => {
                 let place_str = self.emit_place_c(place);
-                // Arrays decay to pointers in C — don't take address
+                // Arrays and open arrays decay to pointers in C — don't take address.
+                // Pointer-typed variables are already addresses.
                 let resolved = self.resolve_hir_alias(place.ty);
-                if matches!(self.sema.types.get(resolved),
-                    crate::types::Type::Array { .. } | crate::types::Type::OpenArray { .. })
-                {
-                    place_str
-                } else {
-                    format!("&{}", place_str)
+                match self.sema.types.get(resolved) {
+                    crate::types::Type::Array { .. }
+                    | crate::types::Type::OpenArray { .. } => place_str,
+                    _ => format!("&{}", place_str),
                 }
             }
 

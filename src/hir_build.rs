@@ -1394,10 +1394,17 @@ impl<'a> HirBuilder<'a> {
                 }
 
                 if is_builtin {
+                    // HIGH(x): resolve at HIR time for fixed arrays
+                    if func_name == "HIGH" && args.len() == 1 {
+                        let high = self.compute_high_for_arg(&args[0], &loc);
+                        if high.ty != TY_ERROR {
+                            return high;
+                        }
+                    }
                     let lowered_args: Vec<HirExpr> = args.iter()
                         .map(|a| self.lower_expr(a))
                         .collect();
-                    let ty = TY_INTEGER;
+                    let ty = crate::builtins::builtin_return_type(func_name);
                     let sid = SymbolId {
                         mangled: func_name.clone(),
                         source_name: func_name.clone(),
