@@ -580,14 +580,186 @@ impl super::CodeGen {
                 self.emitln("break;");
             }
 
-            // M2+ features — delegate to existing M2+ codegen for now
-            HirStmtKind::Try { .. } |
-            HirStmtKind::Lock { .. } |
-            HirStmtKind::TypeCase { .. } |
-            HirStmtKind::Raise { .. } |
+            // ── M2+ Statements ───────────────────────────────────
+
+            HirStmtKind::Raise { expr } => {
+                self.emit_indent();
+                if let Some(e) = expr {
+                    let s = self.hir_expr_to_string(e);
+                    // Check if it's a known exception constant (enum-like integer)
+                    if let HirExprKind::Place(ref place) = e.kind {
+                        if let PlaceBase::Constant(ConstVal::Integer(_)) = &place.base {
+                            let exc_name = match &place.base {
+                                PlaceBase::Constant(ConstVal::Integer(v)) => format!("{}", v),
+                                _ => s.clone(),
+                            };
+                            self.emit(&format!("m2_raise({}, NULL, NULL);\n", exc_name));
+                        } else {
+                            self.emit(&format!("m2_raise((int)({}), NULL, NULL);\n", s));
+                        }
+                    } else {
+                        self.emit(&format!("m2_raise((int)({}), NULL, NULL);\n", s));
+                    }
+                } else {
+                    self.emitln("m2_raise(1, NULL, NULL);");
+                }
+            }
+
             HirStmtKind::Retry => {
-                // TODO: implement M2+ HIR statement emission
-                self.emitln("/* M2+ HIR stmt not yet implemented */");
+                self.emitln("longjmp(m2_exception_buf, -1); /* RETRY */");
+            }
+
+            HirStmtKind::Try { body, excepts, finally_body } => {
+                let has_finally = finally_body.is_some();
+                let needs_deferred = has_finally
+                    && (excepts.is_empty() || excepts.iter().all(|ec| ec.exception.is_some()));
+
+                self.emitln("{");
+                self.indent += 1;
+                self.emitln("m2_ExcFrame _ef;");
+                if needs_deferred { self.emitln("int _ef_exc = 0;"); }
+                self.emitln("M2_TRY(_ef) {");
+                self.indent += 1;
+                for s in body { self.emit_hir_stmt(s); }
+                self.emitln("M2_ENDTRY(_ef);");
+                self.indent -= 1;
+                self.emitln("} M2_CATCH {");
+                self.indent += 1;
+                self.emitln("M2_ENDTRY(_ef);");
+
+                if excepts.is_empty() {
+                    if has_finally {
+                        self.emitln("_ef_exc = 1;");
+                    } else {
+                        self.emitln("m2_raise(_ef.exception_id, _ef.exception_name, _ef.exception_arg);");
+                    }
+                } else {
+                    let mut first = true;
+                    let mut has_catch_all = false;
+                    for ec in excepts {
+                        self.emit_indent();
+                        if !first { self.emit("} else "); }
+                        first = false;
+                        if let Some(ref exc) = ec.exception {
+                            let c_name = if let Some(ref m) = exc.module {
+                                format!("M2_EXC_{}_{}", m, exc.source_name)
+                            } else {
+                                format!("M2_EXC_{}", self.mangle(&exc.source_name))
+                            };
+                            self.emit(&format!("if (_ef.exception_id == {}) {{\n", c_name));
+                        } else {
+                            has_catch_all = true;
+                            self.emit("{\n");
+                        }
+                        self.indent += 1;
+                        for s in &ec.body { self.emit_hir_stmt(s); }
+                        self.indent -= 1;
+                    }
+                    if !has_catch_all {
+                        if has_finally {
+                            self.emitln("} else {");
+                            self.indent += 1;
+                            self.emitln("_ef_exc = 1;");
+                            self.indent -= 1;
+                        } else {
+                            self.emitln("} else {");
+                            self.indent += 1;
+                            self.emitln("m2_raise(_ef.exception_id, _ef.exception_name, _ef.exception_arg);");
+                            self.indent -= 1;
+                        }
+                    }
+                    self.emitln("}");
+                }
+                self.indent -= 1;
+                self.emitln("}");
+
+                if let Some(fb) = finally_body {
+                    for s in fb { self.emit_hir_stmt(s); }
+                    if needs_deferred {
+                        self.emitln("if (_ef_exc) {");
+                        self.indent += 1;
+                        self.emitln("m2_raise(_ef.exception_id, _ef.exception_name, _ef.exception_arg);");
+                        self.indent -= 1;
+                        self.emitln("}");
+                    }
+                }
+                self.indent -= 1;
+                self.emitln("}");
+            }
+
+            HirStmtKind::Lock { mutex, body } => {
+                self.emitln("{");
+                self.indent += 1;
+                let mutex_str = self.hir_expr_to_string(mutex);
+                self.emitln(&format!("m2_Mutex_Lock({});", mutex_str));
+                self.emitln("m2_ExcFrame _lf;");
+                self.emitln("M2_TRY(_lf) {");
+                self.indent += 1;
+                for s in body { self.emit_hir_stmt(s); }
+                self.emitln("M2_ENDTRY(_lf);");
+                self.indent -= 1;
+                self.emitln("} M2_CATCH {");
+                self.indent += 1;
+                self.emitln("M2_ENDTRY(_lf);");
+                self.emitln(&format!("m2_Mutex_Unlock({});", mutex_str));
+                self.emitln("m2_raise(_lf.exception_id, _lf.exception_name, _lf.exception_arg);");
+                self.indent -= 1;
+                self.emitln("}");
+                self.emitln(&format!("m2_Mutex_Unlock({});", mutex_str));
+                self.indent -= 1;
+                self.emitln("}");
+            }
+
+            HirStmtKind::TypeCase { expr, branches, else_body } => {
+                self.emitln("{");
+                self.indent += 1;
+                let expr_str = self.hir_expr_to_string(expr);
+                self.emitln(&format!("void *_tc_val = (void *)({});", expr_str));
+                let mut first = true;
+                for branch in branches {
+                    self.emit_indent();
+                    if !first { self.emit("} else "); }
+                    first = false;
+                    self.emit("if (_tc_val && (");
+                    for (i, ty) in branch.types.iter().enumerate() {
+                        if i > 0 { self.emit(" || "); }
+                        let type_name = if let Some(ref m) = ty.module {
+                            format!("{}_{}", m, ty.source_name)
+                        } else {
+                            self.mangle(&ty.source_name)
+                        };
+                        self.emit(&format!("M2_ISA(_tc_val, &M2_TD_{})", type_name));
+                    }
+                    self.emit(")) {\n");
+                    self.indent += 1;
+                    if let Some(ref var_name) = branch.var {
+                        if let Some(first_type) = branch.types.first() {
+                            let type_name = if let Some(ref m) = first_type.module {
+                                format!("{}_{}", m, first_type.source_name)
+                            } else {
+                                self.mangle(&first_type.source_name)
+                            };
+                            self.emitln(&format!("{} {} = ({})_tc_val;", type_name, var_name, type_name));
+                        }
+                    }
+                    for s in &branch.body { self.emit_hir_stmt(s); }
+                    self.indent -= 1;
+                }
+                if let Some(eb) = else_body {
+                    if !first {
+                        self.emitln("} else {");
+                    } else {
+                        self.emitln("{");
+                    }
+                    self.indent += 1;
+                    for s in eb { self.emit_hir_stmt(s); }
+                    self.indent -= 1;
+                }
+                if !first || else_body.is_some() {
+                    self.emitln("}");
+                }
+                self.indent -= 1;
+                self.emitln("}");
             }
         }
     }
