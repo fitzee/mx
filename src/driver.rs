@@ -834,6 +834,51 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     }
 
     // Phase 3: load .mod files transitively, register with sema
+    //
+    // Helper: recursively register a .def and its dependencies before itself.
+    // This ensures that when HTTPClient.def does `FROM URI IMPORT URIRec`,
+    // URI.def has already been registered so URIRec resolves correctly.
+    fn register_def_recursive(
+        mod_name: &str,
+        sema: &mut crate::sema::SemanticAnalyzer,
+        registered_defs: &mut std::collections::HashSet<String>,
+        all_sorted_defs: &mut Vec<crate::ast::DefinitionModule>,
+        opts: &CompileOptions,
+        in_progress: &mut std::collections::HashSet<String>,
+    ) -> Result<(), CompileError> {
+        if registered_defs.contains(mod_name)
+            || in_progress.contains(mod_name)
+            || (crate::stdlib::is_stdlib_module(mod_name) && !crate::stdlib::is_native_stdlib(mod_name))
+        {
+            return Ok(());
+        }
+        in_progress.insert(mod_name.to_string());
+        if let Some(def_path) = find_def_file(mod_name, &opts.input, &opts.include_paths) {
+            if opts.verbose {
+                eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, mod_name, def_path.display());
+            }
+            let def_unit = parse_file(&def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
+            if let CompilationUnit::DefinitionModule(dep_def) = def_unit {
+                // First, recursively register this def's own imports
+                for imp in &dep_def.imports {
+                    if let Some(ref from_mod) = imp.from_module {
+                        register_def_recursive(from_mod, sema, registered_defs, all_sorted_defs, opts, in_progress)?;
+                    } else {
+                        for n in &imp.names {
+                            register_def_recursive(&n.name, sema, registered_defs, all_sorted_defs, opts, in_progress)?;
+                        }
+                    }
+                }
+                // Now register this def (all deps are already registered)
+                sema.register_def_module(&dep_def);
+                registered_defs.insert(mod_name.to_string());
+                all_sorted_defs.push(dep_def);
+            }
+        }
+        in_progress.remove(mod_name);
+        Ok(())
+    }
+
     let mut loaded_modules = std::collections::HashSet::new();
     let mut mod_queue: Vec<String> = all_imported_modules.clone();
     while let Some(mod_name) = mod_queue.pop() {
@@ -860,43 +905,19 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
         }
         if let Some(imp_mod) = found_impl {
-            // Transitively discover dependencies
+            // Recursively register .def dependencies in correct order
+            let mut in_progress = std::collections::HashSet::new();
             for imp in &imp_mod.imports {
                 if let Some(ref from_mod) = imp.from_module {
                     if !loaded_modules.contains(from_mod) {
-                        if !registered_defs.contains(from_mod) && (!crate::stdlib::is_stdlib_module(from_mod) || crate::stdlib::is_native_stdlib(from_mod)) {
-                            if let Some(dep_def_path) = find_def_file(from_mod, &opts.input, &opts.include_paths) {
-                                if opts.verbose {
-                                    eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, from_mod, dep_def_path.display());
-                                }
-                                let dep_def_unit = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features)?;
-                                if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
-                                    sema.register_def_module(&dep_def);
-                                    registered_defs.insert(from_mod.clone());
-                                    all_sorted_defs.push(dep_def);
-                                }
-                            }
-                        }
+                        register_def_recursive(from_mod, &mut sema, &mut registered_defs, &mut all_sorted_defs, &opts, &mut in_progress)?;
                         mod_queue.push(from_mod.clone());
                     }
                 } else {
                     for name in &imp.names {
                         let n = &name.name;
                         if !loaded_modules.contains(n) {
-                            if !registered_defs.contains(n) && (!crate::stdlib::is_stdlib_module(n) || crate::stdlib::is_native_stdlib(n)) {
-                                if let Some(dep_def_path) = find_def_file(n, &opts.input, &opts.include_paths) {
-                                    if opts.verbose {
-                                        eprintln!("{}: found definition module for {}: {}", identity::COMPILER_NAME, n, dep_def_path.display());
-                                    }
-                                    if let Ok(dep_def_unit) = parse_file(&dep_def_path, opts.case_sensitive, opts.m2plus, &opts.features) {
-                                        if let CompilationUnit::DefinitionModule(dep_def) = dep_def_unit {
-                                            sema.register_def_module(&dep_def);
-                                            registered_defs.insert(n.clone());
-                                            all_sorted_defs.push(dep_def);
-                                        }
-                                    }
-                                }
-                            }
+                            register_def_recursive(n, &mut sema, &mut registered_defs, &mut all_sorted_defs, &opts, &mut in_progress)?;
                             mod_queue.push(n.clone());
                         }
                     }

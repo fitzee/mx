@@ -207,7 +207,7 @@ impl<'a> HirBuilder<'a> {
                 return;
             }
         }
-        eprintln!("[HIR] enter_procedure_named('{}') FAILED: no scope found, cur={:?}, module={}",
+        eprintln!("[HIR] enter_procedure_named('{}') FAILED: no scope found, saved_cur={:?}, module={}",
             proc_name, self.scope_stack.last().copied().flatten(), self.module_name);
     }
 
@@ -456,47 +456,35 @@ impl<'a> HirBuilder<'a> {
             }
         }
 
-        // var_types + local_names track which names have allocas (locals) vs
-        // globals. Sema's scope chain doesn't distinguish them, so this
-        // backend state is still needed until locality is tracked in sema.
-        let is_local = self.in_procedure && self.is_local_name(name);
-        if let Some(&tid) = self.get_var_type(name).as_ref() {
-            let is_sema_proc_or_type = self.scope_lookup(name)
-                .map(|s| matches!(s.kind, SymbolKind::Procedure { .. } | SymbolKind::Type))
+        // Check if name is a local variable/parameter defined in the
+        // current procedure scope (not inherited from a module scope).
+        // Backend's local_names/var_types hint at locality, but sema
+        // scope is authoritative — a module variable in the alloca set
+        // is still a global.
+        if self.in_procedure {
+            let is_in_proc_scope = self.current_scope
+                .and_then(|sid| self.symtab.lookup_in_scope_direct(sid, name))
+                .map(|s| matches!(s.kind, SymbolKind::Variable | SymbolKind::Field)
+                     && s.module.is_none())
                 .unwrap_or(false);
-            if !is_sema_proc_or_type {
-                let sema_sym = self.scope_lookup(name);
-                let mangled = if is_local { name.to_string() } else { self.mangle(name) };
-                let sid = SymbolId {
-                    mangled,
-                    source_name: name.to_string(),
-                    module: if is_local { None } else { Some(self.module_name.clone()) },
-                    ty: tid,
-                    is_var_param: sema_sym.map(|s| s.is_var_param).unwrap_or(false),
-                    is_open_array: sema_sym.map(|s| s.is_open_array).unwrap_or(false),
-                };
-                return Some(if is_local {
-                    (PlaceBase::Local(sid), tid)
-                } else {
-                    (PlaceBase::Global(sid), tid)
-                });
+            if is_in_proc_scope {
+                if let Some(sym) = self.scope_lookup(name) {
+                    let tid = sym.typ;
+                    let sid = SymbolId {
+                        mangled: name.to_string(),
+                        source_name: name.to_string(),
+                        module: None,
+                        ty: tid,
+                        is_var_param: sym.is_var_param,
+                        is_open_array: sym.is_open_array,
+                    };
+                    return Some((PlaceBase::Local(sid), tid));
+                }
             }
-        }
-        if is_local {
-            let sema_sym = self.scope_lookup(name);
-            let tid = sema_sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
-            let sid = SymbolId {
-                mangled: name.to_string(),
-                source_name: name.to_string(),
-                module: None,
-                ty: tid,
-                is_var_param: sema_sym.map(|s| s.is_var_param).unwrap_or(false),
-                is_open_array: sema_sym.map(|s| s.is_open_array).unwrap_or(false),
-            };
-            return Some((PlaceBase::Local(sid), tid));
         }
 
         // Look up in symtab using the current scope chain (scope-aware).
+        // Sema is the single source of truth for TypeIds and symbol kinds.
         if let Some(sym) = self.scope_lookup(name) {
             return Some(self.symbol_to_base(name, sym));
         }
@@ -559,22 +547,18 @@ impl<'a> HirBuilder<'a> {
     }
 
     fn symbol_to_base(&self, name: &str, sym: &crate::symtab::Symbol) -> (PlaceBase, TypeId) {
-        // Determine locality: if we're in a procedure and the symbol was
-        // found in a scope that is the procedure scope or a child of it
-        // (not the module scope or above), it's a local.
-        let is_local = self.in_procedure && (
-            self.is_local_name(name) || {
-                // Check if the symbol is a variable/field defined directly in
-                // the current procedure's scope. Excludes procedures, types,
-                // and imported symbols — those are not locals.
-                self.current_scope
-                    .and_then(|sid| self.symtab.lookup_in_scope_direct(sid, name))
-                    .map(|s| matches!(s.kind, SymbolKind::Variable | SymbolKind::Field)
-                         && s.module.is_none())
-                    .unwrap_or(false)
-            }
-        );
-        let tid = self.get_var_type(name).unwrap_or(sym.typ);
+        // Determine locality from sema: if we're in a procedure and the
+        // symbol is defined directly in the procedure scope (not from a
+        // parent/module scope), it's local.
+        let is_local = self.in_procedure && {
+            self.current_scope
+                .and_then(|sid| self.symtab.lookup_in_scope_direct(sid, name))
+                .map(|s| matches!(s.kind, SymbolKind::Variable | SymbolKind::Field)
+                     && s.module.is_none())
+                .unwrap_or(false)
+        };
+        // TypeId always from sema — never from var_types.
+        let tid = sym.typ;
 
         // Check for VAR param and open array from symtab
         let is_var_param = matches!(&sym.kind, SymbolKind::Procedure { params, .. }
@@ -1073,6 +1057,9 @@ impl<'a> HirBuilder<'a> {
     /// Return the current scope ID, if set.
     pub fn current_scope(&self) -> Option<usize> {
         self.current_scope
+    }
+    pub fn in_procedure(&self) -> bool {
+        self.in_procedure
     }
 
     /// Dump the parent chain from a scope for debugging.

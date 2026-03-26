@@ -149,6 +149,33 @@ impl CodeGen {
         }
     }
 
+    /// Mangle a bare type name (e.g. from TSIZE argument) using the same
+    /// resolution logic as named_type_to_c: check import_map, known_type_names,
+    /// embedded_enum_types, and module-local prefixing.
+    pub(crate) fn mangle_type_name(&self, name: &str) -> String {
+        // Built-in types pass through as-is (builtins.rs handles the C mapping)
+        match name {
+            "INTEGER" | "CARDINAL" | "REAL" | "LONGREAL" | "BOOLEAN" | "CHAR"
+            | "BITSET" | "WORD" | "BYTE" | "ADDRESS" | "LONGINT" | "LONGCARD" => {
+                return name.to_string();
+            }
+            _ => {}
+        }
+        // Module-local type?
+        let local_prefixed = format!("{}_{}", self.module_name, self.mangle(name));
+        if self.embedded_enum_types.contains(&local_prefixed) || self.known_type_names.contains(&local_prefixed) {
+            return local_prefixed;
+        }
+        // Imported type?
+        if let Some(module) = self.import_map.get(name) {
+            let prefixed = format!("{}_{}", module, self.mangle(name));
+            if self.embedded_enum_types.contains(&prefixed) || self.known_type_names.contains(&prefixed) {
+                return prefixed;
+            }
+        }
+        self.mangle(name)
+    }
+
     pub(crate) fn qualident_to_c(&self, qi: &QualIdent) -> String {
         if let Some(module) = &qi.module {
             if self.foreign_modules.contains(module.as_str()) {

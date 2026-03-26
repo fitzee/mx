@@ -3,7 +3,7 @@ members = [".", "tools/mxpkg0"]
 
 [package]
 name = "mx"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 
 [dependencies]

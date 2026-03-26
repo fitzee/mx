@@ -17,7 +17,7 @@ mx compiles Modula-2 to native executables via two backends: a **C backend** (tr
 - **Cross-compilation** — C backend: set `--cc` to a cross compiler. LLVM backend: set `--target`.
 - **m2dap** — a Modula-2 Debug Adapter Protocol server for IDE debugging with M2-idiomatic variable display.
 
-The toolchain also includes a package manager (`mxpkg`), an LSP server, a VS Code extension, and 33 libraries (see `libs/`).
+The toolchain also includes a package manager (`mxpkg`), an LSP server, a VS Code extension, and 34 libraries (see `libs/`).
 
 ## Install
 
@@ -71,7 +71,7 @@ code --install-extension tools/vscode-m2plus/m2plus-*.vsix
 - Language rules and compiler constraints
 - Syntax patterns and idiomatic templates
 - Module resolution and import mechanics
-- API signatures for all 33 libraries
+- API signatures for all 34 libraries
 - Build system and project manifest format
 
 See `docs/ai/CLAUDE.md` for reading order.
@@ -83,8 +83,8 @@ Language reference, library APIs, LSP configuration, and contributor guides are 
 ## Project Layout
 
 ```
-src/           Compiler (Rust) — C and LLVM backends
-libs/          33 libraries (Modula-2)
+src/           Compiler (Rust) — C and LLVM backends, HIR, sema
+libs/          34 libraries (Modula-2)
 tools/m2dap/   Debug adapter server (Modula-2+)
 tools/mxpkg/   Package manager (Modula-2+)
 tools/vscode-m2plus/  VS Code extension

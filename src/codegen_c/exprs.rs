@@ -107,11 +107,17 @@ impl CodeGen {
                     // For builtins that take char args, convert single-char strings to char literals
                     let char_builtins = ["CAP", "ORD", "CHR", "Write"];
                     let is_set_elem_builtin = actual_name == "INCL" || actual_name == "EXCL";
+                    let is_size_builtin = actual_name == "TSIZE" || actual_name == "SIZE";
                     let arg_strs: Vec<String> = args.iter().enumerate().map(|(idx, a)| {
                         if char_builtins.contains(&actual_name.as_ref()) {
                             self.expr_to_char_string(a)
                         } else if is_set_elem_builtin && idx == 1 {
                             self.expr_to_char_string(a)
+                        } else if is_size_builtin && idx == 0 {
+                            // TSIZE/SIZE first arg is a type name — mangle it
+                            // so user-defined types get the module prefix.
+                            let s = self.expr_to_string(a);
+                            self.mangle_type_name(&s)
                         } else {
                             self.expr_to_string(a)
                         }

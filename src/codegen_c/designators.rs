@@ -375,6 +375,17 @@ impl CodeGen {
         import_name.to_string()
     }
 
+    /// Mangle a variable name for declaration: module-prefix if it's a
+    /// module-level embedded var, but NOT if we're inside a procedure
+    /// (procedure locals shadow module-level names).
+    pub(crate) fn mangle_decl_name(&self, name: &str) -> String {
+        if self.parent_proc_stack.is_empty() && self.embedded_local_vars.contains(name) {
+            format!("{}_{}", self.module_name, name)
+        } else {
+            self.mangle(name)
+        }
+    }
+
     pub(crate) fn mangle(&self, name: &str) -> String {
         match name {
             // Modula-2 built-in constants

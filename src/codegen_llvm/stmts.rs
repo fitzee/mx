@@ -44,8 +44,7 @@ impl LLVMCodeGen {
                 let val = self.gen_hir_expr(value);
 
                 // Aggregate assignment: memcpy
-                if (addr.ty.starts_with('{') || addr.ty.starts_with('['))
-                    && !addr.ty.contains("float") && !addr.ty.contains("double")
+                if addr.ty.starts_with('{') || addr.ty.starts_with('[')
                 {
                     // If val is a by-value struct (e.g. from a function call), spill to alloca first
                     let src = if val.ty.starts_with('{') || val.ty.starts_with('[') {

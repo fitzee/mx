@@ -9,9 +9,10 @@ Source (.mod/.def)
   -> Lexer (src/lexer.rs)         tokenize into TokenKind stream
   -> Parser (src/parser.rs)       recursive-descent -> AST
   -> Sema (src/sema.rs)           type checking, scope resolution, symbol table
+  -> HIR (src/hir_build.rs)       designator/expr resolution, open array expansion
   -> CodeGen:
-       C backend (src/codegen.rs)       AST -> C source string
-       LLVM backend (src/codegen_llvm/) AST -> LLVM IR text (.ll)
+       C backend (src/codegen_c/)       AST+HIR -> C source string
+       LLVM backend (src/codegen_llvm/) AST+HIR -> LLVM IR text (.ll)
   -> Driver (src/driver.rs)       invoke cc/clang, link
 ```
 
@@ -40,7 +41,7 @@ The parser handles:
 
 ### Semantic analysis
 
-`SemanticAnalyzer` (in `src/sema.rs`) is embedded inside the `CodeGen` struct as `self.sema`. It performs:
+`SemanticAnalyzer` (in `src/sema.rs`) is embedded inside each backend's `CodeGen` struct as `self.sema`. It performs:
 
 - Symbol table construction with nested scope tracking
 - Type checking and coercion
@@ -49,9 +50,32 @@ The parser handles:
 
 The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested scope management. Each scope has a parent, enabling walk-up lookup.
 
+### HIR (High-level IR)
+
+`src/hir.rs` defines a typed intermediate representation for designators and expressions. `src/hir_build.rs` provides `HirBuilder`, a shared layer used by both backends to resolve designators, determine local vs. global variable identity, expand open array call arguments with `_high` companions, and compute type-correct projections (field access, array indexing, pointer derefs).
+
+Key responsibilities:
+- **Designator resolution**: Maps AST designators to `Place` (base + projections), using sema's scope chain as the single source of truth for locality and type identity.
+- **Call argument expansion**: Inserts `_high` companions for open array parameters, wraps VAR arguments as `AddrOf`.
+- **WITH scope tracking**: Resolves bare field names to qualified record field accesses.
+- **Scope-aware lookup**: Uses `current_scope` from sema to distinguish procedure-local variables from module-level globals, even when names shadow.
+
 ### Code generation — C backend
 
-`CodeGen` (in `src/codegen.rs`) walks the AST and emits C code as a string. Key design decisions:
+`src/codegen_c/` walks the AST and emits C code as a string, split across 8 modules:
+
+| File | Purpose |
+|------|---------|
+| `mod.rs` | Core struct, state management, output buffer |
+| `modules.rs` | Module-level codegen, imports, embedded impl modules |
+| `decls.rs` | Procedure and variable declarations |
+| `stmts.rs` | Statement generation |
+| `exprs.rs` | Expression generation, builtin calls |
+| `designators.rs` | Designator resolution via HIR, C name mangling |
+| `types.rs` | TypeNode → C type strings, type name resolution |
+| `m2plus.rs` | Modula-2+ extensions (TRY/EXCEPT, REF, OBJECT) |
+
+Key design decisions:
 
 - **Module-prefixed names**: Imported symbols get `Module_Name` prefixes (e.g., `Stack_Push`).
 - **Embedded implementations**: Imported module `.mod` files are inlined into the output C file, topologically sorted by dependencies.
@@ -91,14 +115,12 @@ Key design decisions:
 
 ### Driver
 
-`driver::compile()` orchestrates the full pipeline:
+`driver::compile()` orchestrates the full pipeline in four phases:
 
-1. Read source file
-2. Find and parse all transitively imported `.def` and `.mod` files
-3. Run lexer -> parser -> codegen (C or LLVM backend)
-4. Write generated output (`.c` or `.ll`) to a file
-5. Invoke the system compiler (`cc` for C backend, `clang` for LLVM backend)
-6. Link and produce the final binary
+1. **Phase 1 — Parse `.def` files**: Starting from the main module's imports, transitively discover and parse all `.def` files into a `parsed_defs` map.
+2. **Phase 2 — Topological sort and register `.def` files**: Topologically sort the parsed `.def` files by their import dependencies, then register each with sema in order. Pre-registers type names first (as opaques) so cross-module type references resolve during full registration.
+3. **Phase 3 — Load `.mod` files**: For each implementation module, find and parse its `.mod` file. Recursively discover and register any `.def` files referenced by the `.mod` that weren't found in Phase 1 (ensures transitive dependencies like `URI.def` for `HTTPClient.mod` are registered in correct order before the module that needs them). Register implementation module types with sema.
+4. **Phase 4 — Analyze and codegen**: Run sema on the main compilation unit, then invoke the selected backend (C or LLVM) to generate output. Write `.c` or `.ll`, invoke the system compiler, link.
 
 The driver handles include path resolution, finding `.def`/`.mod` files, and constructing the compiler command line. The LLVM backend is selected with `--llvm` (full compilation) or `--emit-llvm` (emit `.ll` text only).
 
@@ -256,7 +278,7 @@ The build system stamps all source files (mtime + size + FNV-1a hash) and stores
 
 ### Unit tests (cargo test)
 
-150 tests covering:
+230+ tests covering:
 - Lexer: tokenization, keywords, case sensitivity, feature pragmas
 - Parser: AST construction for various constructs
 - CodeGen: `#line` directive emission, debug/non-debug mode
@@ -285,7 +307,7 @@ Categorized `.mod` files in `examples/` compiled and executed. Each test has an 
 ### Running all tests
 
 ```bash
-cargo test                                              # 150 unit tests
+cargo test                                              # 230+ unit tests
 bash tests/run_all.sh                                   # integration tests
 bash tests/conformance.sh                               # conformance tests
 python3 tests/adversarial/run_adversarial.py --mode ci  # adversarial tests (C backend)
@@ -301,7 +323,9 @@ python3 tests/adversarial/run_adversarial.py --backend all  # adversarial tests 
 | `src/parser.rs` | Recursive-descent parser |
 | `src/ast.rs` | AST node types |
 | `src/sema.rs` | Semantic analysis |
-| `src/codegen.rs` | C code generation |
+| `src/hir.rs` | HIR types (Place, Projection, HirExpr, HirStmt) |
+| `src/hir_build.rs` | HIR builder — shared designator/expr resolution for both backends |
+| `src/codegen_c/` | C code generation (8 modules) |
 | `src/codegen_llvm/` | LLVM IR code generation (11 modules) |
 | `src/driver.rs` | Compilation orchestration |
 | `src/build.rs` | Project build system |

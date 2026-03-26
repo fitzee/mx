@@ -641,7 +641,10 @@ impl LLVMCodeGen {
             self.emitln(&format!("  {} = alloca i32", alloca));
             self.emitln(&format!("  store i32 %{}_high, ptr {}", name, alloca));
             let high_name = format!("{}_high", name);
-            self.locals.last_mut().unwrap().insert(high_name, (alloca, "i32".to_string()));
+            self.locals.last_mut().unwrap().insert(high_name.clone(), (alloca, "i32".to_string()));
+            // Also register in var_types so the HIR builder can resolve _high
+            // companions when forwarding open array params to callees.
+            self.var_types.insert(high_name, crate::types::TY_INTEGER);
         }
 
         // Local variable declarations

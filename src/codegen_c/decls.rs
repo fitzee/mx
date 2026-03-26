@@ -767,13 +767,28 @@ impl CodeGen {
             };
             for (i, name) in v.names.iter().enumerate() {
                 self.emit_indent();
-                let c_name = if self.embedded_local_vars.contains(name) {
-                    format!("{}_{}", self.module_name, name)
-                } else {
-                    self.mangle(name)
-                };
+                let c_name = self.mangle_decl_name(name);
                 let decl = self.proc_type_decl(&effective_type, &c_name, false);
                 self.emit(&format!("{};\n", decl));
+            }
+        } else if let TypeNode::Pointer { base, .. } = &v.typ {
+            if matches!(base.as_ref(), TypeNode::Array { .. }) {
+                // POINTER TO ARRAY [lo..hi] OF T → T (*name)[size]
+                let elem_c = self.type_to_c(base);
+                let arr_suffix = self.type_array_suffix(base);
+                for name in &v.names {
+                    self.emit_indent();
+                    let c_name = self.mangle_decl_name(name);
+                    self.emit(&format!("{} (*{}){};\n", elem_c, c_name, arr_suffix));
+                }
+            } else {
+                // Other pointer types: normal declaration
+                let ctype = self.type_to_c(&v.typ);
+                for name in &v.names {
+                    self.emit_indent();
+                    let c_name = self.mangle_decl_name(name);
+                    self.emit(&format!("{} {};\n", ctype, c_name));
+                }
             }
         } else {
             let ctype = self.type_to_c(&v.typ);
@@ -784,11 +799,7 @@ impl CodeGen {
             if is_ptr && v.names.len() > 1 {
                 for name in &v.names {
                     self.emit_indent();
-                    let c_name = if self.embedded_local_vars.contains(name) {
-                        format!("{}_{}", self.module_name, name)
-                    } else {
-                        self.mangle(name)
-                    };
+                    let c_name = self.mangle_decl_name(name);
                     self.emit(&format!("{} {}{};\n", ctype, c_name, array_suffix));
                 }
             } else {
@@ -798,11 +809,7 @@ impl CodeGen {
                     if i > 0 {
                         self.emit(", ");
                     }
-                    let c_name = if self.embedded_local_vars.contains(name) {
-                        format!("{}_{}", self.module_name, name)
-                    } else {
-                        self.mangle(name)
-                    };
+                    let c_name = self.mangle_decl_name(name);
                     self.emit(&format!("{}{}", c_name, array_suffix));
                 }
                 self.emit(";\n");

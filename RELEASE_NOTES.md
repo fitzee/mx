@@ -1,5 +1,29 @@
 # Release Notes
 
+## 1.4.1 (2026-03-26)
+
+### Bug fixes
+
+- **Def module dependency ordering** — Phase 3 of the driver now recursively registers `.def` dependencies in correct order, fixing cases where imported types (e.g., `URIRec` from `URI.def`) resolved as `TY_VOID` when their defining module was loaded after the module that imports them.
+- **TSIZE type name mangling** — `TSIZE(RecordType)` inside embedded implementation modules now correctly emits the module-prefixed C name (e.g., `Jwks_KeySetRec` instead of bare `KeySetRec`).
+- **POINTER TO ARRAY declarations** — Inline `POINTER TO ARRAY [lo..hi] OF T` variables now declare as `T (*name)[size]` in C instead of `T *name`, fixing `(*p)[i]` dereferencing.
+- **Procedure-local variable shadowing** — Local variables that shadow module-level names no longer get incorrectly module-prefixed in C declarations.
+- **LLVM aggregate assignment with float fields** — Record assignment for structs containing `REAL` fields now correctly uses memcpy instead of an invalid scalar store.
+- **LLVM open array high forwarding** — Forwarding an open array parameter to another procedure now passes the correct `_high` bound instead of 0.
+- **Struct by-value arguments** — Fixed passing records by value in function calls (ADR type, optnone for large functions).
+- **Indirect calls through procedure variables** — Fixed parameter info lookup and open array expansion for calls through procedure-typed variables.
+- **Module.Proc qualified calls** — Fixed `lookup_proc_params` for qualified procedure calls.
+- **Record field TypeId tracking** — Sema fixup and type-lowering-first approach for correct GEP indices.
+- **Array type resolution** — Prefer canonical sizes from sema TypeIds over LLVM type strings.
+- **NEW allocation size** — `NEW(p)` now allocates the actual pointed-to type size instead of a hardcoded 256 bytes.
+- **TSIZE in LLVM** — Computes actual type size via GEP-from-null instead of hardcoded values.
+- **Named array param detection** — Per-function tracking prevents cross-procedure interference.
+
+### Architecture
+
+- **HIR pipeline** — New shared intermediate representation (`src/hir.rs`, `src/hir_build.rs`) used by both C and LLVM backends for designator resolution, open array expansion, and local/global identity. Sema scope chain is now the single source of truth for variable locality and type identity.
+- **C backend split** — `src/codegen.rs` split into 8 focused modules under `src/codegen_c/`: mod, modules, decls, stmts, exprs, designators, types, m2plus.
+
 ## 1.4.0 (2026-03-23)
 
 ### Features
