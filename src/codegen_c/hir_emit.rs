@@ -263,26 +263,27 @@ impl super::CodeGen {
 
     /// Resolve a call target SymbolId to a C function name.
     fn resolve_call_name(&self, target: &SymbolId) -> String {
+        let orig = self.original_import_name(&target.source_name);
         if let Some(ref module) = target.module {
             // Same module AND it's the main module (not embedded): no prefix
             if module == &self.module_name && !self.embedded_local_procs.contains(&target.source_name) {
                 return self.mangle(&target.source_name);
             }
             if self.foreign_modules.contains(module.as_str()) {
-                return target.source_name.clone();
+                return orig.to_string();
             }
             if crate::stdlib::is_stdlib_module(module) && !crate::stdlib::is_native_stdlib(module) {
-                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, &target.source_name) {
+                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, orig) {
                     return c_name;
                 }
             }
             if crate::stdlib::is_native_stdlib(module) {
-                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, &target.source_name) {
+                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, orig) {
                     return c_name;
                 }
-                return format!("{}_{}", module, target.source_name);
+                return format!("{}_{}", module, orig);
             }
-            format!("{}_{}", module, target.source_name)
+            format!("{}_{}", module, orig)
         } else {
             self.mangle(&target.source_name)
         }
@@ -352,12 +353,18 @@ impl super::CodeGen {
                     self.hir_expr_to_string(value)
                 };
 
-                // Array/record assignment: memcpy
+                // Array/record assignment: use direct assign for records
+                // (C supports struct assignment), memcpy for arrays.
                 let resolved = self.resolve_hir_alias(target.ty);
-                if self.is_aggregate_type(resolved) {
+                let is_array = matches!(self.sema.types.get(resolved), crate::types::Type::Array { .. });
+                if is_array {
                     self.emit_indent();
-                    self.emit(&format!("memcpy(&{}, &{}, sizeof({}));\n",
+                    self.emit(&format!("memcpy({}, {}, sizeof({}));\n",
                         target_str, value_str, target_str));
+                } else if self.is_aggregate_type(resolved) {
+                    // Record: direct struct assignment (avoids &rvalue issue)
+                    self.emit_indent();
+                    self.emit(&format!("{} = {};\n", target_str, value_str));
                 } else {
                     self.emit_indent();
                     self.emit(&format!("{} = {};\n", target_str, value_str));

@@ -2075,7 +2075,9 @@ pub fn get_stdlib_proc_params(module: &str, proc_name: &str) -> Option<Vec<Stdli
         ("BINARYIO", "CLOSE") => Some(vec![sp("fh", false, false)]),
         ("BINARYIO", "READBYTE") => Some(vec![sp("fh", false, false), sp("b", true, false)]),
         ("BINARYIO", "WRITEBYTE") => Some(vec![sp("fh", false, false), sp("b", false, false)]),
-        ("BINARYIO", "READBYTES") => Some(vec![sp("fh", false, false), ("buf".to_string(), true, false, true), sp("n", false, false), sp("actual", true, false)]),
+        // BinaryIO: buf IS open array in M2, but native C func doesn't take _high.
+        // Mark as open+non-VAR so strip logic removes _high.
+        ("BINARYIO", "READBYTES") => Some(vec![sp("fh", false, false), ("buf".to_string(), false, false, true), sp("n", false, false), sp("actual", true, false)]),
         ("BINARYIO", "WRITEBYTES") => Some(vec![sp("fh", false, false), ("buf".to_string(), false, false, true), sp("n", false, false)]),
         ("BINARYIO", "FILESIZE") => Some(vec![sp("fh", false, false), sp("size", true, false)]),
         ("BINARYIO", "SEEK") => Some(vec![sp("fh", false, false), sp("pos", false, false)]),

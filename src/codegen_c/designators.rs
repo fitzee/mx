@@ -431,26 +431,26 @@ impl CodeGen {
     /// Handles: current module (no prefix), embedded modules (Module_Name),
     /// native stdlib (m2_Module_Name), foreign modules (bare name).
     pub(crate) fn resolve_func_ref_name(&self, sid: &crate::hir::SymbolId) -> String {
+        let orig = self.original_import_name(&sid.source_name);
         if let Some(ref module) = sid.module {
             if module == &self.module_name && !self.embedded_local_procs.contains(&sid.source_name) {
-                // Same module and not embedded: no prefix
                 return self.mangle(&sid.source_name);
             }
             if self.foreign_modules.contains(module.as_str()) {
-                return sid.source_name.clone();
+                return orig.to_string();
             }
             if crate::stdlib::is_native_stdlib(module) {
-                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, &sid.source_name) {
+                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, orig) {
                     return c_name;
                 }
-                return format!("{}_{}", module, sid.source_name);
+                return format!("{}_{}", module, orig);
             }
             if crate::stdlib::is_stdlib_module(module) && !crate::stdlib::is_native_stdlib(module) {
-                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, &sid.source_name) {
+                if let Some(c_name) = crate::stdlib::map_stdlib_call(module, orig) {
                     return c_name;
                 }
             }
-            return format!("{}_{}", module, sid.source_name);
+            return format!("{}_{}", module, orig);
         }
         self.mangle(&sid.source_name)
     }
