@@ -554,6 +554,11 @@ impl LLVMCodeGen {
             self.declared_fns.insert("m2_stack_push".to_string());
             self.declared_fns.insert("m2_stack_pop".to_string());
         }
+        // HALT runtime
+        if !self.declared_fns.contains("m2_halt") {
+            self.emit_preambleln("declare void @m2_halt() noreturn nounwind");
+            self.declared_fns.insert("m2_halt".to_string());
+        }
         // Note: #dbg_declare records (LLVM 19+) don't need a function declaration
     }
 }

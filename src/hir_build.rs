@@ -760,6 +760,13 @@ impl<'a> HirBuilder<'a> {
 
     // ── Helpers ───────────────────────────────────────────────────────
 
+    /// Check if a resolved TypeId represents an open-array-like parameter.
+    /// Matches OpenArray and StringLit (TY_STRING is used by stdlib for
+    /// `ARRAY OF CHAR` parameters).
+    fn is_open_array_type(types: &TypeRegistry, resolved: TypeId) -> bool {
+        matches!(types.get(resolved), Type::OpenArray { .. } | Type::StringLit(_))
+    }
+
     /// Scope-aware symbol lookup. Uses `lookup_in_scope` when a current
     /// scope is set (walking the parent chain), falls back to `lookup_any`
     /// when no scope is available.
@@ -798,10 +805,7 @@ impl<'a> HirBuilder<'a> {
         if let Some(sym) = sym {
             if let SymbolKind::Procedure { ref params, .. } = sym.kind {
                 return params.iter().map(|p| {
-                    let is_open = matches!(
-                        self.types.get(self.resolve_alias(p.typ)),
-                        Type::OpenArray { .. }
-                    );
+                    let is_open = Self::is_open_array_type(self.types, self.resolve_alias(p.typ));
                     (p.is_var, is_open)
                 }).collect();
             }
@@ -809,10 +813,7 @@ impl<'a> HirBuilder<'a> {
             let resolved = self.resolve_alias(sym.typ);
             if let Type::ProcedureType { params, .. } = self.types.get(resolved) {
                 return params.iter().map(|p| {
-                    let is_open = matches!(
-                        self.types.get(self.resolve_alias(p.typ)),
-                        Type::OpenArray { .. }
-                    );
+                    let is_open = Self::is_open_array_type(self.types, self.resolve_alias(p.typ));
                     (p.is_var, is_open)
                 }).collect();
             }
