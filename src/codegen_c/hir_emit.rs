@@ -59,6 +59,23 @@ impl super::CodeGen {
                 let name = &target.source_name;
                 // Builtin handling
                 if crate::builtins::is_builtin_proc(name) {
+                    // ADR on open array / VAR open array: the param is already
+                    // a pointer in C, so emit (void *)arg, not (void *)&(arg).
+                    if name == "ADR" && args.len() == 1 {
+                        if let HirExprKind::Place(ref place) = args[0].kind {
+                            // Bare open array param: already a pointer, skip &
+                            let is_bare_open = place.projections.is_empty()
+                                && match &place.base {
+                                    PlaceBase::Local(sid) | PlaceBase::Global(sid) =>
+                                        sid.is_open_array,
+                                    _ => false,
+                                };
+                            if is_bare_open {
+                                let s = self.hir_expr_to_string(&args[0]);
+                                return format!("((void *)({}))", s);
+                            }
+                        }
+                    }
                     let arg_strs: Vec<String> = args.iter()
                         .enumerate()
                         .map(|(idx, a)| {
