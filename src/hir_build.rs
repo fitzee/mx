@@ -56,12 +56,68 @@ pub fn build_module(
     let (imported_modules, import_aliases) = extract_imports(module_imports);
 
     let mut procedures = Vec::new();
+    let mut type_decls = Vec::new();
+    let mut constants = Vec::new();
+    let mut globals = Vec::new();
 
-    // Lower main module procedures
+    // Collect structural declarations + lower procedures
     for decl in module_decls {
-        if let Declaration::Procedure(p) = decl {
-            let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
-            procedures.push(hir_proc);
+        match decl {
+            Declaration::Procedure(p) => {
+                let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
+                procedures.push(hir_proc);
+            }
+            Declaration::Type(t) => {
+                let sym = sema.symtab.lookup_any(&t.name);
+                let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                let exported = sym.map(|s| s.exported).unwrap_or(false);
+                type_decls.push(HirTypeDecl {
+                    name: t.name.clone(),
+                    ty: type_id,
+                    exported,
+                });
+            }
+            Declaration::Const(c) => {
+                let val = sema.symtab.lookup_any(&c.name)
+                    .and_then(|s| match &s.kind {
+                        SymbolKind::Constant(cv) => Some(const_value_to_hir(cv)),
+                        _ => None,
+                    })
+                    .unwrap_or(ConstVal::Integer(0));
+                let type_id = sema.symtab.lookup_any(&c.name)
+                    .map(|s| s.typ).unwrap_or(TY_INTEGER);
+                constants.push(HirConst {
+                    name: SymbolId {
+                        mangled: format!("{}_{}", module_name, c.name),
+                        source_name: c.name.clone(),
+                        module: Some(module_name.clone()),
+                        ty: type_id,
+                        is_var_param: false,
+                        is_open_array: false,
+                    },
+                    value: val,
+                    ty: type_id,
+                });
+            }
+            Declaration::Var(v) => {
+                let type_id = sema.symtab.lookup_any(&v.names[0])
+                    .map(|s| s.typ).unwrap_or(TY_INTEGER);
+                for name in &v.names {
+                    globals.push(HirVar {
+                        name: SymbolId {
+                            mangled: format!("{}_{}", module_name, name),
+                            source_name: name.clone(),
+                            module: Some(module_name.clone()),
+                            ty: type_id,
+                            is_var_param: false,
+                            is_open_array: false,
+                        },
+                        ty: type_id,
+                        exported: false,
+                    });
+                }
+            }
+            _ => {} // Module, Exception — handled elsewhere
         }
     }
 
@@ -122,9 +178,9 @@ pub fn build_module(
         name: module_name,
         source_file: module_loc.file.clone(),
         string_pool: Vec::new(),
-        constants: Vec::new(),
-        types: Vec::new(),
-        globals: Vec::new(),
+        constants,
+        types: type_decls,
+        globals,
         procedures,
         init_body,
         embedded_init_bodies,
