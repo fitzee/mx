@@ -981,6 +981,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     for imp_mod in &all_impl_mods {
         codegen.add_imported_module_no_sema(imp_mod.clone());
     }
+    codegen.populate_typeid_c_names();
 
     // ── LLVM IR backend ──────────────────────────────────────────────
     if opts.emit_llvm {

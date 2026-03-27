@@ -313,7 +313,7 @@ impl super::CodeGen {
     }
 
     /// Map a TypeId to a C type string (for casts).
-    fn type_id_to_c(&self, tid: TypeId) -> String {
+    pub(crate) fn type_id_to_c(&self, tid: TypeId) -> String {
         match tid {
             TY_INTEGER => "int32_t".to_string(),
             TY_CARDINAL => "uint32_t".to_string(),
@@ -327,13 +327,45 @@ impl super::CodeGen {
             TY_LONGCARD => "uint64_t".to_string(),
             TY_WORD => "uint32_t".to_string(),
             TY_BYTE => "uint8_t".to_string(),
+            TY_VOID => "void".to_string(),
             _ => {
-                // Check type registry for pointer/record/enum types
+                // Check TypeId → C name map (populated from HirModule type_decls)
+                if let Some(c_name) = self.typeid_c_names.get(&tid) {
+                    return c_name.clone();
+                }
+                // Resolve aliases and try again
                 let resolved = self.resolve_hir_alias(tid);
+                if resolved != tid {
+                    if let Some(c_name) = self.typeid_c_names.get(&resolved) {
+                        return c_name.clone();
+                    }
+                }
+                // Structural type fallback
                 match self.sema.types.get(resolved) {
                     crate::types::Type::Pointer { .. } => "void *".to_string(),
-                    crate::types::Type::Enumeration { .. } => "int".to_string(),
-                    _ => "int32_t".to_string(), // fallback
+                    crate::types::Type::Enumeration { name, .. } => {
+                        // Check if module-prefixed name exists
+                        if let Some(c_name) = self.typeid_c_names.get(&resolved) {
+                            c_name.clone()
+                        } else {
+                            name.clone()
+                        }
+                    }
+                    crate::types::Type::Array { elem_type, .. } => self.type_id_to_c(*elem_type),
+                    crate::types::Type::OpenArray { elem_type } => self.type_id_to_c(*elem_type),
+                    crate::types::Type::Set { .. } | crate::types::Type::Bitset => "uint32_t".to_string(),
+                    crate::types::Type::Subrange { .. } => "int32_t".to_string(),
+                    crate::types::Type::Ref { .. } | crate::types::Type::RefAny
+                    | crate::types::Type::Object { .. } => "void *".to_string(),
+                    crate::types::Type::ProcedureType { .. } => "void (*)(void)".to_string(),
+                    crate::types::Type::Record { .. } => {
+                        // Records should have been registered — fallback
+                        "int32_t".to_string()
+                    }
+                    crate::types::Type::Complex => "float _Complex".to_string(),
+                    crate::types::Type::LongComplex => "double _Complex".to_string(),
+                    crate::types::Type::Opaque { .. } => "void *".to_string(),
+                    _ => "int32_t".to_string(),
                 }
             }
         }

@@ -173,6 +173,8 @@ pub struct CodeGen {
     embedded_local_vars: HashSet<String>,
     /// All known type names (bare + module-prefixed) for type cast recognition
     known_type_names: HashSet<String>,
+    /// TypeId → C typedef name mapping (populated from HirModule type_decls)
+    pub(crate) typeid_c_names: HashMap<TypeId, String>,
     /// Type names that are aliases for unsigned types (CARDINAL, LONGCARD)
     unsigned_type_aliases: HashSet<String>,
     /// Maps record field names → proc param info for fields with procedure types.
@@ -314,6 +316,7 @@ impl CodeGen {
             embedded_local_procs: HashSet::new(),
             embedded_local_vars: HashSet::new(),
             known_type_names: HashSet::new(),
+            typeid_c_names: HashMap::new(),
             unsigned_type_aliases: HashSet::new(),
             field_proc_params: HashMap::new(),
             type_id_counter: 0,
@@ -473,6 +476,23 @@ impl CodeGen {
     /// Replace sema with a pre-populated one from the driver.
     pub fn set_sema(&mut self, sema: crate::sema::SemanticAnalyzer) {
         self.sema = sema;
+    }
+
+    /// Populate the TypeId → C type name mapping from prebuilt HirModule.
+    /// Must be called after prebuilt_hir is set.
+    pub fn populate_typeid_c_names(&mut self) {
+        let hir = match &self.prebuilt_hir {
+            Some(h) => h.clone(),
+            None => return,
+        };
+        // Main module types
+        for td in &hir.type_decls {
+            if td.type_id != crate::types::TY_VOID {
+                self.typeid_c_names.insert(td.type_id, td.mangled.clone());
+            }
+        }
+        // Embedded module types — skip for now, some TypeIds may conflict
+        // for emb in &hir.embedded_modules { ... }
     }
 
     /// Register .def metadata without running sema (sema already populated by driver).
