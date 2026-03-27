@@ -387,20 +387,16 @@ impl CodeGen {
                 }
             }
         }
-        // From the implementation block — use HIR type_decls via ast_type_node bridge
+        // From the implementation block — record forward decls via TypeId
+        // Only emit for direct Record types. Pointer-to-Record with inline
+        // record body is handled by gen_type_decl; pointer-to-named-record
+        // uses the named record's own forward decl.
         if let Some(ref emb) = hir_emb {
             for td in &emb.type_decls {
-                let cn = self.type_decl_c_name(&td.name);
-                match &td.ast_type_node {
-                    Some(TypeNode::Record { .. }) => {
-                        self.emitln(&format!("typedef struct {} {};", cn, cn));
-                    }
-                    Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
-                        let tag = format!("{}_r", cn);
-                        self.emitln(&format!("typedef struct {} {};", tag, tag));
-                        self.emitln(&format!("typedef {} *{};", tag, cn));
-                    }
-                    _ => {}
+                let resolved = self.resolve_hir_alias(td.type_id);
+                if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
+                    let cn = self.type_decl_c_name(&td.name);
+                    self.emitln(&format!("typedef struct {} {};", cn, cn));
                 }
             }
         } else {
@@ -1096,17 +1092,12 @@ impl CodeGen {
             return;
         };
         for td in &types {
-            let cn = self.type_decl_c_name(&td.name);
-            match &td.ast_type_node {
-                Some(TypeNode::Record { .. }) => {
-                    self.emitln(&format!("typedef struct {} {};", cn, cn));
-                }
-                Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
-                    let tag = format!("{}_r", cn);
-                    self.emitln(&format!("typedef struct {} {};", tag, tag));
-                    self.emitln(&format!("typedef {} *{};", tag, cn));
-                }
-                _ => {}
+            let resolved = self.resolve_hir_alias(td.type_id);
+            // Only forward-declare direct Record types. Pointer-to-Record with
+            // inline record body gets its _r tag from gen_type_decl.
+            if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
+                let cn = self.type_decl_c_name(&td.name);
+                self.emitln(&format!("typedef struct {} {};", cn, cn));
             }
         }
     }
