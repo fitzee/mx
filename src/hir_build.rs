@@ -56,9 +56,30 @@ pub fn build_module(
     let (imported_modules, import_aliases) = extract_imports(module_imports);
 
     let mut procedures = Vec::new();
+    // Legacy fields
     let mut type_decls_legacy = Vec::new();
     let mut constants = Vec::new();
     let mut globals = Vec::new();
+    // New structural fields
+    let mut new_type_decls = Vec::new();
+    let mut new_const_decls = Vec::new();
+    let mut new_global_decls = Vec::new();
+    let mut new_exception_decls = Vec::new();
+
+    // Build HirImport list from extracted imports
+    let hir_imports: Vec<HirImport> = module_imports.iter().map(|imp| {
+        let names = imp.names.iter().map(|n| {
+            HirImportName {
+                name: n.name.clone(),
+                local_name: n.local_name().to_string(),
+            }
+        }).collect();
+        HirImport {
+            module: imp.from_module.clone().unwrap_or_default(),
+            names,
+            is_qualified: imp.from_module.is_none(),
+        }
+    }).collect();
 
     // Collect structural declarations + lower procedures
     for decl in module_decls {
@@ -71,26 +92,39 @@ pub fn build_module(
                 let sym = sema.symtab.lookup_any(&t.name);
                 let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
                 let exported = sym.map(|s| s.exported).unwrap_or(false);
-                type_decls_legacy.push(HirTypeDecl {
+                let td = HirTypeDecl {
                     name: t.name.clone(),
                     mangled: format!("{}_{}", module_name, t.name),
                     type_id,
                     exported,
                     ast_type_node: t.typ.clone(),
-                });
+                };
+                new_type_decls.push(td.clone());
+                type_decls_legacy.push(td);
             }
             Declaration::Const(c) => {
-                let val = sema.symtab.lookup_any(&c.name)
+                let sym = sema.symtab.lookup_any(&c.name);
+                let val = sym
                     .and_then(|s| match &s.kind {
                         SymbolKind::Constant(cv) => Some(const_value_to_hir(cv)),
                         _ => None,
                     })
                     .unwrap_or(ConstVal::Integer(0));
-                let type_id = sema.symtab.lookup_any(&c.name)
-                    .map(|s| s.typ).unwrap_or(TY_INTEGER);
+                let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                let mangled = format!("{}_{}", module_name, c.name);
+                // New format
+                new_const_decls.push(HirConstDecl {
+                    name: c.name.clone(),
+                    mangled: mangled.clone(),
+                    value: val.clone(),
+                    type_id,
+                    exported: sym.map(|s| s.exported).unwrap_or(false),
+                    c_type: String::new(), // populated by backend
+                });
+                // Legacy format
                 constants.push(HirConst {
                     name: SymbolId {
-                        mangled: format!("{}_{}", module_name, c.name),
+                        mangled,
                         source_name: c.name.clone(),
                         module: Some(module_name.clone()),
                         ty: type_id,
@@ -105,9 +139,23 @@ pub fn build_module(
                 let type_id = sema.symtab.lookup_any(&v.names[0])
                     .map(|s| s.typ).unwrap_or(TY_INTEGER);
                 for name in &v.names {
+                    let mangled = format!("{}_{}", module_name, name);
+                    let exported = sema.symtab.lookup_any(name)
+                        .map(|s| s.exported).unwrap_or(false);
+                    // New format
+                    new_global_decls.push(HirGlobalDecl {
+                        name: name.clone(),
+                        mangled: mangled.clone(),
+                        type_id,
+                        exported,
+                        c_type: String::new(),        // populated by backend
+                        c_array_suffix: String::new(), // populated by backend
+                        is_proc_type: false,           // populated by backend
+                    });
+                    // Legacy format
                     globals.push(HirVar {
                         name: SymbolId {
-                            mangled: format!("{}_{}", module_name, name),
+                            mangled,
                             source_name: name.clone(),
                             module: Some(module_name.clone()),
                             ty: type_id,
@@ -115,11 +163,23 @@ pub fn build_module(
                             is_open_array: false,
                         },
                         ty: type_id,
-                        exported: false,
+                        exported,
                     });
                 }
             }
-            _ => {} // Module, Exception — handled elsewhere
+            Declaration::Exception(e) => {
+                let sym = sema.symtab.lookup_any(&e.name);
+                let exc_id = sym.and_then(|s| match &s.kind {
+                    SymbolKind::Constant(ConstValue::Integer(v)) => Some(*v),
+                    _ => None,
+                }).unwrap_or(0);
+                new_exception_decls.push(HirExceptionDecl {
+                    name: e.name.clone(),
+                    mangled: format!("M2_EXC_{}", e.name),
+                    exc_id,
+                });
+            }
+            _ => {} // Module — handled separately
         }
     }
 
@@ -181,17 +241,17 @@ pub fn build_module(
         name: module_name,
         source_file: module_loc.file.clone(),
         string_pool: Vec::new(),
-        // New structural fields (populated)
-        imports: Vec::new(), // TODO: populate from extract_imports
-        type_decls: Vec::new(), // TODO: populate from type_decls
-        const_decls: Vec::new(),
-        global_decls: Vec::new(),
-        exception_decls: Vec::new(),
-        type_descs: Vec::new(),
-        proc_decls: Vec::new(),
-        except_handler: None,
-        finally_handler: None,
-        embedded_modules: Vec::new(),
+        // New structural fields
+        imports: hir_imports,
+        type_decls: new_type_decls,
+        const_decls: new_const_decls,
+        global_decls: new_global_decls,
+        exception_decls: new_exception_decls,
+        type_descs: Vec::new(), // populated by backends for RTTI
+        proc_decls: Vec::new(), // TODO: populate from procedures
+        except_handler: None,   // TODO: populate from AST
+        finally_handler: None,  // TODO: populate from AST
+        embedded_modules: Vec::new(), // TODO: populate from impl_mods
         // Legacy fields (still used by backends)
         constants,
         types: type_decls_legacy,
