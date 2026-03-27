@@ -150,11 +150,16 @@ pub fn build_module(
                 });
             }
             Declaration::Var(v) => {
-                let type_id = sema.symtab.lookup_any(&v.names[0])
+                let module_scope = sema.symtab.lookup_module_scope(&module_name);
+                let var_lookup = |n: &str| -> Option<&crate::symtab::Symbol> {
+                    module_scope.and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, n))
+                        .or_else(|| sema.symtab.lookup_any(n))
+                };
+                let type_id = var_lookup(&v.names[0])
                     .map(|s| s.typ).unwrap_or(TY_INTEGER);
                 for name in &v.names {
                     let mangled = format!("{}_{}", module_name, name);
-                    let exported = sema.symtab.lookup_any(name)
+                    let exported = var_lookup(name)
                         .map(|s| s.exported).unwrap_or(false);
                     // New format
                     new_global_decls.push(HirGlobalDecl {
