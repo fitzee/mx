@@ -287,38 +287,53 @@ impl CodeGen {
     pub(crate) fn gen_embedded_implementation(&mut self, imp: &ImplementationModule) {
         let ctx = self.save_embedded_context();
 
+        // Look up the HirEmbeddedModule for this implementation module
+        let hir_emb = self.prebuilt_hir.as_ref().and_then(|hir| {
+            hir.embedded_modules.iter().find(|e| e.name == imp.name).cloned()
+        });
+
         self.module_name = imp.name.clone();
-        // Each module has its own import scope — start clean to avoid
-        // stale entries from previously-processed embedded modules leaking
-        // enum variant mappings (e.g., "Invalid" → wrong source module).
         self.import_map.clear();
         self.import_alias_map.clear();
-        // Build import map from the def module's imports first (e.g., FROM Gfx IMPORT Renderer),
-        // then overlay with the implementation module's imports.
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
             self.build_import_map(&def_mod.imports);
         }
         self.build_import_map(&imp.imports);
 
-        // Track local procedure and variable names so intra-module refs get module-prefixed
+        // Track local procedure and variable names from HIR
         self.embedded_local_procs.clear();
         self.embedded_local_vars.clear();
-        for decl in &imp.block.decls {
-            match decl {
-                Declaration::Procedure(p) => {
-                    if p.heading.export_c_name.is_none() {
-                        self.embedded_local_procs.insert(p.heading.name.clone());
+        if let Some(ref emb) = hir_emb {
+            for pd in &emb.procedures {
+                if pd.sig.export_c_name.is_none() {
+                    self.embedded_local_procs.insert(pd.sig.name.clone());
+                }
+            }
+            for g in &emb.global_decls {
+                self.embedded_local_vars.insert(g.name.clone());
+            }
+            for c in &emb.const_decls {
+                self.embedded_local_vars.insert(c.name.clone());
+            }
+        } else {
+            // Fallback to AST if no HIR available
+            for decl in &imp.block.decls {
+                match decl {
+                    Declaration::Procedure(p) => {
+                        if p.heading.export_c_name.is_none() {
+                            self.embedded_local_procs.insert(p.heading.name.clone());
+                        }
                     }
-                }
-                Declaration::Var(v) => {
-                    for name in &v.names {
-                        self.embedded_local_vars.insert(name.clone());
+                    Declaration::Var(v) => {
+                        for name in &v.names {
+                            self.embedded_local_vars.insert(name.clone());
+                        }
                     }
+                    Declaration::Const(c) => {
+                        self.embedded_local_vars.insert(c.name.clone());
+                    }
+                    _ => {}
                 }
-                Declaration::Const(c) => {
-                    self.embedded_local_vars.insert(c.name.clone());
-                }
-                _ => {}
             }
         }
 
@@ -343,21 +358,24 @@ impl CodeGen {
                 }
             }
         }
-        for decl in &imp.block.decls {
-            if let Declaration::Type(t) = decl {
-                let prefixed = format!("{}_{}", imp.name, self.mangle(&t.name));
+        if let Some(ref emb) = hir_emb {
+            for td in &emb.type_decls {
+                let prefixed = format!("{}_{}", imp.name, self.mangle(&td.name));
                 self.embedded_enum_types.insert(prefixed);
             }
         }
 
         // Forward declare all record types as structs (to allow pointer-to-struct typedefs)
-        // Must come before any struct definitions so that type references resolve.
 
         // From the definition module:
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            let impl_type_names: HashSet<String> = imp.block.decls.iter()
-                .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-                .collect();
+            let impl_type_names: HashSet<String> = if let Some(ref emb) = hir_emb {
+                emb.type_decls.iter().map(|td| td.name.clone()).collect()
+            } else {
+                imp.block.decls.iter()
+                    .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
+                    .collect()
+            };
             for d in &def_mod.definitions {
                 if let Definition::Type(t) = d {
                     if !impl_type_names.contains(&t.name) {
@@ -369,8 +387,25 @@ impl CodeGen {
                 }
             }
         }
-        // From the implementation block:
-        self.emit_record_forward_decls(&imp.block.decls);
+        // From the implementation block — use HIR type_decls via ast_type_node bridge
+        if let Some(ref emb) = hir_emb {
+            for td in &emb.type_decls {
+                let cn = self.type_decl_c_name(&td.name);
+                match &td.ast_type_node {
+                    Some(TypeNode::Record { .. }) => {
+                        self.emitln(&format!("typedef struct {} {};", cn, cn));
+                    }
+                    Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
+                        let tag = format!("{}_r", cn);
+                        self.emitln(&format!("typedef struct {} {};", tag, tag));
+                        self.emitln(&format!("typedef {} *{};", tag, cn));
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            self.emit_record_forward_decls(&imp.block.decls);
+        }
 
         // Emit type and const declarations from the corresponding definition module,
         // but skip types that are redefined in the implementation module.
@@ -389,9 +424,13 @@ impl CodeGen {
                     _ => {}
                 }
             }
-            let impl_type_names: HashSet<String> = imp.block.decls.iter()
-                .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-                .collect();
+            let impl_type_names: HashSet<String> = if let Some(ref emb) = hir_emb {
+                emb.type_decls.iter().map(|td| td.name.clone()).collect()
+            } else {
+                imp.block.decls.iter()
+                    .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
+                    .collect()
+            };
             for d in &def_mod.definitions {
                 match d {
                     Definition::Type(t) => {
@@ -406,7 +445,9 @@ impl CodeGen {
             }
         }
 
-        // Type, const, and exception declarations
+        // Type, const, and exception declarations from impl block
+        // Still AST-driven — gen_const_decl needs try_eval_const_int + const_int_values
+        // registration for array bounds, and gen_type_decl needs full AST context.
         self.emit_type_const_exception_decls(&imp.block.decls);
         self.generating_for_module = None;
 
@@ -415,54 +456,66 @@ impl CodeGen {
             self.emit_type_descs();
         }
 
-        // Forward declarations for procedures (with module prefix)
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                self.register_proc_params(&p.heading);
-                // Register param info under module-prefixed name too
-                let prefixed_name = format!("{}_{}", imp.name, p.heading.name);
-                if let Some(info) = self.proc_params.get(&p.heading.name).cloned() {
+        // Forward declarations for procedures (with module prefix) from HIR
+        if let Some(ref emb) = hir_emb {
+            for pd in &emb.procedures {
+                self.register_hir_proc_params(&pd.sig);
+                let prefixed_name = format!("{}_{}", imp.name, pd.sig.name);
+                if let Some(info) = self.proc_params.get(&pd.sig.name).cloned() {
                     self.proc_params.insert(prefixed_name, info);
                 }
-                self.emit_indent();
-                let ret_type = if let Some(rt) = &p.heading.return_type {
+                // Emit embedded module prototype with module prefix
+                let ret_type = if let Some(ref rt) = pd.sig.ast_return_type {
                     self.type_to_c(rt)
                 } else {
-                    "void".to_string()
+                    pd.sig.c_return_type.clone()
                 };
-                if let Some(ref ecn) = p.heading.export_c_name {
-                    self.emit(&format!("{} {}", ret_type, ecn));
-                } else if self.multi_tu {
-                    self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
+                let static_prefix = if pd.sig.export_c_name.is_some() || self.multi_tu { "" } else { "static " };
+                let c_name = if let Some(ref ecn) = pd.sig.export_c_name {
+                    ecn.clone()
                 } else {
-                    self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
-                }
-                self.emit("(");
-                if p.heading.params.is_empty() {
+                    format!("{}_{}", imp.name, pd.sig.name)
+                };
+                self.emit_indent();
+                self.emit(&format!("{}{} {}(", static_prefix, ret_type, c_name));
+                if pd.sig.params.is_empty() {
                     self.emit("void");
                 } else {
                     let mut first = true;
-                    for fp in &p.heading.params {
-                        let ctype = self.type_to_c(&fp.typ);
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        for name in &fp.names {
-                            if !first { self.emit(", "); }
-                            first = false;
-                            let c_param = self.mangle(name);
-                            if is_open_array {
-                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                            } else if Self::is_proc_type(&fp.typ) {
-                                let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
+                    for p in &pd.sig.params {
+                        if !first { self.emit(", "); }
+                        first = false;
+                        let c_param = self.mangle(&p.name);
+                        let resolved_type = if let Some(ref tn) = p.ast_type_node {
+                            self.type_to_c(tn)
+                        } else {
+                            p.c_type.clone()
+                        };
+                        if p.is_open_array {
+                            self.emit(&format!("{} *{}, uint32_t {}_high", resolved_type, c_param, c_param));
+                        } else if p.is_proc_type {
+                            if let Some(ref tn) = p.ast_type_node {
+                                let decl = self.proc_type_decl(tn, &c_param, p.is_var);
                                 self.emit(&decl);
-                            } else if fp.is_var {
-                                self.emit(&format!("{} *{}", ctype, c_param));
                             } else {
-                                self.emit(&format!("{} {}", ctype, c_param));
+                                self.emit(&format!("void (*{})(void)", c_param));
                             }
+                        } else if p.is_var {
+                            self.emit(&format!("{} *{}", resolved_type, c_param));
+                        } else {
+                            self.emit(&format!("{} {}", resolved_type, c_param));
                         }
                     }
                 }
                 self.emit(");\n");
+            }
+        } else {
+            for decl in &imp.block.decls {
+                if let Declaration::Procedure(p) = decl {
+                    self.register_proc_params(&p.heading);
+                    self.gen_proc_prototype(&p.heading);
+                    self.emit(";\n");
+                }
             }
         }
 
@@ -502,10 +555,16 @@ impl CodeGen {
             }
         }
 
-        // Variable declarations from implementation module
-        for decl in &imp.block.decls {
-            if let Declaration::Var(v) = decl {
-                self.gen_var_decl(v);
+        // Variable declarations from implementation module via HIR
+        if let Some(ref emb) = hir_emb {
+            for g in &emb.global_decls {
+                self.gen_hir_global_decl(g);
+            }
+        } else {
+            for decl in &imp.block.decls {
+                if let Declaration::Var(v) = decl {
+                    self.gen_var_decl(v);
+                }
             }
         }
 
@@ -621,25 +680,37 @@ impl CodeGen {
             }
         }
 
-        // Module initialization body — use prebuilt HIR if available
-        if let Some(stmts) = &imp.block.body {
+        // Module initialization body from HIR
+        let init_body = if let Some(ref emb) = hir_emb {
+            emb.init_body.clone()
+        } else {
+            self.prebuilt_hir.as_ref().and_then(|hir| {
+                hir.embedded_init_bodies.iter()
+                    .find(|(name, _)| name == &imp.name)
+                    .map(|(_, body)| body.clone())
+            })
+        };
+        if let Some(body) = init_body {
             if self.multi_tu {
                 self.emitln(&format!("void {}_init(void) {{", imp.name));
             } else {
                 self.emitln(&format!("static void {}_init(void) {{", imp.name));
             }
             self.indent += 1;
-            let prebuilt = self.prebuilt_hir.as_ref().and_then(|hir| {
-                hir.embedded_init_bodies.iter()
-                    .find(|(name, _)| name == &imp.name)
-                    .map(|(_, body)| body.clone())
-            });
-            if let Some(body) = prebuilt {
-                for stmt in &body {
-                    self.emit_hir_stmt(stmt);
-                }
+            for stmt in &body {
+                self.emit_hir_stmt(stmt);
             }
             self.indent -= 1;
+            self.emitln("}");
+            self.newline();
+            self.embedded_init_modules.push(imp.name.clone());
+        } else if imp.block.body.is_some() {
+            // Empty init function still needed if AST says there's a body
+            if self.multi_tu {
+                self.emitln(&format!("void {}_init(void) {{", imp.name));
+            } else {
+                self.emitln(&format!("static void {}_init(void) {{", imp.name));
+            }
             self.emitln("}");
             self.newline();
             self.embedded_init_modules.push(imp.name.clone());
