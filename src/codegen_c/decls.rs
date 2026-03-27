@@ -475,6 +475,259 @@ impl CodeGen {
         }
     }
 
+    /// Emit a type declaration from TypeId (no AST bridge needed).
+    /// Handles: Record, Enum, Pointer, Array, ProcedureType, Set, Subrange, Alias, Opaque.
+    pub(crate) fn gen_type_decl_from_id(&mut self, name: &str, type_id: TypeId) {
+        self.known_type_names.insert(name.to_string());
+        if let Some(ref mod_name) = self.generating_for_module {
+            self.known_type_names.insert(format!("{}_{}", mod_name, name));
+        }
+        let c_type_name = self.type_decl_c_name(name);
+        if self.generating_for_module.is_some() {
+            self.embedded_enum_types.insert(c_type_name.clone());
+        }
+        self.typeid_c_names.insert(type_id, c_type_name.clone());
+
+        let resolved = self.resolve_hir_alias(type_id);
+        let ty = self.sema.types.get(resolved).clone();
+        match &ty {
+            crate::types::Type::Record { fields, variants } => {
+                // Collect field metadata for WITH resolution
+                let mut field_names = Vec::new();
+                for f in fields {
+                    field_names.push(f.name.clone());
+                    if !f.type_name.is_empty() {
+                        self.record_field_types.insert(
+                            (name.to_string(), f.name.clone()),
+                            f.type_name.clone(),
+                        );
+                        if let Some(pinfo) = self.proc_type_params.get(&f.type_name).cloned() {
+                            self.field_proc_params.insert(f.name.clone(), pinfo);
+                        }
+                    }
+                }
+                self.record_fields.insert(name.to_string(), field_names);
+                // Emit struct body
+                self.emitln(&format!("struct {} {{", c_type_name));
+                self.indent += 1;
+                for f in fields {
+                    let ctype = self.type_id_to_c(f.typ);
+                    let arr_suffix = self.type_id_array_suffix(f.typ);
+                    if ctype == "char" && !arr_suffix.is_empty() {
+                        self.char_array_fields.insert((name.to_string(), f.name.clone()));
+                    }
+                    if !arr_suffix.is_empty() || matches!(self.sema.types.get(self.resolve_hir_alias(f.typ)), crate::types::Type::Array { .. }) {
+                        self.array_fields.insert((name.to_string(), f.name.clone()));
+                    }
+                    if matches!(self.sema.types.get(self.resolve_hir_alias(f.typ)), crate::types::Type::Pointer { .. }) {
+                        self.pointer_fields.insert(f.name.clone());
+                    }
+                    self.emit_indent();
+                    self.emit(&format!("{} {}{};\n", ctype, f.name, arr_suffix));
+                }
+                if let Some(vi) = variants {
+                    // Variant record — emit tag + union
+                    if let Some(ref tag_name) = vi.tag_name {
+                        self.emit_indent();
+                        let tag_c = self.type_id_to_c(vi.tag_type);
+                        self.emit(&format!("{} {};\n", tag_c, tag_name));
+                    }
+                    self.emitln("union {");
+                    self.indent += 1;
+                    for (i, vc) in vi.variants.iter().enumerate() {
+                        self.emitln("struct {");
+                        self.indent += 1;
+                        for vf in &vc.fields {
+                            let vft = self.type_id_to_c(vf.typ);
+                            let vfs = self.type_id_array_suffix(vf.typ);
+                            self.emit_indent();
+                            self.emit(&format!("{} {}{};\n", vft, vf.name, vfs));
+                            self.variant_field_map.insert(
+                                (name.to_string(), vf.name.clone()), i);
+                            if let Some(fields) = self.record_fields.get_mut(name) {
+                                fields.push(vf.name.clone());
+                            }
+                        }
+                        self.indent -= 1;
+                        self.emitln(&format!("}} _v{};", i));
+                    }
+                    self.indent -= 1;
+                    self.emitln("} _variant;");
+                }
+                self.indent -= 1;
+                self.emitln("};");
+            }
+            crate::types::Type::Enumeration { ref variants, .. } => {
+                self.emit_indent();
+                self.emit("typedef enum { ");
+                let type_name = &c_type_name;
+                for (i, v) in variants.iter().enumerate() {
+                    if i > 0 { self.emit(", "); }
+                    let c_name = format!("{}_{}", type_name, v);
+                    self.emit(&c_name);
+                    if let Some(ref mod_name) = self.generating_for_module {
+                        self.enum_variants.insert(format!("{}_{}", mod_name, v), c_name.clone());
+                    }
+                    if self.generating_for_module.is_none() {
+                        self.enum_variants.insert(v.clone(), c_name);
+                    }
+                }
+                self.emit(&format!(" }} {};\n", type_name));
+                let n = variants.len();
+                self.emitln(&format!("#define m2_min_{} 0", type_name));
+                if n > 0 {
+                    self.emitln(&format!("#define m2_max_{} {}", type_name, n - 1));
+                }
+            }
+            crate::types::Type::Pointer { base } => {
+                let base_id = *base;
+                let base_resolved = self.resolve_hir_alias(base_id);
+                let base_ty = self.sema.types.get(base_resolved).clone();
+                if let crate::types::Type::Record { ref fields, .. } = base_ty {
+                    let fields = fields.clone();
+                    let tag = format!("{}_r", c_type_name);
+                    self.emitln(&format!("typedef struct {} *{};", tag, c_type_name));
+                    self.pointer_base_types.insert(c_type_name.clone(), tag.clone());
+                    self.pointer_base_types.insert(name.to_string(), tag.clone());
+                    let mut field_names = Vec::new();
+                    for f in &fields {
+                        field_names.push(f.name.clone());
+                        if !f.type_name.is_empty() {
+                            self.record_field_types.insert(
+                                (name.to_string(), f.name.clone()), f.type_name.clone());
+                            self.record_field_types.insert(
+                                (tag.clone(), f.name.clone()), f.type_name.clone());
+                        }
+                    }
+                    self.record_fields.insert(name.to_string(), field_names.clone());
+                    self.record_fields.insert(tag.clone(), field_names);
+                    self.emitln(&format!("struct {} {{", tag));
+                    self.indent += 1;
+                    for f in &fields {
+                        let ctype = self.type_id_to_c(f.typ);
+                        let arr_suffix = self.type_id_array_suffix(f.typ);
+                        self.emit_indent();
+                        self.emit(&format!("{} {}{};\n", ctype, f.name, arr_suffix));
+                    }
+                    self.indent -= 1;
+                    self.emitln("};");
+                } else {
+                    let base_c = self.type_id_to_c(base_id);
+                    self.emit_indent();
+                    self.emit(&format!("typedef {} *{};\n", base_c, c_type_name));
+                }
+            }
+            crate::types::Type::Array { elem_type, high, .. } => {
+                if *elem_type == TY_CHAR {
+                    self.char_array_types.insert(name.to_string());
+                    self.char_array_types.insert(c_type_name.clone());
+                }
+                self.array_types.insert(name.to_string());
+                self.array_types.insert(c_type_name.clone());
+                self.array_type_high.insert(name.to_string(), format!("{}", high));
+                self.array_type_high.insert(c_type_name.clone(), format!("{}", high));
+                let ctype = self.type_id_to_c(resolved);
+                let suffix = self.type_id_array_suffix(resolved);
+                self.emit_indent();
+                self.emit(&format!("typedef {} {}{};\n", ctype, c_type_name, suffix));
+            }
+            crate::types::Type::ProcedureType { params, return_type } => {
+                // Register param info
+                let pinfo: Vec<ParamCodegenInfo> = params.iter().enumerate().map(|(i, p)| {
+                    ParamCodegenInfo {
+                        name: format!("_p{}", i),
+                        is_var: p.is_var,
+                        is_open_array: matches!(self.sema.types.get(p.typ), crate::types::Type::OpenArray { .. }),
+                        is_char: p.typ == TY_CHAR,
+                    }
+                }).collect();
+                self.proc_type_params.insert(name.to_string(), pinfo);
+                // Emit typedef
+                self.emit_indent();
+                let ret = match return_type { Some(rt) => self.type_id_to_c(*rt), None => "void".to_string() };
+                self.emit(&format!("typedef {} (*{})(", ret, c_type_name));
+                if params.is_empty() {
+                    self.emit("void");
+                } else {
+                    let mut first = true;
+                    for p in params {
+                        if !first { self.emit(", "); }
+                        first = false;
+                        let pt = self.type_id_to_c(p.typ);
+                        let is_open = matches!(self.sema.types.get(p.typ), crate::types::Type::OpenArray { .. });
+                        if is_open {
+                            self.emit(&format!("{} *, uint32_t", pt));
+                        } else if p.is_var {
+                            self.emit(&format!("{} *", pt));
+                        } else {
+                            self.emit(&pt);
+                        }
+                    }
+                }
+                self.emit(");\n");
+            }
+            crate::types::Type::Set { base } => {
+                let base_id = *base;
+                let base_ty = self.sema.types.get(base_id).clone();
+                if let crate::types::Type::Enumeration { ref variants, .. } = base_ty {
+                    let variants = variants.clone();
+                    let enum_name = format!("{}_enum", c_type_name);
+                    self.emit_indent();
+                    self.emit("typedef enum { ");
+                    for (i, v) in variants.iter().enumerate() {
+                        if i > 0 { self.emit(", "); }
+                        let c_name = format!("{}_{}", c_type_name, v);
+                        self.emit(&c_name);
+                        if let Some(ref mod_name) = self.generating_for_module {
+                            self.enum_variants.insert(format!("{}_{}", mod_name, v), c_name.clone());
+                        }
+                        if self.generating_for_module.is_none() {
+                            self.enum_variants.insert(v.clone(), c_name);
+                        }
+                    }
+                    self.emit(&format!(" }} {};\n", enum_name));
+                    self.emitln(&format!("typedef uint32_t {};", c_type_name));
+                    let n = variants.len();
+                    self.emitln(&format!("#define m2_min_{} 0", c_type_name));
+                    if n > 0 {
+                        self.emitln(&format!("#define m2_max_{} {}", c_type_name, n - 1));
+                    }
+                } else {
+                    self.emit_indent();
+                    self.emit(&format!("typedef uint32_t {};\n", c_type_name));
+                }
+            }
+            crate::types::Type::Subrange { low, high, .. } => {
+                self.emit_indent();
+                self.emit(&format!("typedef int32_t {};\n", c_type_name));
+                self.emitln(&format!("#define m2_min_{} {}", c_type_name, low));
+                self.emitln(&format!("#define m2_max_{} {}", c_type_name, high));
+            }
+            crate::types::Type::Opaque { .. } => {
+                self.emit_indent();
+                self.emit(&format!("typedef void *{};\n", c_type_name));
+            }
+            crate::types::Type::Alias { target, name: alias_name, .. } => {
+                // Track unsigned aliases
+                if *target == TY_CARDINAL || *target == TY_LONGCARD
+                    || self.unsigned_type_aliases.contains(alias_name) {
+                    self.unsigned_type_aliases.insert(name.to_string());
+                    self.unsigned_type_aliases.insert(c_type_name.clone());
+                }
+                let ctype = self.type_id_to_c(*target);
+                self.emit_indent();
+                self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
+            }
+            _ => {
+                // Fallback: typedef via type_id_to_c
+                let ctype = self.type_id_to_c(resolved);
+                self.emit_indent();
+                self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
+            }
+        }
+        self.newline();
+    }
+
     /// Collect field metadata (names, types) for a record's fields and register in tracking maps.
     /// Returns the list of field names. `record_name` is the key used in record_fields/record_field_types.
     pub(crate) fn collect_record_field_metadata(&mut self, fields: &[FieldList], record_name: &str) -> Vec<String> {

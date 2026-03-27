@@ -111,7 +111,6 @@ pub fn build_module(
                     mangled: format!("{}_{}", module_name, t.name),
                     type_id,
                     exported,
-                    ast_type_node: t.typ.clone(),
                 };
                 new_type_decls.push(td.clone());
                 type_decls_legacy.push(td);
@@ -306,8 +305,7 @@ pub fn build_module(
                         mangled: format!("{}_{}", imp.name, t.name),
                         type_id,
                         exported: sym.map(|s| s.exported).unwrap_or(false),
-                        ast_type_node: t.typ.clone(),
-                    });
+                        });
                 }
                 Declaration::Var(v) => {
                     let type_id = emp_lookup(v.names.first().map(|n| n.as_str()).unwrap_or(""))
@@ -2610,7 +2608,6 @@ impl<'a> HirBuilder<'a> {
                     exported: self.symtab.lookup_any(&td.name)
                         .map(|s| s.exported)
                         .unwrap_or(false),
-                    ast_type_node: td.typ.clone(),
                 });
             }
         }

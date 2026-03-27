@@ -420,11 +420,9 @@ pub struct HirImportName {
 pub struct HirTypeDecl {
     pub name: String,
     pub mangled: String,
-    /// Canonical sema TypeId. Legacy alias: `ty`.
+    /// Canonical sema TypeId.
     pub type_id: TypeId,
     pub exported: bool,
-    /// Temporary bridge: AST TypeNode for C-specific emission.
-    pub ast_type_node: Option<crate::ast::TypeNode>,
 }
 
 impl HirTypeDecl {

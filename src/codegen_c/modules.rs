@@ -1115,8 +1115,7 @@ impl CodeGen {
         }
     }
 
-    /// Emit type declarations from prebuilt HirModule.
-    /// Uses ast_type_node bridge for actual C emission.
+    /// Emit type declarations from prebuilt HirModule using TypeId resolution.
     pub(crate) fn emit_hir_type_decls(&mut self) {
         let types = if let Some(ref hir) = self.prebuilt_hir {
             hir.type_decls.clone()
@@ -1124,15 +1123,7 @@ impl CodeGen {
             return;
         };
         for td in &types {
-            if let Some(ref tn) = td.ast_type_node {
-                let synth = crate::ast::TypeDecl {
-                    name: td.name.clone(),
-                    typ: Some(tn.clone()),
-                    loc: crate::errors::SourceLoc::default(),
-                    doc: None,
-                };
-                self.gen_type_decl(&synth);
-            }
+            self.gen_type_decl_from_id(&td.name, td.type_id);
         }
     }
 
