@@ -481,18 +481,20 @@ impl CodeGen {
     /// Populate the TypeId → C type name mapping from prebuilt HirModule.
     /// Must be called after prebuilt_hir is set.
     pub fn populate_typeid_c_names(&mut self) {
-        let hir = match &self.prebuilt_hir {
-            Some(h) => h.clone(),
-            None => return,
-        };
-        // Main module types
-        for td in &hir.type_decls {
-            if td.type_id != crate::types::TY_VOID {
-                self.typeid_c_names.insert(td.type_id, td.mangled.clone());
+        // Collect type mappings without holding a borrow on self
+        let mut entries = Vec::new();
+        if let Some(ref hir) = self.prebuilt_hir {
+            for td in &hir.type_decls {
+                if td.type_id != crate::types::TY_VOID {
+                    entries.push((td.type_id, td.mangled.clone()));
+                }
             }
+            // Embedded module types — disabled pending investigation
+            // for emb in &hir.embedded_modules { ... }
         }
-        // Embedded module types — skip for now, some TypeIds may conflict
-        // for emb in &hir.embedded_modules { ... }
+        for (tid, name) in entries {
+            self.typeid_c_names.insert(tid, name);
+        }
     }
 
     /// Register .def metadata without running sema (sema already populated by driver).

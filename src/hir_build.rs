@@ -263,10 +263,20 @@ pub fn build_module(
         let mut emp_exception_decls = Vec::new();
         let mut emp_proc_decls = Vec::new();
 
+        // Use scoped lookup for this embedded module to avoid TypeId conflicts
+        let emp_scope = sema.symtab.lookup_module_scope(&imp.name);
+        let emp_lookup = |name: &str| -> Option<&crate::symtab::Symbol> {
+            if let Some(scope_id) = emp_scope {
+                sema.symtab.lookup_in_scope(scope_id, name)
+            } else {
+                sema.symtab.lookup_any(name)
+            }
+        };
+
         for decl in &imp.block.decls {
             match decl {
                 Declaration::Const(c) => {
-                    let sym = sema.symtab.lookup_any(&c.name);
+                    let sym = emp_lookup(&c.name);
                     let val = sym
                         .and_then(|s| match &s.kind {
                             SymbolKind::Constant(cv) => Some(const_value_to_hir(cv)),
@@ -285,17 +295,18 @@ pub fn build_module(
                     });
                 }
                 Declaration::Type(t) => {
-                    let type_id = sema.symtab.lookup_any(&t.name).map(|s| s.typ).unwrap_or(TY_VOID);
+                    let sym = emp_lookup(&t.name);
+                    let type_id = sym.map(|s| s.typ).unwrap_or(TY_VOID);
                     emp_type_decls.push(HirTypeDecl {
                         name: t.name.clone(),
                         mangled: format!("{}_{}", imp.name, t.name),
                         type_id,
-                        exported: sema.symtab.lookup_any(&t.name).map(|s| s.exported).unwrap_or(false),
+                        exported: sym.map(|s| s.exported).unwrap_or(false),
                         ast_type_node: t.typ.clone(),
                     });
                 }
                 Declaration::Var(v) => {
-                    let type_id = sema.symtab.lookup_any(v.names.first().map(|n| n.as_str()).unwrap_or(""))
+                    let type_id = emp_lookup(v.names.first().map(|n| n.as_str()).unwrap_or(""))
                         .map(|s| s.typ).unwrap_or(TY_VOID);
                     for name in &v.names {
                         emp_global_decls.push(HirGlobalDecl {
