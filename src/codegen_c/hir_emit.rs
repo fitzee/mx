@@ -342,9 +342,10 @@ impl super::CodeGen {
                 }
                 // Structural type fallback
                 match self.sema.types.get(resolved) {
-                    crate::types::Type::Pointer { .. } => "void *".to_string(),
+                    crate::types::Type::Pointer { base } => {
+                        format!("{} *", self.type_id_to_c(*base))
+                    }
                     crate::types::Type::Enumeration { name, .. } => {
-                        // Check if module-prefixed name exists
                         if let Some(c_name) = self.typeid_c_names.get(&resolved) {
                             c_name.clone()
                         } else {
@@ -357,7 +358,21 @@ impl super::CodeGen {
                     crate::types::Type::Subrange { .. } => "int32_t".to_string(),
                     crate::types::Type::Ref { .. } | crate::types::Type::RefAny
                     | crate::types::Type::Object { .. } => "void *".to_string(),
-                    crate::types::Type::ProcedureType { .. } => "void (*)(void)".to_string(),
+                    crate::types::Type::ProcedureType { params, return_type } => {
+                        let ret = match return_type {
+                            Some(rt) => self.type_id_to_c(*rt),
+                            None => "void".to_string(),
+                        };
+                        let param_strs: Vec<String> = if params.is_empty() {
+                            vec!["void".to_string()]
+                        } else {
+                            params.iter().map(|p| {
+                                let pt = self.type_id_to_c(p.typ);
+                                if p.is_var { format!("{} *", pt) } else { pt }
+                            }).collect()
+                        };
+                        format!("{} (*)({})", ret, param_strs.join(", "))
+                    }
                     crate::types::Type::Record { .. } => {
                         // Records should have been registered — fallback
                         "int32_t".to_string()
@@ -365,8 +380,58 @@ impl super::CodeGen {
                     crate::types::Type::Complex => "float _Complex".to_string(),
                     crate::types::Type::LongComplex => "double _Complex".to_string(),
                     crate::types::Type::Opaque { .. } => "void *".to_string(),
+                    crate::types::Type::StringLit(_) => "const char *".to_string(),
+                    crate::types::Type::Nil => "void *".to_string(),
+                    crate::types::Type::Address => "void *".to_string(),
                     _ => "int32_t".to_string(),
                 }
+            }
+        }
+    }
+
+    /// Compute the C array dimension suffix from a TypeId (e.g., "[256]" or "[32][64]").
+    pub(crate) fn type_id_array_suffix(&self, tid: TypeId) -> String {
+        let resolved = self.resolve_hir_alias(tid);
+        match self.sema.types.get(resolved) {
+            crate::types::Type::Array { elem_type, high, .. } => {
+                let size = format!("[{} + 1]", high);
+                let inner = self.type_id_array_suffix(*elem_type);
+                format!("{}{}", size, inner)
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Generate a C function pointer declaration from TypeId: `RetType (*name)(params)`
+    pub(crate) fn proc_type_decl_from_id(&self, tid: TypeId, name: &str, is_ptr: bool) -> String {
+        let resolved = self.resolve_hir_alias(tid);
+        match self.sema.types.get(resolved) {
+            crate::types::Type::ProcedureType { params, return_type } => {
+                let ret = match return_type {
+                    Some(rt) => self.type_id_to_c(*rt),
+                    None => "void".to_string(),
+                };
+                let star = if is_ptr { "**" } else { "*" };
+                let param_strs: Vec<String> = if params.is_empty() {
+                    vec!["void".to_string()]
+                } else {
+                    params.iter().flat_map(|p| {
+                        let is_open = matches!(self.sema.types.get(p.typ), crate::types::Type::OpenArray { .. });
+                        let pt = self.type_id_to_c(p.typ);
+                        if is_open {
+                            vec![format!("{} *", pt), "uint32_t".to_string()]
+                        } else if p.is_var {
+                            vec![format!("{} *", pt)]
+                        } else {
+                            vec![pt]
+                        }
+                    }).collect()
+                };
+                format!("{} ({}{})({})", ret, star, name, param_strs.join(", "))
+            }
+            _ => {
+                let ctype = self.type_id_to_c(tid);
+                if is_ptr { format!("{} *{}", ctype, name) } else { format!("{} {}", ctype, name) }
             }
         }
     }
@@ -845,7 +910,7 @@ impl super::CodeGen {
     }
 
     /// Resolve alias for HIR type checks.
-    fn resolve_hir_alias(&self, tid: TypeId) -> TypeId {
+    pub(crate) fn resolve_hir_alias(&self, tid: TypeId) -> TypeId {
         let mut id = tid;
         let mut depth = 0;
         loop {
