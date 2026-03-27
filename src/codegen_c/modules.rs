@@ -464,11 +464,10 @@ impl CodeGen {
                 if let Some(info) = self.proc_params.get(&pd.sig.name).cloned() {
                     self.proc_params.insert(prefixed_name, info);
                 }
-                // Emit embedded module prototype with module prefix
-                let ret_type = if let Some(ref rt) = pd.sig.ast_return_type {
-                    self.type_to_c(rt)
-                } else {
-                    pd.sig.c_return_type.clone()
+                // Emit embedded module prototype via TypeId resolver
+                let ret_type = match pd.sig.return_type {
+                    Some(rt) => self.type_id_to_c(rt),
+                    None => "void".to_string(),
                 };
                 let static_prefix = if pd.sig.export_c_name.is_some() || self.multi_tu { "" } else { "static " };
                 let c_name = if let Some(ref ecn) = pd.sig.export_c_name {
@@ -486,24 +485,22 @@ impl CodeGen {
                         if !first { self.emit(", "); }
                         first = false;
                         let c_param = self.mangle(&p.name);
-                        let resolved_type = if let Some(ref tn) = p.ast_type_node {
-                            self.type_to_c(tn)
-                        } else {
-                            p.c_type.clone()
-                        };
+                        let resolved_tid = self.resolve_hir_alias(p.type_id);
+                        let is_proc = p.is_proc_type
+                            || matches!(self.sema.types.get(resolved_tid), crate::types::Type::ProcedureType { .. });
                         if p.is_open_array {
-                            self.emit(&format!("{} *{}, uint32_t {}_high", resolved_type, c_param, c_param));
-                        } else if p.is_proc_type {
-                            if let Some(ref tn) = p.ast_type_node {
-                                let decl = self.proc_type_decl(tn, &c_param, p.is_var);
-                                self.emit(&decl);
-                            } else {
-                                self.emit(&format!("void (*{})(void)", c_param));
-                            }
-                        } else if p.is_var {
-                            self.emit(&format!("{} *{}", resolved_type, c_param));
+                            let c_type = self.type_id_to_c(p.type_id);
+                            self.emit(&format!("{} *{}, uint32_t {}_high", c_type, c_param, c_param));
+                        } else if is_proc {
+                            let decl = self.proc_type_decl_from_id(p.type_id, &c_param, p.is_var);
+                            self.emit(&decl);
                         } else {
-                            self.emit(&format!("{} {}", resolved_type, c_param));
+                            let c_type = self.type_id_to_c(p.type_id);
+                            if p.is_var {
+                                self.emit(&format!("{} *{}", c_type, c_param));
+                            } else {
+                                self.emit(&format!("{} {}", c_type, c_param));
+                            }
                         }
                     }
                 }
@@ -568,48 +565,86 @@ impl CodeGen {
             }
         }
 
-        // Procedure bodies (with module prefix)
+        // Procedure bodies (with module prefix) — prototype via TypeId to match forward decl
         for decl in &imp.block.decls {
             if let Declaration::Procedure(p) = decl {
-                // Generate procedure with module-prefixed name
-                let ret_type = if let Some(rt) = &p.heading.return_type {
-                    self.type_to_c(rt)
-                } else {
-                    "void".to_string()
-                };
-                if let Some(ref ecn) = p.heading.export_c_name {
-                    self.emit(&format!("{} {}", ret_type, ecn));
-                } else if self.multi_tu {
-                    self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
-                } else {
-                    self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
-                }
-                self.emit("(");
-                // Set up var params for the body
-                let mut param_vars = HashMap::new();
-                let mut oa_params = HashSet::new();
-                if p.heading.params.is_empty() {
-                    self.emit("void");
-                } else {
-                    let mut first = true;
-                    for fp in &p.heading.params {
-                        let ctype = self.type_to_c(&fp.typ);
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        for name in &fp.names {
+                let emb_sig = hir_emb.as_ref().and_then(|e| {
+                    e.procedures.iter()
+                        .find(|pd| pd.sig.name == p.heading.name)
+                        .map(|pd| pd.sig.clone())
+                });
+                if let Some(ref sig) = emb_sig {
+                    let static_prefix = if sig.export_c_name.is_some() || self.multi_tu { "" } else { "static " };
+                    let ret_type = match sig.return_type {
+                        Some(rt) => self.type_id_to_c(rt),
+                        None => "void".to_string(),
+                    };
+                    let c_name = if let Some(ref ecn) = sig.export_c_name {
+                        ecn.clone()
+                    } else {
+                        format!("{}_{}", imp.name, sig.name)
+                    };
+                    self.emit(&format!("{}{} {}(", static_prefix, ret_type, c_name));
+                    if sig.params.is_empty() {
+                        self.emit("void");
+                    } else {
+                        let mut first = true;
+                        for sp in &sig.params {
                             if !first { self.emit(", "); }
                             first = false;
-                            let c_param = self.mangle(name);
-                            if is_open_array {
-                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                                oa_params.insert(c_param.clone());
-                            } else if Self::is_proc_type(&fp.typ) {
-                                let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
+                            let c_param = self.mangle(&sp.name);
+                            let resolved_tid = self.resolve_hir_alias(sp.type_id);
+                            let is_proc = sp.is_proc_type
+                                || matches!(self.sema.types.get(resolved_tid), crate::types::Type::ProcedureType { .. });
+                            if sp.is_open_array {
+                                let c_type = self.type_id_to_c(sp.type_id);
+                                self.emit(&format!("{} *{}, uint32_t {}_high", c_type, c_param, c_param));
+                            } else if is_proc {
+                                let decl = self.proc_type_decl_from_id(sp.type_id, &c_param, sp.is_var);
                                 self.emit(&decl);
-                            } else if fp.is_var {
-                                self.emit(&format!("{} *{}", ctype, c_param));
-                                param_vars.insert(name.clone(), true);
                             } else {
-                                self.emit(&format!("{} {}", ctype, c_param));
+                                let c_type = self.type_id_to_c(sp.type_id);
+                                if sp.is_var {
+                                    self.emit(&format!("{} *{}", c_type, c_param));
+                                } else {
+                                    self.emit(&format!("{} {}", c_type, c_param));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to AST prototype
+                    let ret_type = if let Some(rt) = &p.heading.return_type {
+                        self.type_to_c(rt)
+                    } else {
+                        "void".to_string()
+                    };
+                    if let Some(ref ecn) = p.heading.export_c_name {
+                        self.emit(&format!("{} {}", ret_type, ecn));
+                    } else if self.multi_tu {
+                        self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
+                    } else {
+                        self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
+                    }
+                    self.emit("(");
+                    if p.heading.params.is_empty() {
+                        self.emit("void");
+                    } else {
+                        let mut first = true;
+                        for fp in &p.heading.params {
+                            let ctype = self.type_to_c(&fp.typ);
+                            let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                            for name in &fp.names {
+                                if !first { self.emit(", "); }
+                                first = false;
+                                let c_param = self.mangle(name);
+                                if is_open {
+                                    self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
+                                } else if fp.is_var {
+                                    self.emit(&format!("{} *{}", ctype, c_param));
+                                } else {
+                                    self.emit(&format!("{} {}", ctype, c_param));
+                                }
                             }
                         }
                     }
@@ -617,6 +652,17 @@ impl CodeGen {
                 self.emit(") {\n");
                 self.indent += 1;
 
+                // Track VAR and open array params for body codegen (from AST)
+                let mut param_vars = HashMap::new();
+                let mut oa_params = HashSet::new();
+                for fp in &p.heading.params {
+                    let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                    for name in &fp.names {
+                        let c_param = self.mangle(name);
+                        if is_open { oa_params.insert(c_param); }
+                        else if fp.is_var { param_vars.insert(name.clone(), true); }
+                    }
+                }
                 self.var_params.push(param_vars);
                 self.open_array_params.push(oa_params);
                 let saved_var_tracking = self.save_var_tracking();

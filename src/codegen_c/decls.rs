@@ -1105,7 +1105,23 @@ impl CodeGen {
         // ── Generate this procedure ─────────────────────────────────────
         self.newline();
         self.emit_line_directive(&p.loc);
-        self.gen_proc_prototype(&p.heading);
+        // Use HirProcSig (TypeId-based) for prototype to match forward decls
+        let current_module = self.module_name.clone();
+        let hir_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
+                .map(|pd| pd.sig.clone())
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == current_module)
+                    .and_then(|e| e.procedures.iter()
+                        .find(|pd| pd.sig.name == p.heading.name)
+                        .map(|pd| pd.sig.clone())))
+        });
+        if let Some(ref sig) = hir_sig {
+            self.gen_hir_proc_prototype(sig);
+        } else {
+            self.gen_proc_prototype(&p.heading);
+        }
         self.emit(" {\n");
         self.indent += 1;
 
@@ -1367,7 +1383,7 @@ impl CodeGen {
         }
     }
 
-    /// Emit a procedure prototype from HirProcSig.
+    /// Emit a procedure prototype from HirProcSig using pure TypeId resolution.
     pub(crate) fn gen_hir_proc_prototype(&mut self, sig: &crate::hir::HirProcSig) {
         self.emit_indent();
         let c_name = if let Some(ref ecn) = sig.export_c_name {
@@ -1377,19 +1393,16 @@ impl CodeGen {
         } else {
             self.mangle(&sig.name)
         };
-        let ret_type = if let Some(ref rt) = sig.ast_return_type {
-            self.type_to_c(rt)
-        } else {
-            sig.c_return_type.clone()
+        let ret_type = match sig.return_type {
+            Some(rt) => self.type_id_to_c(rt),
+            None => "void".to_string(),
         };
         self.emit(&format!("{} {}(", ret_type, c_name));
 
-        // Check if this proc receives a closure environment
         let env_type = self.closure_env_type.get(&sig.name).cloned();
         let has_env = env_type.is_some();
         if has_env {
-            let et = env_type.unwrap();
-            self.emit(&format!("{} *_env", et));
+            self.emit(&format!("{} *_env", env_type.unwrap()));
         }
 
         if sig.params.is_empty() && !has_env {
@@ -1400,25 +1413,22 @@ impl CodeGen {
                 if !first { self.emit(", "); }
                 first = false;
                 let c_param = self.mangle(&p.name);
-                // Resolve C type: prefer ast_type_node bridge for correct name resolution
-                let resolved_c_type = if let Some(ref tn) = p.ast_type_node {
-                    self.type_to_c(tn)
-                } else {
-                    p.c_type.clone()
-                };
+                let resolved_tid = self.resolve_hir_alias(p.type_id);
+                let is_proc = p.is_proc_type
+                    || matches!(self.sema.types.get(resolved_tid), crate::types::Type::ProcedureType { .. });
                 if p.is_open_array {
-                    self.emit(&format!("{} *{}, uint32_t {}_high", resolved_c_type, c_param, c_param));
-                } else if p.is_proc_type {
-                    if let Some(ref tn) = p.ast_type_node {
-                        let decl = self.proc_type_decl(tn, &c_param, p.is_var);
-                        self.emit(&decl);
-                    } else {
-                        self.emit(&format!("void (*{})(void)", c_param));
-                    }
-                } else if p.is_var {
-                    self.emit(&format!("{} *{}", resolved_c_type, c_param));
+                    let c_type = self.type_id_to_c(p.type_id);
+                    self.emit(&format!("{} *{}, uint32_t {}_high", c_type, c_param, c_param));
+                } else if is_proc {
+                    let decl = self.proc_type_decl_from_id(p.type_id, &c_param, p.is_var);
+                    self.emit(&decl);
                 } else {
-                    self.emit(&format!("{} {}", resolved_c_type, c_param));
+                    let c_type = self.type_id_to_c(p.type_id);
+                    if p.is_var {
+                        self.emit(&format!("{} *{}", c_type, c_param));
+                    } else {
+                        self.emit(&format!("{} {}", c_type, c_param));
+                    }
                 }
             }
         }

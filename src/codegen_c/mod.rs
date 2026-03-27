@@ -482,16 +482,39 @@ impl CodeGen {
     /// Populate the TypeId → C type name mapping from prebuilt HirModule.
     /// Must be called after prebuilt_hir is set.
     pub fn populate_typeid_c_names(&mut self) {
-        // Collect type mappings without holding a borrow on self
         let mut entries = Vec::new();
         if let Some(ref hir) = self.prebuilt_hir {
+            // Main module types
             for td in &hir.type_decls {
                 if td.type_id != crate::types::TY_VOID {
                     entries.push((td.type_id, td.mangled.clone()));
                 }
             }
-            // Embedded module types — disabled pending investigation
-            // for emb in &hir.embedded_modules { ... }
+            // Embedded module types — scoped lookup per module
+            for emb in &hir.embedded_modules {
+                let scope_id = self.sema.symtab.lookup_module_scope(&emb.name);
+                for td in &emb.type_decls {
+                    // Only register non-structural types (records, enums, arrays, aliases)
+                    // Skip pointers/sets/subranges — they resolve structurally and can
+                    // conflict across modules when typedef'd with different names.
+                    let dominated_by_pointer = td.ast_type_node.as_ref()
+                        .map(|tn| matches!(tn,
+                            crate::ast::TypeNode::Pointer { .. }
+                            | crate::ast::TypeNode::Set { .. }
+                            | crate::ast::TypeNode::Subrange { .. }))
+                        .unwrap_or(false);
+                    if dominated_by_pointer { continue; }
+
+                    // Use scoped lookup for correct TypeId
+                    let type_id = scope_id
+                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &td.name))
+                        .map(|s| s.typ)
+                        .unwrap_or(td.type_id);
+                    if type_id != crate::types::TY_VOID {
+                        entries.push((type_id, td.mangled.clone()));
+                    }
+                }
+            }
         }
         for (tid, name) in entries {
             self.typeid_c_names.insert(tid, name);

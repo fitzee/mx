@@ -330,6 +330,15 @@ impl super::CodeGen {
             TY_VOID => "void".to_string(),
             _ => {
                 let resolved = self.resolve_hir_alias(tid);
+                // Check TypeId → C name map first (covers records, enums registered by gen_type_decl)
+                if let Some(c_name) = self.typeid_c_names.get(&tid) {
+                    return c_name.clone();
+                }
+                if resolved != tid {
+                    if let Some(c_name) = self.typeid_c_names.get(&resolved) {
+                        return c_name.clone();
+                    }
+                }
                 // Try to find a source name and resolve it context-dependently
                 // (same logic as named_type_to_c: import_map, embedded_enum_types, etc.)
                 let source_name = self.type_source_name(resolved)
