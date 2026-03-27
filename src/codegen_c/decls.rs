@@ -1089,9 +1089,9 @@ impl CodeGen {
             self.indent += 1;
             self.emitln("/* EXCEPT handler */");
             if let Some(except_stmts) = &p.block.except {
-                for stmt in except_stmts {
-                    self.gen_statement(stmt);
-                }
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(except_stmts);
+                for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
             }
             self.indent -= 1;
             self.emitln("}");

@@ -53,9 +53,9 @@ impl CodeGen {
         if let Some(finally_stmts) = &m.block.finally {
             self.emitln("static void m2_finally_handler(void) {");
             self.indent += 1;
-            for stmt in finally_stmts {
-                self.gen_statement(stmt);
-            }
+            let mut hb = self.make_hir_builder();
+            let hir_stmts = hb.lower_stmts(finally_stmts);
+            for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
             self.indent -= 1;
             self.emitln("}");
             self.newline();
@@ -65,9 +65,9 @@ impl CodeGen {
         if let Some(except_stmts) = &m.block.except {
             self.emitln("static void m2_except_handler(void) {");
             self.indent += 1;
-            for stmt in except_stmts {
-                self.gen_statement(stmt);
-            }
+            let mut hb = self.make_hir_builder();
+            let hir_stmts = hb.lower_stmts(except_stmts);
+            for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
             self.indent -= 1;
             self.emitln("}");
             self.newline();
@@ -96,25 +96,20 @@ impl CodeGen {
             if let Declaration::Module(local_mod) = decl {
                 if let Some(stmts) = &local_mod.block.body {
                     self.emitln(&format!("/* Init local module {} */", local_mod.name));
-                    for stmt in stmts {
-                        self.gen_statement(stmt);
-                    }
+                    let mut hb = self.make_hir_builder();
+                    let hir_stmts = hb.lower_stmts(stmts);
+                    for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
                 }
             }
         }
 
         self.in_module_body = true;
-        // Use prebuilt HIR init body if available
+        // Use prebuilt HIR init body
         let prebuilt_init = self.prebuilt_hir.as_ref()
             .and_then(|hir| hir.init_body.clone());
         if let Some(body) = prebuilt_init {
             for stmt in &body {
                 self.emit_hir_stmt(stmt);
-            }
-        } else if let Some(stmts) = &m.block.body {
-            self.emit_line_directive(&m.block.loc);
-            for stmt in stmts {
-                self.gen_statement(stmt);
             }
         }
         self.in_module_body = false;
@@ -263,8 +258,15 @@ impl CodeGen {
             self.emit_line_directive(&m.block.loc);
             self.emitln(&format!("void {}_init(void) {{", self.mangle(&m.name)));
             self.indent += 1;
-            for stmt in stmts {
-                self.gen_statement(stmt);
+            // Use prebuilt HIR init body
+            let prebuilt = self.prebuilt_hir.as_ref()
+                .and_then(|hir| hir.init_body.clone());
+            if let Some(body) = prebuilt {
+                for stmt in &body { self.emit_hir_stmt(stmt); }
+            } else {
+                let mut hb = self.make_hir_builder();
+                let hir_stmts = hb.lower_stmts(stmts);
+                for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
             }
             self.indent -= 1;
             self.emitln("}");
@@ -589,10 +591,16 @@ impl CodeGen {
                     self.gen_declaration(d);
                 }
 
-                // Body statements
-                if let Some(stmts) = &p.block.body {
-                    for s in stmts {
-                        self.gen_statement(s);
+                // Body statements — use prebuilt HIR
+                let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+                    hir.procedures.iter()
+                        .find(|hp| hp.name.source_name == p.heading.name
+                            && hp.name.module.as_deref() == Some(&self.module_name))
+                        .and_then(|hp| hp.body.clone())
+                });
+                if let Some(body) = prebuilt_body {
+                    for s in &body {
+                        self.emit_hir_stmt(s);
                     }
                 }
 
@@ -623,10 +631,6 @@ impl CodeGen {
             if let Some(body) = prebuilt {
                 for stmt in &body {
                     self.emit_hir_stmt(stmt);
-                }
-            } else {
-                for stmt in stmts {
-                    self.gen_statement(stmt);
                 }
             }
             self.indent -= 1;
