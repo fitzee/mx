@@ -516,7 +516,10 @@ fn build_proc_decl(
     is_nested: bool,
     parent_proc: Option<&str>,
 ) -> HirProcDecl {
-    let sym = sema.symtab.lookup_any(&h.name);
+    // Use scoped lookup for the procedure's module
+    let sym = sema.symtab.lookup_module_scope(module_name)
+        .and_then(|scope| sema.symtab.lookup_in_scope(scope, &h.name))
+        .or_else(|| sema.symtab.lookup_any(&h.name));
     let exported = sym.map(|s| s.exported).unwrap_or(false);
     let return_type_id = h.return_type.as_ref().and_then(|_| {
         sym.and_then(|s| match &s.kind {
