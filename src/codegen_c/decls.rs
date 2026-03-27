@@ -1,29 +1,6 @@
 use super::*;
 
 impl CodeGen {
-    pub(crate) fn gen_forward_decls(&mut self, decls: &[Declaration]) {
-        for decl in decls {
-            match decl {
-                Declaration::Procedure(p) => {
-                    self.register_proc_params(&p.heading);
-                    self.gen_proc_prototype(&p.heading);
-                    self.emit(";\n");
-                }
-                Declaration::Module(m) => {
-                    // Also forward-declare procedures from nested modules
-                    for d in &m.block.decls {
-                        if let Declaration::Procedure(p) = d {
-                            self.register_proc_params(&p.heading);
-                            self.gen_proc_prototype(&p.heading);
-                            self.emit(";\n");
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
     pub(crate) fn register_proc_params(&mut self, h: &ProcHeading) {
         let mut param_info = Vec::new();
         for fp in &h.params {
@@ -1418,9 +1395,9 @@ impl CodeGen {
                         self.emit(&format!("void (*{})(void)", c_param));
                     }
                 } else if p.is_var {
-                    self.emit(&format!("{} *{}", p.c_type, c_param));
+                    self.emit(&format!("{} *{}", resolved_c_type, c_param));
                 } else {
-                    self.emit(&format!("{} {}", p.c_type, c_param));
+                    self.emit(&format!("{} {}", resolved_c_type, c_param));
                 }
             }
         }

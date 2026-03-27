@@ -23,8 +23,8 @@ impl CodeGen {
             self.emit_type_descs();
         }
 
-        // Forward declarations for procedures
-        self.gen_forward_decls(&m.block.decls);
+        // Forward declarations for procedures from HIR
+        self.emit_hir_forward_decls();
         // Also forward-declare procs from nested local modules (still AST-driven)
         for decl in &m.block.decls {
             if let Declaration::Module(local_mod) = decl {
@@ -248,7 +248,7 @@ impl CodeGen {
             self.emit_type_descs();
         }
 
-        self.gen_forward_decls(&m.block.decls);
+        self.emit_hir_forward_decls();
         self.newline();
 
         // Pass 1: Emit global variable declarations from HIR
