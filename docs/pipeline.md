@@ -40,21 +40,23 @@ flowchart TB
         FIXUP --> SEMAFINAL["Final Sema"]
     end
 
-    SEMAFINAL --> BACKEND{"Backend\nselection"}
+    subgraph "Phase 6: Build prebuilt HIR"
+        SEMAFINAL --> HIRMOD["build_module()\nHirModule with structural decls,\nlowered stmts, proc bodies,\nembedded modules"]
+    end
+
+    HIRMOD --> BACKEND{"Backend\nselection"}
 
     subgraph "C Backend"
-        BACKEND -->|"default"| CWALK["AST structure\n(modules, decls)"]
-        CWALK --> HIR_C["HIR Builder\nlower AST → HIR stmts/exprs"]
-        HIR_C --> CEMIT["hir_emit.rs\nHIR → C text"]
+        BACKEND -->|"default"| CHIR["Iterate HirModule\n(types, consts, globals,\nproc fwd decls)"]
+        CHIR --> CEMIT["hir_emit.rs\nHIR → C text"]
         CEMIT --> CCODE[".c file"]
         CCODE --> CC["cc / clang"]
         CC --> BIN_C["Executable"]
     end
 
     subgraph "LLVM Backend"
-        BACKEND -->|"--llvm"| LWALK["AST structure\n(modules, decls)"]
-        LWALK --> HIR_L["HIR Builder\nlower AST → HIR stmts/exprs"]
-        HIR_L --> LEMIT["stmts.rs + exprs.rs\nHIR → LLVM IR"]
+        BACKEND -->|"--llvm"| LHIR["Iterate HirModule\n(consts, exceptions,\nbody/except/finally)"]
+        LHIR --> LEMIT["stmts.rs + exprs.rs\nHIR → LLVM IR"]
         LEMIT --> LLCODE[".ll file"]
         LLCODE --> CLANG["clang"]
         CLANG --> BIN_L["Executable"]
@@ -68,8 +70,9 @@ flowchart TB
         LSPANA --> RESULT["AnalysisResult\n(symtab, types, scope_map,\nref_index, call_graph)"]
     end
 
-    style HIR_C fill:#f9f,stroke:#333
-    style HIR_L fill:#f9f,stroke:#333
+    style HIRMOD fill:#f9f,stroke:#333
+    style CHIR fill:#f9f,stroke:#333
+    style LHIR fill:#f9f,stroke:#333
     style SEMAFINAL fill:#ff9,stroke:#333
     style RESULT fill:#9ff,stroke:#333
 ```
@@ -77,8 +80,10 @@ flowchart TB
 ## Key Points
 
 - **Single sema, shared by both backends.** Sema runs once; both C and LLVM backends read the same symtab, types, and scope chain.
-- **HIR is the single codegen path for all statement/expression bodies.** Each backend constructs an `HirBuilder` per statement, which lowers the AST to `HirStmt`/`HirExpr`. The builder resolves designators, expands open array arguments, desugars WITH, and registers TYPECASE bindings. No AST walking remains in body codegen for either backend.
-- **AST is only used for structural codegen.** Module skeletons, type declarations, procedure prototypes, and variable declarations still use the AST directly — these are structural and don't have resolution issues.
+- **Prebuilt HirModule is the primary data source.** `build_module()` constructs an `HirModule` after sema, containing structural declarations (types, consts, globals, proc signatures, embedded modules) and pre-lowered statement bodies. Both backends iterate from HirModule for structural emission.
+- **HIR is the single codegen path for all statement/expression bodies.** Statement and expression lowering resolves designators, expands open array arguments, desugars WITH, and registers TYPECASE bindings. No AST walking remains in body codegen for either backend.
+- **TypeId → C name resolver.** A `typeid_c_names` map resolves TypeIds to C typedef names, populated incrementally from HirModule type_decls, def-module registration, and gen_type_decl emission. Only non-structural types (records, enums, arrays, aliases) are registered to avoid cross-module pointer-type name conflicts.
+- **AST bridges for C type computation.** Type and variable declarations carry `ast_type_node` bridge fields for C-backend-specific type computation (`type_to_c`, `proc_type_decl`) until a full `TypeId → C type` resolver replaces all AST TypeNode usage.
 - **Phase 3 uses full analysis** (`register_impl_module` → `analyze_implementation_module`) so that procedure parameters, local variables, and constants in embedded modules are all registered in sema's scope chain. The HIR builder depends on this.
 - **Def modules are topologically sorted** (Phase 2) and recursively registered (Phase 3) so that cross-module type references (e.g., `URIRec` from `URI.def` used by `HTTPClient.def`) resolve in the correct order.
 - **M2+ exception handling** uses setjmp/longjmp-based `m2_ExcFrame` stack in both backends. The C backend emits `M2_TRY`/`M2_CATCH` macros; the LLVM backend calls `m2_exc_push`/`setjmp`/`m2_exc_pop` runtime functions directly.
@@ -95,8 +100,8 @@ src/
   sema.rs                Semantic analysis (type checking, scope resolution)
   symtab.rs              Symbol table (scoped, nested)
   types.rs               Type registry
-  hir.rs                 HIR types (Place, Projection, HirExpr, HirStmt)
-  hir_build.rs           HIR builder (designator resolution, call arg expansion)
+  hir.rs                 HIR types (Place, HirExpr, HirStmt, HirModule, HirProcDecl, etc.)
+  hir_build.rs           build_module() + HirBuilder (designator resolution, call expansion)
   analyze.rs             LSP analysis-only path
   build.rs               mx build/run/test subcommands
   codegen_c/

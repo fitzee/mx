@@ -9,10 +9,11 @@ Source (.mod/.def)
   -> Lexer (src/lexer.rs)         tokenize into TokenKind stream
   -> Parser (src/parser.rs)       recursive-descent -> AST
   -> Sema (src/sema.rs)           type checking, scope resolution, symbol table
-  -> HIR (src/hir_build.rs)       designator/expr resolution, open array expansion
+  -> HIR (src/hir_build.rs)       build_module: prebuilt HirModule with structural
+                                  decls, lowered statements, procedure bodies
   -> CodeGen:
-       C backend (src/codegen_c/)       AST+HIR -> C source string
-       LLVM backend (src/codegen_llvm/) AST+HIR -> LLVM IR text (.ll)
+       C backend (src/codegen_c/)       HirModule -> C source string
+       LLVM backend (src/codegen_llvm/) HirModule -> LLVM IR text (.ll)
   -> Driver (src/driver.rs)       invoke cc/clang, link
 ```
 
@@ -52,9 +53,21 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 
 ### HIR (High-level IR)
 
-`src/hir.rs` defines a typed intermediate representation for designators, expressions, and statements. `src/hir_build.rs` provides `HirBuilder`, a shared layer used by both backends to lower AST statements and expressions to HIR. Both backends consume HIR for all statement and expression codegen — no AST walking remains in body codegen.
+`src/hir.rs` defines a typed intermediate representation for designators, expressions, statements, and module structure. `src/hir_build.rs` provides `HirBuilder` for statement/expression lowering and `build_module()` for constructing a complete `HirModule` as a prebuilt compilation phase.
 
-Key responsibilities:
+**Prebuilt HIR** (`build_module`): Runs after sema, before backend codegen. Constructs an `HirModule` containing:
+- Structural declarations: type_decls, const_decls, global_decls, exception_decls, proc_decls
+- Embedded modules: `HirEmbeddedModule` for each imported implementation module, with its own types/consts/globals/procs/init body
+- Module body: init_body, except_handler, finally_handler (all pre-lowered to `Vec<HirStmt>`)
+- Procedure bodies: prebuilt `HirProc` per procedure (body + params, looked up by name during codegen)
+
+Both backends iterate structural declarations from `HirModule` for:
+- C backend: record forward decls, type decls, const decls, global var decls, proc forward decls, except/finally handlers
+- LLVM backend: const decls, exception decls, module body/except/finally
+
+**TypeId → C name resolver**: A `typeid_c_names` map (populated from HirModule type_decls, def-module registration, and gen_type_decl emission) allows `type_id_to_c()` to resolve TypeIds to their C typedef names. Only non-structural types (records, enums, arrays, aliases) are registered to avoid cross-module conflicts with pointer/set types.
+
+Key statement/expression lowering responsibilities:
 - **Statement lowering**: Converts all AST statements (PIM4 and M2+) to `HirStmt`. WITH is desugared to field projections. FOR direction is pre-computed.
 - **Expression lowering**: Converts AST expressions to `HirExpr` with resolved types. Constants are unwrapped to literals (except when projections are present). Single-char strings carry `TY_CHAR` with promotion to `TY_STRING` for open array contexts.
 - **Designator resolution**: Maps AST designators to `Place` (base + projections), using sema's scope chain as the single source of truth for locality and type identity.
@@ -124,7 +137,7 @@ Key design decisions:
 1. **Phase 1 — Parse `.def` files**: Starting from the main module's imports, transitively discover and parse all `.def` files into a `parsed_defs` map.
 2. **Phase 2 — Topological sort and register `.def` files**: Topologically sort the parsed `.def` files by their import dependencies, then register each with sema in order. Pre-registers type names first (as opaques) so cross-module type references resolve during full registration.
 3. **Phase 3 — Load `.mod` files**: For each implementation module, find and parse its `.mod` file. Recursively discover and register any `.def` files referenced by the `.mod` that weren't found in Phase 1 (ensures transitive dependencies like `URI.def` for `HTTPClient.mod` are registered in correct order before the module that needs them). Register implementation module types with sema.
-4. **Phase 4 — Analyze and codegen**: Run sema on the main compilation unit, then invoke the selected backend (C or LLVM) to generate output. Write `.c` or `.ll`, invoke the system compiler, link.
+4. **Phase 4 — Analyze, build HIR, and codegen**: Run sema on the main compilation unit. Build prebuilt `HirModule` via `build_module()` (structural declarations, lowered statements, procedure bodies, embedded modules). Pass the `HirModule` to the selected backend (C or LLVM) which iterates structural declarations from HIR. Write `.c` or `.ll`, invoke the system compiler, link.
 
 The driver handles include path resolution, finding `.def`/`.mod` files, and constructing the compiler command line. The LLVM backend is selected with `--llvm` (full compilation) or `--emit-llvm` (emit `.ll` text only).
 
