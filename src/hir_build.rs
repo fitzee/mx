@@ -533,11 +533,6 @@ fn build_proc_decl(
             }
         })
     });
-    let c_return_type = match return_type_id {
-        Some(tid) => typeid_to_c(tid, &sema.types),
-        None => "void".to_string(),
-    };
-
     // Get param TypeIds from the procedure's symbol
     let proc_param_types: Vec<crate::symtab::ParamInfo> = sym
         .and_then(|s| match &s.kind {
@@ -552,7 +547,6 @@ fn build_proc_decl(
         let is_proc = matches!(fp.typ, ast::TypeNode::ProcedureType { .. })
             || matches!(&fp.typ, ast::TypeNode::Named(qi) if qi.module.is_none() && qi.name == "PROC");
         let is_char = matches!(&fp.typ, ast::TypeNode::Named(qi) if qi.name == "CHAR");
-        let c_type = ast_type_to_c(&fp.typ, &sema.types);
         for name in &fp.names {
             let type_id = proc_param_types.get(pi_idx)
                 .map(|pi| pi.typ)
@@ -565,9 +559,7 @@ fn build_proc_decl(
                 is_open_array: is_open,
                 is_proc_type: is_proc,
                 is_char,
-                c_type: c_type.clone(),
                 needs_high: is_open,
-                ast_type_node: Some(fp.typ.clone()),
             });
         }
     }
@@ -585,8 +577,6 @@ fn build_proc_decl(
             is_nested,
             parent_proc: parent_proc.map(|s| s.to_string()),
             has_closure_env: false,
-            c_return_type,
-            ast_return_type: h.return_type.clone().map(|rt| *rt),
         },
         body: None,
         locals: Vec::new(),
@@ -597,94 +587,6 @@ fn build_proc_decl(
     }
 }
 
-/// Map AST TypeNode to C type string (for prototype emission).
-fn ast_type_to_c(tn: &ast::TypeNode, types: &crate::types::TypeRegistry) -> String {
-    match tn {
-        ast::TypeNode::Named(qi) => {
-            // Check well-known PIM4 types
-            match qi.name.as_str() {
-                "INTEGER" => "int32_t".to_string(),
-                "CARDINAL" => "uint32_t".to_string(),
-                "REAL" => "float".to_string(),
-                "LONGREAL" => "double".to_string(),
-                "BOOLEAN" => "int".to_string(),
-                "CHAR" => "char".to_string(),
-                "BITSET" => "uint32_t".to_string(),
-                "ADDRESS" => "void *".to_string(),
-                "BYTE" => "uint8_t".to_string(),
-                "WORD" => "uint32_t".to_string(),
-                "LONGINT" => "int64_t".to_string(),
-                "LONGCARD" => "uint64_t".to_string(),
-                "PROC" => "void (*)(void)".to_string(),
-                _ => {
-                    // User-defined type — use its name as the C typedef
-                    if let Some(ref module) = qi.module {
-                        format!("{}_{}", module, qi.name)
-                    } else {
-                        qi.name.clone()
-                    }
-                }
-            }
-        }
-        ast::TypeNode::Array { elem_type, .. } | ast::TypeNode::OpenArray { elem_type, .. } => {
-            ast_type_to_c(elem_type, types)
-        }
-        ast::TypeNode::Pointer { base, .. } => format!("{} *", ast_type_to_c(base, types)),
-        ast::TypeNode::Set { .. } => "uint32_t".to_string(),
-        ast::TypeNode::Enumeration { .. } => "int".to_string(),
-        ast::TypeNode::Subrange { .. } => "int32_t".to_string(),
-        ast::TypeNode::Record { .. } => "struct /* record */".to_string(),
-        ast::TypeNode::ProcedureType { .. } => "void (*)(void)".to_string(), // simplified
-        ast::TypeNode::Ref { .. } | ast::TypeNode::RefAny { .. } | ast::TypeNode::Object { .. } => "void *".to_string(),
-    }
-}
-
-/// Map TypeId to C type string.
-fn typeid_to_c(tid: TypeId, types: &crate::types::TypeRegistry) -> String {
-    match tid {
-        TY_INTEGER => "int32_t".to_string(),
-        TY_CARDINAL => "uint32_t".to_string(),
-        TY_REAL => "float".to_string(),
-        TY_LONGREAL => "double".to_string(),
-        TY_BOOLEAN => "int".to_string(),
-        TY_CHAR => "char".to_string(),
-        TY_BITSET => "uint32_t".to_string(),
-        TY_ADDRESS => "void *".to_string(),
-        TY_LONGINT => "int64_t".to_string(),
-        TY_LONGCARD => "uint64_t".to_string(),
-        TY_WORD => "uint32_t".to_string(),
-        TY_BYTE => "uint8_t".to_string(),
-        TY_VOID => "void".to_string(),
-        _ => {
-            let t = types.get(tid);
-            match t {
-                crate::types::Type::Pointer { .. } | crate::types::Type::Address => "void *".to_string(),
-                crate::types::Type::Enumeration { .. } => "int".to_string(),
-                crate::types::Type::Set { .. } | crate::types::Type::Bitset => "uint32_t".to_string(),
-                crate::types::Type::Real => "float".to_string(),
-                crate::types::Type::LongReal => "double".to_string(),
-                crate::types::Type::Array { elem_type, .. } => typeid_to_c(*elem_type, types),
-                crate::types::Type::OpenArray { elem_type, .. } => typeid_to_c(*elem_type, types),
-                crate::types::Type::Alias { target, name, .. } => {
-                    // Named type alias — use the name as the C type
-                    if *target == TY_INTEGER || *target == TY_CARDINAL || *target == TY_REAL
-                        || *target == TY_LONGREAL || *target == TY_BOOLEAN || *target == TY_CHAR
-                        || *target == TY_LONGINT || *target == TY_LONGCARD {
-                        typeid_to_c(*target, types)
-                    } else {
-                        name.clone()
-                    }
-                }
-                crate::types::Type::Record { .. } => {
-                    // Records should be referred to by their typedef name,
-                    // but we don't have that info here — use the type name if available
-                    "int32_t".to_string() // fallback
-                }
-                _ => "int32_t".to_string(), // fallback
-            }
-        }
-    }
-}
 
 /// WITH scope entry: tracks the record variable being opened and which
 /// field names are visible as bare identifiers.

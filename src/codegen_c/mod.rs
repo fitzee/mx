@@ -497,13 +497,22 @@ impl CodeGen {
                     // Only register non-structural types (records, enums, arrays, aliases)
                     // Skip pointers/sets/subranges — they resolve structurally and can
                     // conflict across modules when typedef'd with different names.
-                    let dominated_by_pointer = td.ast_type_node.as_ref()
-                        .map(|tn| matches!(tn,
-                            crate::ast::TypeNode::Pointer { .. }
-                            | crate::ast::TypeNode::Set { .. }
-                            | crate::ast::TypeNode::Subrange { .. }))
-                        .unwrap_or(false);
-                    if dominated_by_pointer { continue; }
+                    // Skip structural types that can conflict across modules
+                    let resolved = {
+                        let mut id = td.type_id;
+                        for _ in 0..50 {
+                            match self.sema.types.get(id) {
+                                crate::types::Type::Alias { target, .. } => id = *target,
+                                _ => break,
+                            }
+                        }
+                        id
+                    };
+                    let is_structural = matches!(self.sema.types.get(resolved),
+                        crate::types::Type::Pointer { .. }
+                        | crate::types::Type::Set { .. }
+                        | crate::types::Type::Subrange { .. });
+                    if is_structural { continue; }
 
                     // Use scoped lookup for correct TypeId
                     let type_id = scope_id

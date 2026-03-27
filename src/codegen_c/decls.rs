@@ -1348,37 +1348,27 @@ impl CodeGen {
             self.export_c_names.insert(sig.name.clone(), ecn.clone());
             self.proc_params.insert(ecn.clone(), param_info);
         }
-        // Register procedure-typed parameters as their own callables
+        // Register procedure-typed parameters as their own callables (via TypeId)
         for p in &sig.params {
-            if let Some(ref tn) = p.ast_type_node {
-                if let TypeNode::Named(qi) = tn {
-                    if let Some(pinfo) = self.proc_type_params.get(&qi.name).cloned() {
-                        self.proc_params.insert(p.name.clone(), pinfo);
-                    }
-                } else if let TypeNode::ProcedureType { params: pt_params, .. } = tn {
-                    let mut pinfo = Vec::new();
-                    for (idx, ptp) in pt_params.iter().enumerate() {
-                        let is_open = matches!(ptp.typ, TypeNode::OpenArray { .. });
-                        let is_ch = matches!(&ptp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
-                        for pname in &ptp.names {
-                            pinfo.push(ParamCodegenInfo {
-                                name: pname.clone(),
-                                is_var: ptp.is_var,
-                                is_open_array: is_open,
-                                is_char: is_ch,
-                            });
-                        }
-                        if ptp.names.is_empty() {
-                            pinfo.push(ParamCodegenInfo {
-                                name: format!("_p{}", idx),
-                                is_var: ptp.is_var,
-                                is_open_array: is_open,
-                                is_char: is_ch,
-                            });
-                        }
-                    }
+            let resolved = self.resolve_hir_alias(p.type_id);
+            // Check if param type is a named alias to a procedure type
+            if let crate::types::Type::Alias { name, .. } = self.sema.types.get(p.type_id) {
+                if let Some(pinfo) = self.proc_type_params.get(name).cloned() {
                     self.proc_params.insert(p.name.clone(), pinfo);
+                    continue;
                 }
+            }
+            // Check if param type is directly a procedure type
+            if let crate::types::Type::ProcedureType { params: pt_params, .. } = self.sema.types.get(resolved) {
+                let pinfo: Vec<ParamCodegenInfo> = pt_params.iter().enumerate().map(|(idx, pt)| {
+                    ParamCodegenInfo {
+                        name: format!("_p{}", idx),
+                        is_var: pt.is_var,
+                        is_open_array: matches!(self.sema.types.get(pt.typ), crate::types::Type::OpenArray { .. }),
+                        is_char: pt.typ == TY_CHAR,
+                    }
+                }).collect();
+                self.proc_params.insert(p.name.clone(), pinfo);
             }
         }
     }

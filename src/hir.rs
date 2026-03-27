@@ -506,10 +506,6 @@ pub struct HirProcSig {
     pub is_nested: bool,
     pub parent_proc: Option<String>,
     pub has_closure_env: bool,
-    /// C return type string (precomputed).
-    pub c_return_type: String,
-    /// Bridge: AST return type node for C-specific name resolution.
-    pub ast_return_type: Option<crate::ast::TypeNode>,
 }
 
 /// Parameter declaration for procedure prototypes.
@@ -521,12 +517,8 @@ pub struct HirParamDecl {
     pub is_open_array: bool,
     pub is_proc_type: bool,
     pub is_char: bool,
-    /// C type string (precomputed).
-    pub c_type: String,
     /// True → emit _high companion in C prototype.
     pub needs_high: bool,
-    /// Bridge for proc-type params (needed for proc_type_decl).
-    pub ast_type_node: Option<crate::ast::TypeNode>,
 }
 
 /// Local variable declaration inside a procedure.
