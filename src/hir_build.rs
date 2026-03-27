@@ -56,7 +56,7 @@ pub fn build_module(
     let (imported_modules, import_aliases) = extract_imports(module_imports);
 
     let mut procedures = Vec::new();
-    let mut type_decls = Vec::new();
+    let mut type_decls_legacy = Vec::new();
     let mut constants = Vec::new();
     let mut globals = Vec::new();
 
@@ -71,10 +71,12 @@ pub fn build_module(
                 let sym = sema.symtab.lookup_any(&t.name);
                 let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
                 let exported = sym.map(|s| s.exported).unwrap_or(false);
-                type_decls.push(HirTypeDecl {
+                type_decls_legacy.push(HirTypeDecl {
                     name: t.name.clone(),
-                    ty: type_id,
+                    mangled: format!("{}_{}", module_name, t.name),
+                    type_id,
                     exported,
+                    ast_type_node: t.typ.clone(),
                 });
             }
             Declaration::Const(c) => {
@@ -174,12 +176,25 @@ pub fn build_module(
         }
     }
 
+    #[allow(deprecated)]
     HirModule {
         name: module_name,
         source_file: module_loc.file.clone(),
         string_pool: Vec::new(),
+        // New structural fields (populated)
+        imports: Vec::new(), // TODO: populate from extract_imports
+        type_decls: Vec::new(), // TODO: populate from type_decls
+        const_decls: Vec::new(),
+        global_decls: Vec::new(),
+        exception_decls: Vec::new(),
+        type_descs: Vec::new(),
+        proc_decls: Vec::new(),
+        except_handler: None,
+        finally_handler: None,
+        embedded_modules: Vec::new(),
+        // Legacy fields (still used by backends)
         constants,
-        types: type_decls,
+        types: type_decls_legacy,
         globals,
         procedures,
         init_body,
@@ -2175,17 +2190,17 @@ impl<'a> HirBuilder<'a> {
         let procedures = self.lower_proc_decls(&m.block.decls);
         let init_body = m.block.body.as_ref().map(|stmts| self.lower_stmts(stmts));
 
+        #[allow(deprecated)]
         HirModule {
             name: m.name.clone(),
             source_file: m.loc.file.clone(),
             string_pool: self.string_pool.clone(),
-            constants,
-            types: type_decls,
-            globals,
-            procedures,
-            init_body,
-            embedded_init_bodies: Vec::new(),
-            externals: Vec::new(),
+            imports: Vec::new(), type_decls: Vec::new(), const_decls: Vec::new(),
+            global_decls: Vec::new(), exception_decls: Vec::new(), type_descs: Vec::new(),
+            proc_decls: Vec::new(), except_handler: None, finally_handler: None,
+            embedded_modules: Vec::new(),
+            constants, types: type_decls, globals, procedures,
+            init_body, embedded_init_bodies: Vec::new(), externals: Vec::new(),
         }
     }
 
@@ -2201,17 +2216,17 @@ impl<'a> HirBuilder<'a> {
         let procedures = self.lower_proc_decls(&m.block.decls);
         let init_body = m.block.body.as_ref().map(|stmts| self.lower_stmts(stmts));
 
+        #[allow(deprecated)]
         HirModule {
             name: m.name.clone(),
             source_file: m.loc.file.clone(),
             string_pool: self.string_pool.clone(),
-            constants,
-            types: type_decls,
-            globals,
-            procedures,
-            init_body,
-            embedded_init_bodies: Vec::new(),
-            externals: Vec::new(),
+            imports: Vec::new(), type_decls: Vec::new(), const_decls: Vec::new(),
+            global_decls: Vec::new(), exception_decls: Vec::new(), type_descs: Vec::new(),
+            proc_decls: Vec::new(), except_handler: None, finally_handler: None,
+            embedded_modules: Vec::new(),
+            constants, types: type_decls, globals, procedures,
+            init_body, embedded_init_bodies: Vec::new(), externals: Vec::new(),
         }
     }
 
@@ -2298,10 +2313,12 @@ impl<'a> HirBuilder<'a> {
                     .unwrap_or(TY_INTEGER);
                 result.push(HirTypeDecl {
                     name: td.name.clone(),
-                    ty: tid,
+                    mangled: format!("{}_{}", self.module_name, td.name),
+                    type_id: tid,
                     exported: self.symtab.lookup_any(&td.name)
                         .map(|s| s.exported)
                         .unwrap_or(false),
+                    ast_type_node: td.typ.clone(),
                 });
             }
         }
