@@ -179,6 +179,27 @@ impl CodeGen {
         }
         // Compute the C name: module-prefixed for embedded modules to avoid collisions
         let c_type_name = self.type_decl_c_name(&t.name);
+        // Register TypeId → C name for non-structural types (records, enums, arrays, aliases).
+        // Skip pointer/set/subrange — these resolve structurally and would cause
+        // cross-module name conflicts when the same structural type (e.g., POINTER TO CHAR)
+        // is typedef'd with different names in different modules.
+        let should_register = match &t.typ {
+            Some(TypeNode::Record { .. }) | Some(TypeNode::Enumeration { .. })
+            | Some(TypeNode::Array { .. }) | Some(TypeNode::Named { .. })
+            | Some(TypeNode::ProcedureType { .. }) | Some(TypeNode::Object { .. }) => true,
+            _ => false,
+        };
+        if should_register {
+            let type_sym = if let Some(ref mod_name) = self.generating_for_module {
+                self.sema.symtab.lookup_module_scope(mod_name)
+                    .and_then(|scope| self.sema.symtab.lookup_in_scope(scope, &t.name))
+            } else {
+                self.sema.symtab.lookup_any(&t.name)
+            };
+            if let Some(sym) = type_sym {
+                self.typeid_c_names.insert(sym.typ, c_type_name.clone());
+            }
+        }
         if let Some(tn) = &t.typ {
             // Register ALL embedded module types (not just enums) for name resolution
             if self.generating_for_module.is_some() {

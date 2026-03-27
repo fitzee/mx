@@ -734,11 +734,12 @@ impl CodeGen {
             named_array_value_params: self.named_array_value_params.clone(),
             proc_params: self.proc_params.clone(),
             var_tracking: self.save_var_tracking(),
+            typeid_c_names: self.typeid_c_names.clone(),
         }
     }
 
     /// Restore state after embedded implementation generation.
-    /// Preserves module-prefixed proc_params that were registered during generation.
+    /// Preserves module-prefixed proc_params and typeid_c_names registered during generation.
     pub(crate) fn restore_embedded_context(&mut self, ctx: EmbeddedModuleContext, embedded_module_name: &str) {
         // Extract module-prefixed proc params before restoring (these must survive)
         let prefix = format!("{}_", embedded_module_name);
@@ -746,6 +747,8 @@ impl CodeGen {
             .filter(|(k, _)| k.starts_with(&prefix))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+        // Preserve all typeid_c_names registered during this module's generation
+        let new_typeid_names = self.typeid_c_names.clone();
 
         self.module_name = ctx.module_name;
         self.import_map = ctx.import_map;
@@ -760,6 +763,8 @@ impl CodeGen {
 
         // Merge back the module-prefixed proc param info
         self.proc_params.extend(module_proc_params);
+        // Merge back typeid_c_names (accumulative — types from all processed modules)
+        self.typeid_c_names = new_typeid_names;
     }
 
     /// Topologically sort implementation modules so dependencies come before dependents.

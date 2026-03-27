@@ -54,6 +54,7 @@ pub(crate) struct EmbeddedModuleContext {
     pub(crate) named_array_value_params: Vec<HashSet<String>>,
     pub(crate) proc_params: HashMap<String, Vec<ParamCodegenInfo>>,
     pub(crate) var_tracking: VarTrackingScope,
+    pub(crate) typeid_c_names: HashMap<TypeId, String>,
 }
 
 pub struct CodeGen {
@@ -502,7 +503,14 @@ impl CodeGen {
         for d in &def.definitions {
             if let Definition::Type(td) = d {
                 self.known_type_names.insert(td.name.clone());
-                self.known_type_names.insert(format!("{}_{}", def.name, td.name));
+                let prefixed = format!("{}_{}", def.name, td.name);
+                self.known_type_names.insert(prefixed.clone());
+                // Register TypeId → C name from def module scope
+                if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&def.name) {
+                    if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, &td.name) {
+                        self.typeid_c_names.insert(sym.typ, prefixed);
+                    }
+                }
             }
         }
         if def.foreign_lang.is_none() {
