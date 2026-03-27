@@ -170,7 +170,6 @@ pub fn build_module(
                         c_type: String::new(),
                         c_array_suffix: String::new(),
                         is_proc_type: false,
-                        ast_type_node: Some(v.typ.clone()),
                     });
                     // Legacy format
                     globals.push(HirVar {
@@ -322,8 +321,7 @@ pub fn build_module(
                             c_type: String::new(),
                             c_array_suffix: String::new(),
                             is_proc_type: false,
-                            ast_type_node: Some(v.typ.clone()),
-                        });
+                            });
                     }
                 }
                 Declaration::Procedure(p) => {
