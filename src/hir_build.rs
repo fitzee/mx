@@ -248,6 +248,109 @@ pub fn build_module(
         hb.lower_stmts(stmts)
     });
 
+    // Build HirEmbeddedModule for each implementation module
+    let mut new_embedded_modules = Vec::new();
+    for imp in impl_mods {
+        let (imp_modules, imp_aliases) = extract_imports(&imp.imports);
+        let mut merged_modules = imported_modules.clone();
+        merged_modules.extend(imp_modules.clone());
+        let mut merged_aliases = import_aliases.clone();
+        merged_aliases.extend(imp_aliases.clone());
+
+        let mut emp_const_decls = Vec::new();
+        let mut emp_type_decls = Vec::new();
+        let mut emp_global_decls = Vec::new();
+        let mut emp_exception_decls = Vec::new();
+        let mut emp_proc_decls = Vec::new();
+
+        for decl in &imp.block.decls {
+            match decl {
+                Declaration::Const(c) => {
+                    let sym = sema.symtab.lookup_any(&c.name);
+                    let val = sym
+                        .and_then(|s| match &s.kind {
+                            SymbolKind::Constant(cv) => Some(const_value_to_hir(cv)),
+                            _ => None,
+                        })
+                        .unwrap_or(ConstVal::Integer(0));
+                    let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                    let exported = sym.map(|s| s.exported).unwrap_or(false);
+                    emp_const_decls.push(HirConstDecl {
+                        name: c.name.clone(),
+                        mangled: format!("{}_{}", imp.name, c.name),
+                        value: val.clone(),
+                        type_id,
+                        exported,
+                        c_type: const_val_c_type(&val),
+                    });
+                }
+                Declaration::Type(t) => {
+                    let type_id = sema.symtab.lookup_any(&t.name).map(|s| s.typ).unwrap_or(TY_VOID);
+                    emp_type_decls.push(HirTypeDecl {
+                        name: t.name.clone(),
+                        mangled: format!("{}_{}", imp.name, t.name),
+                        type_id,
+                        exported: sema.symtab.lookup_any(&t.name).map(|s| s.exported).unwrap_or(false),
+                        ast_type_node: t.typ.clone(),
+                    });
+                }
+                Declaration::Var(v) => {
+                    let type_id = sema.symtab.lookup_any(v.names.first().map(|n| n.as_str()).unwrap_or(""))
+                        .map(|s| s.typ).unwrap_or(TY_VOID);
+                    for name in &v.names {
+                        emp_global_decls.push(HirGlobalDecl {
+                            name: name.clone(),
+                            mangled: format!("{}_{}", imp.name, name),
+                            type_id,
+                            exported: false,
+                            c_type: String::new(),
+                            c_array_suffix: String::new(),
+                            is_proc_type: false,
+                            ast_type_node: Some(v.typ.clone()),
+                        });
+                    }
+                }
+                Declaration::Procedure(p) => {
+                    emp_proc_decls.push(build_proc_decl(&p.heading, &imp.name, sema, false, None));
+                }
+                _ => {}
+            }
+        }
+
+        // Also collect exception decls from AST
+        if let Some(def_mod) = sema.symtab.lookup_any(&imp.name).and_then(|_| None::<()>) {
+            // Exceptions come from definition module — handled separately
+            let _ = def_mod;
+        }
+
+        let emp_init_body = imp.block.body.as_ref().map(|stmts| {
+            let mut hb = HirBuilder::new(
+                &sema.types, &sema.symtab, &imp.name, &sema.foreign_modules,
+            );
+            hb.set_imported_modules(merged_modules.clone());
+            hb.set_import_alias_map(merged_aliases.clone());
+            hb.lower_stmts(stmts)
+        });
+
+        let is_foreign = sema.foreign_modules.contains(&imp.name);
+
+        new_embedded_modules.push(HirEmbeddedModule {
+            name: imp.name.clone(),
+            is_foreign,
+            imports: extract_imports(&imp.imports).0.into_iter().map(|m| HirImport {
+                module: m,
+                names: Vec::new(),
+                is_qualified: false,
+            }).collect(),
+            type_decls: emp_type_decls,
+            const_decls: emp_const_decls,
+            global_decls: emp_global_decls,
+            exception_decls: emp_exception_decls,
+            procedures: emp_proc_decls,
+            init_body: emp_init_body,
+        });
+    }
+
     // Lower embedded module init bodies
     let mut embedded_init_bodies = Vec::new();
     for imp in impl_mods {
@@ -286,7 +389,7 @@ pub fn build_module(
         proc_decls: new_proc_decls,
         except_handler,
         finally_handler,
-        embedded_modules: Vec::new(), // TODO: populate from impl_mods
+        embedded_modules: new_embedded_modules,
         // Legacy fields (still used by backends)
         constants,
         types: type_decls_legacy,
