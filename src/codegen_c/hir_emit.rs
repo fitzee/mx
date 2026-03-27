@@ -329,27 +329,27 @@ impl super::CodeGen {
             TY_BYTE => "uint8_t".to_string(),
             TY_VOID => "void".to_string(),
             _ => {
-                // Check TypeId → C name map (populated from HirModule type_decls)
-                if let Some(c_name) = self.typeid_c_names.get(&tid) {
-                    return c_name.clone();
-                }
-                // Resolve aliases and try again
                 let resolved = self.resolve_hir_alias(tid);
-                if resolved != tid {
-                    if let Some(c_name) = self.typeid_c_names.get(&resolved) {
-                        return c_name.clone();
-                    }
+                // Try to find a source name and resolve it context-dependently
+                // (same logic as named_type_to_c: import_map, embedded_enum_types, etc.)
+                let source_name = self.type_source_name(resolved)
+                    .or_else(|| self.type_source_name(tid));
+                if let Some(name) = source_name {
+                    let qi = crate::ast::QualIdent {
+                        name, module: None,
+                        loc: crate::errors::SourceLoc::default(),
+                    };
+                    return self.named_type_to_c(&qi);
                 }
-                // Structural type fallback
+                // Structural type fallback (no named source — use structure)
                 match self.sema.types.get(resolved) {
                     crate::types::Type::Pointer { base } => {
-                        format!("{} *", self.type_id_to_c(*base))
-                    }
-                    crate::types::Type::Enumeration { name, .. } => {
-                        if let Some(c_name) = self.typeid_c_names.get(&resolved) {
-                            c_name.clone()
+                        // If base is a proc type, can't just append " *" — use void *
+                        if matches!(self.sema.types.get(self.resolve_hir_alias(*base)),
+                            crate::types::Type::ProcedureType { .. }) {
+                            "void *".to_string()
                         } else {
-                            name.clone()
+                            format!("{} *", self.type_id_to_c(*base))
                         }
                     }
                     crate::types::Type::Array { elem_type, .. } => self.type_id_to_c(*elem_type),
@@ -373,10 +373,7 @@ impl super::CodeGen {
                         };
                         format!("{} (*)({})", ret, param_strs.join(", "))
                     }
-                    crate::types::Type::Record { .. } => {
-                        // Records should have been registered — fallback
-                        "int32_t".to_string()
-                    }
+                    crate::types::Type::Record { .. } => "int32_t".to_string(),
                     crate::types::Type::Complex => "float _Complex".to_string(),
                     crate::types::Type::LongComplex => "double _Complex".to_string(),
                     crate::types::Type::Opaque { .. } => "void *".to_string(),
@@ -910,6 +907,19 @@ impl super::CodeGen {
     }
 
     /// Resolve alias for HIR type checks.
+    /// Extract the M2 source name for a TypeId (for context-dependent C name resolution).
+    fn type_source_name(&self, tid: TypeId) -> Option<String> {
+        match self.sema.types.get(tid) {
+            crate::types::Type::Alias { name, .. } => Some(name.clone()),
+            crate::types::Type::Enumeration { name, .. } => Some(name.clone()),
+            crate::types::Type::Opaque { name, .. } => Some(name.clone()),
+            crate::types::Type::Exception { name, .. } => Some(name.clone()),
+            crate::types::Type::Object { name, .. } => Some(name.clone()),
+            // Record/Array/Pointer/Set etc. are structural — no source name
+            _ => None,
+        }
+    }
+
     pub(crate) fn resolve_hir_alias(&self, tid: TypeId) -> TypeId {
         let mut id = tid;
         let mut depth = 0;
