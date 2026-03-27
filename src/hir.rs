@@ -358,6 +358,8 @@ pub struct HirModule {
     pub procedures: Vec<HirProc>,
     /// Module initialization body (the main block's statements).
     pub init_body: Option<Vec<HirStmt>>,
+    /// Embedded module init bodies (module_name → lowered statements).
+    pub embedded_init_bodies: Vec<(String, Vec<HirStmt>)>,
     /// External declarations from imported modules.
     pub externals: Vec<HirExternal>,
 }

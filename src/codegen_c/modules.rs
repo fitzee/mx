@@ -104,7 +104,14 @@ impl CodeGen {
         }
 
         self.in_module_body = true;
-        if let Some(stmts) = &m.block.body {
+        // Use prebuilt HIR init body if available
+        let prebuilt_init = self.prebuilt_hir.as_ref()
+            .and_then(|hir| hir.init_body.clone());
+        if let Some(body) = prebuilt_init {
+            for stmt in &body {
+                self.emit_hir_stmt(stmt);
+            }
+        } else if let Some(stmts) = &m.block.body {
             self.emit_line_directive(&m.block.loc);
             for stmt in stmts {
                 self.gen_statement(stmt);
@@ -600,7 +607,7 @@ impl CodeGen {
             }
         }
 
-        // Module initialization body
+        // Module initialization body — use prebuilt HIR if available
         if let Some(stmts) = &imp.block.body {
             if self.multi_tu {
                 self.emitln(&format!("void {}_init(void) {{", imp.name));
@@ -608,8 +615,19 @@ impl CodeGen {
                 self.emitln(&format!("static void {}_init(void) {{", imp.name));
             }
             self.indent += 1;
-            for stmt in stmts {
-                self.gen_statement(stmt);
+            let prebuilt = self.prebuilt_hir.as_ref().and_then(|hir| {
+                hir.embedded_init_bodies.iter()
+                    .find(|(name, _)| name == &imp.name)
+                    .map(|(_, body)| body.clone())
+            });
+            if let Some(body) = prebuilt {
+                for stmt in &body {
+                    self.emit_hir_stmt(stmt);
+                }
+            } else {
+                for stmt in stmts {
+                    self.gen_statement(stmt);
+                }
             }
             self.indent -= 1;
             self.emitln("}");

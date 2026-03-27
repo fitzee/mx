@@ -95,16 +95,40 @@ pub fn build_module(
         hb.lower_stmts(stmts)
     });
 
+    // Lower embedded module init bodies
+    let mut embedded_init_bodies = Vec::new();
+    for imp in impl_mods {
+        if let Some(stmts) = &imp.block.body {
+            let (imp_modules, imp_aliases) = extract_imports(&imp.imports);
+            let mut merged_modules = imported_modules.clone();
+            merged_modules.extend(imp_modules);
+            let mut merged_aliases = import_aliases.clone();
+            merged_aliases.extend(imp_aliases);
+
+            let mut hb = HirBuilder::new(
+                &sema.types,
+                &sema.symtab,
+                &imp.name,
+                &sema.foreign_modules,
+            );
+            hb.set_imported_modules(merged_modules);
+            hb.set_import_alias_map(merged_aliases);
+            let body = hb.lower_stmts(stmts);
+            embedded_init_bodies.push((imp.name.clone(), body));
+        }
+    }
+
     HirModule {
         name: module_name,
         source_file: module_loc.file.clone(),
         string_pool: Vec::new(),
-        constants: Vec::new(),   // populated by backends from sema
-        types: Vec::new(),       // populated by backends from sema
-        globals: Vec::new(),     // populated by backends from sema
+        constants: Vec::new(),
+        types: Vec::new(),
+        globals: Vec::new(),
         procedures,
         init_body,
-        externals: Vec::new(),   // populated by backends from sema
+        embedded_init_bodies,
+        externals: Vec::new(),
     }
 }
 
@@ -2102,7 +2126,8 @@ impl<'a> HirBuilder<'a> {
             globals,
             procedures,
             init_body,
-            externals: Vec::new(), // populated from def modules by caller
+            embedded_init_bodies: Vec::new(),
+            externals: Vec::new(),
         }
     }
 
@@ -2127,6 +2152,7 @@ impl<'a> HirBuilder<'a> {
             globals,
             procedures,
             init_body,
+            embedded_init_bodies: Vec::new(),
             externals: Vec::new(),
         }
     }
