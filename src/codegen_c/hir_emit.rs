@@ -123,8 +123,13 @@ impl super::CodeGen {
             }
 
             HirExprKind::BinaryOp { op, left, right } => {
-                let l = self.hir_expr_to_string(left);
-                let r = self.hir_expr_to_string(right);
+                // For comparisons, coerce single-char strings to scalar
+                let is_cmp = matches!(op, BinaryOp::Eq | BinaryOp::Ne
+                    | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge);
+                let l = if is_cmp { self.hir_expr_to_scalar_string(left) }
+                        else { self.hir_expr_to_string(left) };
+                let r = if is_cmp { self.hir_expr_to_scalar_string(right) }
+                        else { self.hir_expr_to_string(right) };
                 self.emit_binary_op_c(op, &l, &r, left, right)
             }
 
@@ -520,10 +525,8 @@ impl super::CodeGen {
                 self.emit_indent();
                 if let Some(step_expr) = step {
                     let step_s = self.hir_expr_to_string(step_expr);
-                    match direction {
-                        ForDirection::Up => self.emit(&format!("{} += {};\n", var_c, step_s)),
-                        ForDirection::Down => self.emit(&format!("{} -= {};\n", var_c, step_s)),
-                    }
+                    // Always += : step is positive for Up, negative for Down
+                    self.emit(&format!("{} += {};\n", var_c, step_s));
                 } else {
                     match direction {
                         ForDirection::Up => self.emit(&format!("({})++;\n", var_c)),
