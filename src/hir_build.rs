@@ -2019,6 +2019,7 @@ impl<'a> HirBuilder<'a> {
                 // Bare field names inside the body become Place projections.
                 let var_name = &desig.ident.name;
                 let desig_tid = self.get_var_type(var_name)
+                    .or_else(|| self.scope_lookup(var_name).map(|s| s.typ))
                     .or_else(|| self.symtab.lookup_any(var_name).map(|s| s.typ))
                     .unwrap_or(TY_ERROR);
                 self.push_with(var_name, desig_tid);
@@ -2128,6 +2129,7 @@ impl<'a> HirBuilder<'a> {
                 // WITH elimination: push scope, lower body inline, pop scope
                 let var_name = &desig.ident.name;
                 let desig_tid = self.get_var_type(var_name)
+                    .or_else(|| self.scope_lookup(var_name).map(|s| s.typ))
                     .or_else(|| self.symtab.lookup_any(var_name).map(|s| s.typ))
                     .unwrap_or(TY_ERROR);
                 self.push_with(var_name, desig_tid);
