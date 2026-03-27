@@ -59,25 +59,23 @@ impl CodeGen {
             }
         }
 
-        // ISO Modula-2: generate FINALLY handler if present
-        if let Some(finally_stmts) = &m.block.finally {
+        // ISO Modula-2: generate FINALLY handler from prebuilt HIR
+        let finally_body = self.prebuilt_hir.as_ref().and_then(|h| h.finally_handler.clone());
+        if let Some(stmts) = finally_body {
             self.emitln("static void m2_finally_handler(void) {");
             self.indent += 1;
-            let mut hb = self.make_hir_builder();
-            let hir_stmts = hb.lower_stmts(finally_stmts);
-            for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
+            for stmt in &stmts { self.emit_hir_stmt(stmt); }
             self.indent -= 1;
             self.emitln("}");
             self.newline();
         }
 
-        // ISO Modula-2: generate EXCEPT handler if present
-        if let Some(except_stmts) = &m.block.except {
+        // ISO Modula-2: generate EXCEPT handler from prebuilt HIR
+        let except_body = self.prebuilt_hir.as_ref().and_then(|h| h.except_handler.clone());
+        if let Some(stmts) = except_body {
             self.emitln("static void m2_except_handler(void) {");
             self.indent += 1;
-            let mut hb = self.make_hir_builder();
-            let hir_stmts = hb.lower_stmts(except_stmts);
-            for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
+            for stmt in &stmts { self.emit_hir_stmt(stmt); }
             self.indent -= 1;
             self.emitln("}");
             self.newline();

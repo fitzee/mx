@@ -293,6 +293,79 @@ impl LLVMCodeGen {
         }
     }
 
+    /// Emit constant declarations from prebuilt HirModule.
+    pub(crate) fn gen_hir_const_decls(&mut self) {
+        let consts = if let Some(ref hir) = self.prebuilt_hir {
+            hir.const_decls.clone()
+        } else {
+            return;
+        };
+        use crate::hir::ConstVal;
+        for c in &consts {
+            match &c.value {
+                ConstVal::Integer(v) | ConstVal::EnumVariant(v) => {
+                    self.const_values.insert(c.name.clone(), *v);
+                    self.const_values.insert(self.mangle(&c.name), *v);
+                }
+                ConstVal::Boolean(b) => {
+                    let v = if *b { 1i64 } else { 0 };
+                    self.const_values.insert(c.name.clone(), v);
+                    self.const_values.insert(self.mangle(&c.name), v);
+                }
+                ConstVal::Char(ch) => {
+                    self.const_values.insert(c.name.clone(), *ch as i64);
+                    self.const_values.insert(self.mangle(&c.name), *ch as i64);
+                }
+                ConstVal::String(s) => {
+                    let (str_name, _) = self.intern_string(s);
+                    let mangled = self.mangle(&c.name);
+                    let global_name = format!("@{}", mangled);
+                    self.emit_preambleln(&format!("{} = global ptr {}", global_name, str_name));
+                    self.globals.insert(c.name.clone(), (global_name.clone(), "ptr".to_string()));
+                    self.globals.insert(mangled, (global_name, "ptr".to_string()));
+                    self.string_const_lengths.insert(c.name.clone(), s.len());
+                    if s.len() == 1 {
+                        self.const_values.insert(c.name.clone(), s.as_bytes()[0] as i64);
+                        self.const_values.insert(self.mangle(&c.name), s.as_bytes()[0] as i64);
+                    }
+                }
+                ConstVal::Real(v) => {
+                    let mangled = self.mangle(&c.name);
+                    let global_name = format!("@{}", mangled);
+                    let bits = v.to_bits();
+                    self.emit_preambleln(&format!("{} = global double 0x{:016X}", global_name, bits));
+                    self.globals.insert(c.name.clone(), (global_name.clone(), "double".to_string()));
+                    self.globals.insert(mangled, (global_name, "double".to_string()));
+                }
+                ConstVal::Set(bits) => {
+                    self.const_values.insert(c.name.clone(), *bits as i64);
+                    self.const_values.insert(self.mangle(&c.name), *bits as i64);
+                }
+                ConstVal::Nil => {
+                    self.const_values.insert(c.name.clone(), 0);
+                    self.const_values.insert(self.mangle(&c.name), 0);
+                }
+            }
+        }
+    }
+
+    /// Emit exception declarations from prebuilt HirModule.
+    pub(crate) fn gen_hir_exception_decls(&mut self) {
+        let exceptions = if let Some(ref hir) = self.prebuilt_hir {
+            hir.exception_decls.clone()
+        } else {
+            return;
+        };
+        for e in &exceptions {
+            self.const_values.insert(e.name.clone(), e.exc_id);
+            self.const_values.insert(e.mangled.clone(), e.exc_id);
+            let global_name = format!("@{}", e.mangled);
+            self.emit_preambleln(&format!("{} = global i32 {}", global_name, e.exc_id));
+            self.globals.insert(e.name.clone(), (global_name.clone(), "i32".to_string()));
+            self.globals.insert(e.mangled.clone(), (global_name, "i32".to_string()));
+        }
+    }
+
     pub(crate) fn gen_var_decls_global(&mut self, decls: &[Declaration]) {
         for decl in decls {
             if let Declaration::Var(v) = decl {

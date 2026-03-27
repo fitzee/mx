@@ -93,9 +93,9 @@ impl LLVMCodeGen {
             }
         }
 
-        // Global declarations
-        self.gen_const_decls(&m.block.decls);
-        self.gen_exception_decls(&m.block.decls);
+        // Global declarations from prebuilt HIR
+        self.gen_hir_const_decls();
+        self.gen_hir_exception_decls();
         self.gen_type_decls(&m.block.decls);
         self.gen_var_decls_global(&m.block.decls);
 
@@ -162,13 +162,13 @@ impl LLVMCodeGen {
             self.emitln(&format!("  call void @{}_init()", mod_name));
         }
 
-        // Module body (with ISO EXCEPT/FINALLY support)
-        let has_except = m.block.except.is_some();
-        let has_finally = m.block.finally.is_some();
+        // Module body (with ISO EXCEPT/FINALLY support) from prebuilt HIR
+        let hir_init = self.prebuilt_hir.as_ref().and_then(|h| h.init_body.clone());
+        let hir_except = self.prebuilt_hir.as_ref().and_then(|h| h.except_handler.clone());
+        let hir_finally = self.prebuilt_hir.as_ref().and_then(|h| h.finally_handler.clone());
 
-        if has_except || has_finally {
+        if hir_except.is_some() || hir_finally.is_some() {
             self.declare_exc_runtime();
-            // Wrap body in SjLj guard
             let frame = self.next_tmp();
             self.emitln(&format!("  {} = alloca [256 x i8]", frame));
             self.emitln(&format!("  call void @m2_exc_push(ptr {})", frame));
@@ -183,10 +183,8 @@ impl LLVMCodeGen {
 
             self.emitln(&format!("{}:", body_label));
             self.in_sjlj_context = true;
-            if let Some(stmts) = &m.block.body {
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(stmts);
-                self.gen_hir_statements(&hir_stmts);
+            if let Some(ref stmts) = hir_init {
+                self.gen_hir_statements(stmts);
             }
             self.in_sjlj_context = false;
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
@@ -195,25 +193,18 @@ impl LLVMCodeGen {
 
             self.emitln(&format!("{}:", except_label));
             self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
-            if let Some(except_stmts) = &m.block.except {
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(except_stmts);
-                self.gen_hir_statements(&hir_stmts);
+            if let Some(ref stmts) = hir_except {
+                self.gen_hir_statements(stmts);
             }
             self.emitln(&format!("  br label %{}", end_label));
 
             self.emitln(&format!("{}:", end_label));
-            if let Some(finally_stmts) = &m.block.finally {
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(finally_stmts);
-                self.gen_hir_statements(&hir_stmts);
+            if let Some(ref stmts) = hir_finally {
+                self.gen_hir_statements(stmts);
             }
         } else {
-            if let Some(stmts) = &m.block.body {
-                // Lower AST statements to HIR, then generate through HIR path
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(stmts);
-                self.gen_hir_statements(&hir_stmts);
+            if let Some(ref stmts) = hir_init {
+                self.gen_hir_statements(stmts);
             }
         }
 
@@ -254,7 +245,7 @@ impl LLVMCodeGen {
         }
 
         self.gen_type_decls(&m.block.decls);
-        self.gen_const_decls(&m.block.decls);
+        self.gen_hir_const_decls();
         self.gen_var_decls_global(&m.block.decls);
 
         for decl in &m.block.decls {

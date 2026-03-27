@@ -28,10 +28,12 @@ pub fn build_module(
     impl_mods: &[crate::ast::ImplementationModule],
     sema: &SemanticAnalyzer,
 ) -> HirModule {
-    let (module_name, module_body, module_decls, module_imports, module_loc) = match unit {
+    let (module_name, module_body, module_except, module_finally, module_decls, module_imports, module_loc) = match unit {
         CompilationUnit::ProgramModule(m) => (
             m.name.clone(),
             m.block.body.as_ref(),
+            m.block.except.as_deref(),
+            m.block.finally.as_deref(),
             &m.block.decls,
             &m.imports,
             &m.loc,
@@ -39,12 +41,16 @@ pub fn build_module(
         CompilationUnit::ImplementationModule(m) => (
             m.name.clone(),
             m.block.body.as_ref(),
+            m.block.except.as_deref(),
+            m.block.finally.as_deref(),
             &m.block.decls,
             &m.imports,
             &m.loc,
         ),
         CompilationUnit::DefinitionModule(m) => (
             m.name.clone(),
+            None,
+            None,
             None,
             &Vec::new() as &Vec<Declaration>,
             &m.imports,
@@ -222,6 +228,26 @@ pub fn build_module(
         hb.lower_stmts(stmts)
     });
 
+    // Lower module except handler
+    let except_handler = module_except.map(|stmts| {
+        let mut hb = HirBuilder::new(
+            &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+        );
+        hb.set_imported_modules(imported_modules.clone());
+        hb.set_import_alias_map(import_aliases.clone());
+        hb.lower_stmts(stmts)
+    });
+
+    // Lower module finally handler
+    let finally_handler = module_finally.map(|stmts| {
+        let mut hb = HirBuilder::new(
+            &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+        );
+        hb.set_imported_modules(imported_modules.clone());
+        hb.set_import_alias_map(import_aliases.clone());
+        hb.lower_stmts(stmts)
+    });
+
     // Lower embedded module init bodies
     let mut embedded_init_bodies = Vec::new();
     for imp in impl_mods {
@@ -258,8 +284,8 @@ pub fn build_module(
         exception_decls: new_exception_decls,
         type_descs: Vec::new(), // populated by backends for RTTI
         proc_decls: new_proc_decls,
-        except_handler: None,   // TODO: populate from AST
-        finally_handler: None,  // TODO: populate from AST
+        except_handler,
+        finally_handler,
         embedded_modules: Vec::new(), // TODO: populate from impl_mods
         // Legacy fields (still used by backends)
         constants,
