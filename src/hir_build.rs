@@ -535,25 +535,39 @@ fn build_proc_decl(
         None => "void".to_string(),
     };
 
-    let params: Vec<HirParamDecl> = h.params.iter().flat_map(|fp| {
+    // Get param TypeIds from the procedure's symbol
+    let proc_param_types: Vec<crate::symtab::ParamInfo> = sym
+        .and_then(|s| match &s.kind {
+            crate::symtab::SymbolKind::Procedure { params, .. } => Some(params.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let mut params = Vec::new();
+    let mut pi_idx = 0usize;
+    for fp in &h.params {
         let is_open = matches!(fp.typ, ast::TypeNode::OpenArray { .. });
         let is_proc = matches!(fp.typ, ast::TypeNode::ProcedureType { .. })
             || matches!(&fp.typ, ast::TypeNode::Named(qi) if qi.module.is_none() && qi.name == "PROC");
         let is_char = matches!(&fp.typ, ast::TypeNode::Named(qi) if qi.name == "CHAR");
         let c_type = ast_type_to_c(&fp.typ, &sema.types);
-        let param_type_id = TY_INTEGER; // placeholder — not used for prototype emission
-        fp.names.iter().map(move |name| HirParamDecl {
-            name: name.clone(),
-            type_id: param_type_id,
-            is_var: fp.is_var,
-            is_open_array: is_open,
-            is_proc_type: is_proc,
-            is_char,
-            c_type: c_type.clone(),
-            needs_high: is_open,
-            ast_type_node: Some(fp.typ.clone()),
-        })
-    }).collect();
+        for name in &fp.names {
+            let type_id = proc_param_types.get(pi_idx)
+                .map(|pi| pi.typ)
+                .unwrap_or(TY_INTEGER);
+            pi_idx += 1;
+            params.push(HirParamDecl {
+                name: name.clone(),
+                type_id,
+                is_var: fp.is_var,
+                is_open_array: is_open,
+                is_proc_type: is_proc,
+                is_char,
+                c_type: c_type.clone(),
+                needs_high: is_open,
+                ast_type_node: Some(fp.typ.clone()),
+            });
+        }
+    }
 
     HirProcDecl {
         sig: HirProcSig {
