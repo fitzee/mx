@@ -457,6 +457,8 @@ pub struct HirGlobalDecl {
     pub c_array_suffix: String,
     /// True if this is a procedure-typed variable.
     pub is_proc_type: bool,
+    /// Temporary bridge: AST TypeNode for C-specific emission.
+    pub ast_type_node: Option<crate::ast::TypeNode>,
 }
 
 /// Exception declaration (M2+).

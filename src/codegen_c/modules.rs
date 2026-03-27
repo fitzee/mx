@@ -13,8 +13,10 @@ impl CodeGen {
         self.emitln(&format!("/* Module {} */", m.name));
         self.newline();
 
-        self.emit_record_forward_decls(&m.block.decls);
-        self.emit_type_and_const_decls(&m.block.decls);
+        // Structural declarations from prebuilt HIR
+        self.emit_hir_record_forward_decls();
+        self.emit_hir_type_decls();
+        self.emit_hir_const_decls();
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
@@ -25,13 +27,9 @@ impl CodeGen {
         self.gen_forward_decls(&m.block.decls);
         self.newline();
 
-        // Pass 1: Emit all Var declarations first (procedures may reference them)
-        for decl in &m.block.decls {
-            if let Declaration::Var(v) = decl {
-                self.gen_var_decl(v);
-            }
-        }
-        // Also emit vars from nested modules
+        // Pass 1: Emit global variable declarations from HIR
+        self.emit_hir_global_decls();
+        // Also emit vars from nested local modules (still AST-driven)
         for decl in &m.block.decls {
             if let Declaration::Module(local_mod) = decl {
                 for d in &local_mod.block.decls {
@@ -228,8 +226,10 @@ impl CodeGen {
             }
         }
 
-        self.emit_record_forward_decls(&m.block.decls);
-        self.emit_type_and_const_decls(&m.block.decls);
+        // Structural declarations from prebuilt HIR
+        self.emit_hir_record_forward_decls();
+        self.emit_hir_type_decls();
+        self.emit_hir_const_decls();
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
@@ -239,12 +239,8 @@ impl CodeGen {
         self.gen_forward_decls(&m.block.decls);
         self.newline();
 
-        // Pass 1: Emit Var declarations first
-        for decl in &m.block.decls {
-            if let Declaration::Var(v) = decl {
-                self.gen_var_decl(v);
-            }
-        }
+        // Pass 1: Emit global variable declarations from HIR
+        self.emit_hir_global_decls();
         // Pass 2: Emit Procedures and Modules (skip Var/Const/Type)
         for decl in &m.block.decls {
             match decl {
@@ -946,85 +942,72 @@ impl CodeGen {
         }
     }
 
-    /// Emit type and const declarations from a declaration list.
-    /// Types are emitted first (in source order), then constants are topologically
-    /// sorted so that forward references between constants are resolved.
-    pub(crate) fn emit_type_and_const_decls(&mut self, decls: &[Declaration]) {
-        // Pre-pass: collect integer constant values so array bounds can be inlined
-        for decl in decls {
-            if let Declaration::Const(c) = decl {
-                if let Some(val) = self.try_eval_const_int(&c.expr) {
-                    self.const_int_values.insert(c.name.clone(), val);
-                }
-            }
-        }
-        // Pass 1: emit all Type declarations in source order
-        for decl in decls {
-            if let Declaration::Type(t) = decl {
-                self.gen_type_decl(t);
-            }
-        }
-        // Pass 2: collect and topologically sort Const declarations
-        let consts: Vec<&ConstDecl> = decls.iter().filter_map(|d| {
-            if let Declaration::Const(c) = d { Some(c) } else { None }
-        }).collect();
-        if consts.is_empty() {
+    /// Emit record forward declarations from prebuilt HirModule.
+    pub(crate) fn emit_hir_record_forward_decls(&mut self) {
+        let types = if let Some(ref hir) = self.prebuilt_hir {
+            hir.type_decls.clone()
+        } else {
             return;
-        }
-        let const_names: HashSet<String> = consts.iter().map(|c| c.name.clone()).collect();
-        // Build adjacency: for each const, which other consts does it reference?
-        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
-        for c in &consts {
-            let mut refs = HashSet::new();
-            Self::collect_expr_ident_refs(&c.expr, &mut refs);
-            let my_deps: Vec<String> = refs.into_iter().filter(|r| const_names.contains(r) && r != &c.name).collect();
-            deps.insert(c.name.clone(), my_deps);
-        }
-        // Kahn's algorithm for topological sort
-        // deps maps node → [nodes it depends on]. Build reverse graph: dependee → [dependents]
-        let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
-        let mut in_degree: HashMap<String, usize> = consts.iter().map(|c| (c.name.clone(), 0)).collect();
-        for (node, dep_list) in &deps {
-            *in_degree.entry(node.clone()).or_insert(0) += dep_list.len();
-            for dep in dep_list {
-                reverse.entry(dep.clone()).or_default().push(node.clone());
-            }
-        }
-        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-        // Seed with zero-in-degree nodes (in source order for stability)
-        for c in &consts {
-            if *in_degree.get(&c.name).unwrap_or(&0) == 0 {
-                queue.push_back(c.name.clone());
-            }
-        }
-        let mut sorted_names: Vec<String> = Vec::new();
-        while let Some(name) = queue.pop_front() {
-            sorted_names.push(name.clone());
-            if let Some(dependents) = reverse.get(&name) {
-                for dependent in dependents {
-                    if let Some(deg) = in_degree.get_mut(dependent) {
-                        *deg = deg.saturating_sub(1);
-                        if *deg == 0 {
-                            queue.push_back(dependent.clone());
-                        }
-                    }
+        };
+        for td in &types {
+            let cn = self.type_decl_c_name(&td.name);
+            match &td.ast_type_node {
+                Some(TypeNode::Record { .. }) => {
+                    self.emitln(&format!("typedef struct {} {};", cn, cn));
                 }
-            }
-        }
-        // If there are cycles, append remaining in source order
-        if sorted_names.len() < consts.len() {
-            for c in &consts {
-                if !sorted_names.contains(&c.name) {
-                    sorted_names.push(c.name.clone());
+                Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
+                    let tag = format!("{}_r", cn);
+                    self.emitln(&format!("typedef struct {} {};", tag, tag));
+                    self.emitln(&format!("typedef {} *{};", tag, cn));
                 }
+                _ => {}
             }
         }
-        // Build name->const map and emit in sorted order
-        let const_map: HashMap<String, &ConstDecl> = consts.into_iter().map(|c| (c.name.clone(), c)).collect();
-        for name in &sorted_names {
-            if let Some(c) = const_map.get(name) {
-                self.gen_const_decl(c);
+    }
+
+    /// Emit const declarations from prebuilt HirModule.
+    /// Since ConstVal is fully evaluated, no topological sort is needed.
+    pub(crate) fn emit_hir_const_decls(&mut self) {
+        let consts = if let Some(ref hir) = self.prebuilt_hir {
+            hir.const_decls.clone()
+        } else {
+            return;
+        };
+        for c in &consts {
+            self.gen_hir_const_decl(c);
+        }
+    }
+
+    /// Emit type declarations from prebuilt HirModule.
+    /// Uses ast_type_node bridge for actual C emission.
+    pub(crate) fn emit_hir_type_decls(&mut self) {
+        let types = if let Some(ref hir) = self.prebuilt_hir {
+            hir.type_decls.clone()
+        } else {
+            return;
+        };
+        for td in &types {
+            if let Some(ref tn) = td.ast_type_node {
+                let synth = crate::ast::TypeDecl {
+                    name: td.name.clone(),
+                    typ: Some(tn.clone()),
+                    loc: crate::errors::SourceLoc::default(),
+                    doc: None,
+                };
+                self.gen_type_decl(&synth);
             }
+        }
+    }
+
+    /// Emit global variable declarations from prebuilt HirModule.
+    pub(crate) fn emit_hir_global_decls(&mut self) {
+        let globals = if let Some(ref hir) = self.prebuilt_hir {
+            hir.global_decls.clone()
+        } else {
+            return;
+        };
+        for g in &globals {
+            self.gen_hir_global_decl(g);
         }
     }
 

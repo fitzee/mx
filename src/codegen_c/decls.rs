@@ -143,6 +143,47 @@ impl CodeGen {
         self.emit(";\n");
     }
 
+    /// Emit a constant declaration from prebuilt HIR.
+    /// Since HirConstDecl.value is already fully evaluated, no topo-sort needed.
+    pub(crate) fn gen_hir_const_decl(&mut self, c: &crate::hir::HirConstDecl) {
+        use crate::hir::ConstVal;
+        // Register integer values for array bound inlining
+        if let ConstVal::Integer(v) = &c.value {
+            self.const_int_values.insert(c.name.clone(), *v);
+            if let Some(ref mod_name) = self.generating_for_module {
+                self.const_int_values.insert(format!("{}_{}", mod_name, c.name), *v);
+            }
+        }
+        if let ConstVal::EnumVariant(v) = &c.value {
+            self.const_int_values.insert(c.name.clone(), *v);
+            if let Some(ref mod_name) = self.generating_for_module {
+                self.const_int_values.insert(format!("{}_{}", mod_name, c.name), *v);
+            }
+        }
+        let val_str = match &c.value {
+            ConstVal::Integer(v) => format!("{}", v),
+            ConstVal::Real(v) => {
+                let s = format!("{}", v);
+                if s.contains('.') || s.contains('e') || s.contains('E') { s } else { format!("{}.0", s) }
+            }
+            ConstVal::Boolean(b) => if *b { "1".to_string() } else { "0".to_string() },
+            ConstVal::Char(ch) => format!("'{}'", escape_c_char(*ch)),
+            ConstVal::String(s) => {
+                if s.is_empty() {
+                    "'\\0'".to_string()
+                } else if s.len() == 1 {
+                    format!("'{}'", escape_c_char(s.chars().next().unwrap()))
+                } else {
+                    format!("\"{}\"", escape_c_string(s))
+                }
+            }
+            ConstVal::Set(bits) => format!("0x{:X}ULL", bits),
+            ConstVal::Nil => "((void*)0)".to_string(),
+            ConstVal::EnumVariant(v) => format!("{}", v),
+        };
+        self.emitln(&format!("static const {} {} = {};", c.c_type, c.mangled, val_str));
+    }
+
     /// Return the C typedef name for a type declaration.
     /// Inside an embedded module, returns Module_TypeName to avoid collisions.
     pub(crate) fn type_decl_c_name(&self, bare_name: &str) -> String {
@@ -814,6 +855,119 @@ impl CodeGen {
                 }
                 self.emit(";\n");
             }
+        }
+    }
+
+    /// Emit a global variable declaration from prebuilt HIR.
+    /// Each HirGlobalDecl is a single variable (VarDecl may have multiple names).
+    pub(crate) fn gen_hir_global_decl(&mut self, g: &crate::hir::HirGlobalDecl) {
+        let tn = match &g.ast_type_node {
+            Some(t) => t,
+            None => return,
+        };
+        // Metadata registration (same as gen_var_decl)
+        if let TypeNode::Named(qi) = tn {
+            if qi.module.is_none() {
+                self.var_types.insert(g.name.clone(), qi.name.clone());
+                if self.char_array_types.contains(&qi.name) {
+                    self.char_array_vars.insert(g.name.clone());
+                }
+                if self.array_types.contains(&qi.name) {
+                    self.array_vars.insert(g.name.clone());
+                }
+            }
+        }
+        if let TypeNode::Array { elem_type, .. } = tn {
+            if let TypeNode::Named(qi) = elem_type.as_ref() {
+                let elem_name = self.named_type_to_c(qi);
+                self.array_var_elem_types.insert(g.name.clone(), elem_name);
+            }
+        }
+        if let TypeNode::Named(qi) = tn {
+            if let Some(pinfo) = self.proc_type_params.get(&qi.name).cloned() {
+                self.proc_params.insert(g.name.clone(), pinfo);
+            }
+        }
+        if Self::is_proc_type(tn) {
+            if let TypeNode::ProcedureType { params, .. } = tn {
+                let mut pinfo = Vec::new();
+                for fp in params {
+                    let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                    let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
+                    for name in &fp.names {
+                        pinfo.push(ParamCodegenInfo {
+                            name: name.clone(),
+                            is_var: fp.is_var,
+                            is_open_array: is_open,
+                            is_char,
+                        });
+                    }
+                }
+                self.proc_params.insert(g.name.clone(), pinfo);
+            }
+        }
+        if self.is_char_array_type(tn) {
+            self.char_array_vars.insert(g.name.clone());
+        }
+        if self.is_array_type(tn) {
+            self.array_vars.insert(g.name.clone());
+        }
+        if self.is_set_type(tn) {
+            self.set_vars.insert(g.name.clone());
+        }
+        if matches!(tn, TypeNode::Named(qi) if qi.name == "CARDINAL" || qi.name == "LONGCARD") {
+            self.cardinal_vars.insert(g.name.clone());
+        }
+        if matches!(tn, TypeNode::Named(qi) if qi.name == "LONGINT") {
+            self.longint_vars.insert(g.name.clone());
+        }
+        if matches!(tn, TypeNode::Named(qi) if qi.name == "LONGCARD") {
+            self.longcard_vars.insert(g.name.clone());
+        }
+        if let TypeNode::Named(qi) = tn {
+            if self.unsigned_type_aliases.contains(&qi.name) {
+                self.cardinal_vars.insert(g.name.clone());
+                self.longcard_vars.insert(g.name.clone());
+            }
+        }
+        if self.is_complex_type(tn) {
+            self.complex_vars.insert(g.name.clone());
+        }
+        if self.is_longcomplex_type(tn) {
+            self.longcomplex_vars.insert(g.name.clone());
+        }
+
+        // C emission — use mangle_decl_name for correct prefixing rules
+        let c_name = self.mangle_decl_name(&g.name);
+        if Self::is_proc_type(tn) {
+            let effective_type = if matches!(tn, TypeNode::Named(qi) if qi.name == "PROC") {
+                TypeNode::ProcedureType {
+                    params: vec![],
+                    return_type: None,
+                    loc: crate::errors::SourceLoc::default(),
+                }
+            } else {
+                tn.clone()
+            };
+            self.emit_indent();
+            let decl = self.proc_type_decl(&effective_type, &c_name, false);
+            self.emit(&format!("{};\n", decl));
+        } else if let TypeNode::Pointer { base, .. } = tn {
+            if matches!(base.as_ref(), TypeNode::Array { .. }) {
+                let elem_c = self.type_to_c(base);
+                let arr_suffix = self.type_array_suffix(base);
+                self.emit_indent();
+                self.emit(&format!("{} (*{}){};\n", elem_c, c_name, arr_suffix));
+            } else {
+                let ctype = self.type_to_c(tn);
+                self.emit_indent();
+                self.emit(&format!("{} {};\n", ctype, c_name));
+            }
+        } else {
+            let ctype = self.type_to_c(tn);
+            let array_suffix = self.type_array_suffix(tn);
+            self.emit_indent();
+            self.emit(&format!("{} {}{};\n", ctype, c_name, array_suffix));
         }
     }
 

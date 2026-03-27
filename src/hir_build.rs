@@ -119,7 +119,7 @@ pub fn build_module(
                     value: val.clone(),
                     type_id,
                     exported: sym.map(|s| s.exported).unwrap_or(false),
-                    c_type: String::new(), // populated by backend
+                    c_type: const_val_c_type(&val),
                 });
                 // Legacy format
                 constants.push(HirConst {
@@ -148,9 +148,10 @@ pub fn build_module(
                         mangled: mangled.clone(),
                         type_id,
                         exported,
-                        c_type: String::new(),        // populated by backend
-                        c_array_suffix: String::new(), // populated by backend
-                        is_proc_type: false,           // populated by backend
+                        c_type: String::new(),
+                        c_array_suffix: String::new(),
+                        is_proc_type: false,
+                        ast_type_node: Some(v.typ.clone()),
                     });
                     // Legacy format
                     globals.push(HirVar {
@@ -2509,6 +2510,20 @@ impl<'a> HirBuilder<'a> {
 }
 
 /// Convert a symtab ConstValue to an HIR ConstVal.
+/// Map a ConstVal to its C type string.
+fn const_val_c_type(val: &ConstVal) -> String {
+    match val {
+        ConstVal::Integer(_) | ConstVal::EnumVariant(_) => "int32_t".to_string(),
+        ConstVal::Real(_) => "float".to_string(),
+        ConstVal::Boolean(_) => "int".to_string(),
+        ConstVal::Char(_) => "char".to_string(),
+        ConstVal::String(s) if s.len() <= 1 => "char".to_string(),
+        ConstVal::String(_) => "const char *".to_string(),
+        ConstVal::Set(_) => "uint64_t".to_string(),
+        ConstVal::Nil => "void *".to_string(),
+    }
+}
+
 fn const_value_to_hir(cv: &ConstValue) -> ConstVal {
     match cv {
         ConstValue::Integer(v) => ConstVal::Integer(*v),
