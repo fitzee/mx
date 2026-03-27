@@ -91,14 +91,15 @@ impl super::CodeGen {
                 }
                 // Regular function call
                 let c_name = self.resolve_call_name(target);
+                let orig_name = self.original_import_name(&target.source_name);
                 let native_module = target.module.as_ref()
                     .filter(|m| crate::stdlib::is_native_stdlib(m)
-                        && crate::stdlib::map_stdlib_call(m, &target.source_name).is_some());
+                        && crate::stdlib::map_stdlib_call(m, orig_name).is_some());
                 let arg_strs = if let Some(module) = native_module {
                     // Native stdlib: strip _high companions (the inline C
                     // functions don't take open array high params)
                     let m = module.clone();
-                    let p = target.source_name.clone();
+                    let p = orig_name.to_string();
                     self.hir_args_for_native_stdlib(args, &c_name, &m, &p)
                 } else {
                     self.hir_args_to_string(args, &c_name)
@@ -431,12 +432,13 @@ impl super::CodeGen {
                             self.emit(";\n");
                             return;
                         }
+                        let orig = self.original_import_name(&sid.source_name).to_string();
                         let native_mod = sid.module.as_ref()
                             .filter(|m| crate::stdlib::is_native_stdlib(m)
-                                && crate::stdlib::map_stdlib_call(m, &sid.source_name).is_some());
+                                && crate::stdlib::map_stdlib_call(m, &orig).is_some());
                         let args_s = if let Some(module) = native_mod {
                             let m = module.clone();
-                            let p = sid.source_name.clone();
+                            let p = orig.clone();
                             self.hir_args_for_native_stdlib(args, &name, &m, &p)
                         } else {
                             self.hir_args_to_string(args, &name)
