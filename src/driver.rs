@@ -952,9 +952,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     // Build complete HirModule from AST + sema (read-only).
     let hir_module = crate::hir_build::build_module(&unit, &all_impl_mods, &sema);
     if opts.verbose {
-        eprintln!("{}: HIR: {} procs, {} types, {} consts, {} globals, {} exceptions, {} init stmts",
+        eprintln!("{}: HIR: {} procs ({} sigs), {} types, {} consts, {} globals, {} exceptions, {} init stmts",
             identity::COMPILER_NAME,
             hir_module.procedures.len(),
+            hir_module.proc_decls.len(),
             hir_module.type_decls.len(),
             hir_module.const_decls.len(),
             hir_module.global_decls.len(),

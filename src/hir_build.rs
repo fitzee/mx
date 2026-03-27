@@ -65,6 +65,7 @@ pub fn build_module(
     let mut new_const_decls = Vec::new();
     let mut new_global_decls = Vec::new();
     let mut new_exception_decls = Vec::new();
+    let mut new_proc_decls: Vec<HirProcDecl> = Vec::new();
 
     // Build HirImport list from extracted imports
     let hir_imports: Vec<HirImport> = module_imports.iter().map(|imp| {
@@ -87,6 +88,13 @@ pub fn build_module(
             Declaration::Procedure(p) => {
                 let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
                 procedures.push(hir_proc);
+                new_proc_decls.push(build_proc_decl(&p.heading, &module_name, sema, false, None));
+                // Also add nested proc decls
+                for nd in &p.block.decls {
+                    if let Declaration::Procedure(np) = nd {
+                        new_proc_decls.push(build_proc_decl(&np.heading, &module_name, sema, true, Some(&p.heading.name)));
+                    }
+                }
             }
             Declaration::Type(t) => {
                 let sym = sema.symtab.lookup_any(&t.name);
@@ -249,7 +257,7 @@ pub fn build_module(
         global_decls: new_global_decls,
         exception_decls: new_exception_decls,
         type_descs: Vec::new(), // populated by backends for RTTI
-        proc_decls: Vec::new(), // TODO: populate from procedures
+        proc_decls: new_proc_decls,
         except_handler: None,   // TODO: populate from AST
         finally_handler: None,  // TODO: populate from AST
         embedded_modules: Vec::new(), // TODO: populate from impl_mods
@@ -357,6 +365,167 @@ fn build_proc(
         body,
         nested_procs: nested,
         is_exported: false,
+    }
+}
+
+/// Build a HirProcDecl (sig only, no body) from an AST ProcHeading.
+fn build_proc_decl(
+    h: &ast::ProcHeading,
+    module_name: &str,
+    sema: &SemanticAnalyzer,
+    is_nested: bool,
+    parent_proc: Option<&str>,
+) -> HirProcDecl {
+    let sym = sema.symtab.lookup_any(&h.name);
+    let exported = sym.map(|s| s.exported).unwrap_or(false);
+    let return_type_id = h.return_type.as_ref().and_then(|_| {
+        sym.and_then(|s| match &s.kind {
+            crate::symtab::SymbolKind::Procedure { return_type, .. } => *return_type,
+            _ => {
+                // Fallback: check if s.typ is a ProcedureType
+                match sema.types.get(s.typ) {
+                    crate::types::Type::ProcedureType { return_type, .. } => *return_type,
+                    _ => None,
+                }
+            }
+        })
+    });
+    let c_return_type = match return_type_id {
+        Some(tid) => typeid_to_c(tid, &sema.types),
+        None => "void".to_string(),
+    };
+
+    let params: Vec<HirParamDecl> = h.params.iter().flat_map(|fp| {
+        let is_open = matches!(fp.typ, ast::TypeNode::OpenArray { .. });
+        let is_proc = matches!(fp.typ, ast::TypeNode::ProcedureType { .. })
+            || matches!(&fp.typ, ast::TypeNode::Named(qi) if qi.module.is_none() && qi.name == "PROC");
+        let is_char = matches!(&fp.typ, ast::TypeNode::Named(qi) if qi.name == "CHAR");
+        let c_type = ast_type_to_c(&fp.typ, &sema.types);
+        let param_type_id = TY_INTEGER; // placeholder — not used for prototype emission
+        fp.names.iter().map(move |name| HirParamDecl {
+            name: name.clone(),
+            type_id: param_type_id,
+            is_var: fp.is_var,
+            is_open_array: is_open,
+            is_proc_type: is_proc,
+            is_char,
+            c_type: c_type.clone(),
+            needs_high: is_open,
+            ast_type_node: Some(fp.typ.clone()),
+        })
+    }).collect();
+
+    HirProcDecl {
+        sig: HirProcSig {
+            name: h.name.clone(),
+            mangled: format!("{}_{}", module_name, h.name),
+            module: module_name.to_string(),
+            params,
+            return_type: return_type_id,
+            exported,
+            is_foreign: false,
+            export_c_name: h.export_c_name.clone(),
+            is_nested,
+            parent_proc: parent_proc.map(|s| s.to_string()),
+            has_closure_env: false,
+            c_return_type,
+            ast_return_type: h.return_type.clone().map(|rt| *rt),
+        },
+        body: None,
+        locals: Vec::new(),
+        nested_procs: Vec::new(),
+        closure_captures: Vec::new(),
+        except_handler: None,
+        loc: h.loc.clone(),
+    }
+}
+
+/// Map AST TypeNode to C type string (for prototype emission).
+fn ast_type_to_c(tn: &ast::TypeNode, types: &crate::types::TypeRegistry) -> String {
+    match tn {
+        ast::TypeNode::Named(qi) => {
+            // Check well-known PIM4 types
+            match qi.name.as_str() {
+                "INTEGER" => "int32_t".to_string(),
+                "CARDINAL" => "uint32_t".to_string(),
+                "REAL" => "float".to_string(),
+                "LONGREAL" => "double".to_string(),
+                "BOOLEAN" => "int".to_string(),
+                "CHAR" => "char".to_string(),
+                "BITSET" => "uint32_t".to_string(),
+                "ADDRESS" => "void *".to_string(),
+                "BYTE" => "uint8_t".to_string(),
+                "WORD" => "uint32_t".to_string(),
+                "LONGINT" => "int64_t".to_string(),
+                "LONGCARD" => "uint64_t".to_string(),
+                "PROC" => "void (*)(void)".to_string(),
+                _ => {
+                    // User-defined type — use its name as the C typedef
+                    if let Some(ref module) = qi.module {
+                        format!("{}_{}", module, qi.name)
+                    } else {
+                        qi.name.clone()
+                    }
+                }
+            }
+        }
+        ast::TypeNode::Array { elem_type, .. } | ast::TypeNode::OpenArray { elem_type, .. } => {
+            ast_type_to_c(elem_type, types)
+        }
+        ast::TypeNode::Pointer { base, .. } => format!("{} *", ast_type_to_c(base, types)),
+        ast::TypeNode::Set { .. } => "uint32_t".to_string(),
+        ast::TypeNode::Enumeration { .. } => "int".to_string(),
+        ast::TypeNode::Subrange { .. } => "int32_t".to_string(),
+        ast::TypeNode::Record { .. } => "struct /* record */".to_string(),
+        ast::TypeNode::ProcedureType { .. } => "void (*)(void)".to_string(), // simplified
+        ast::TypeNode::Ref { .. } | ast::TypeNode::RefAny { .. } | ast::TypeNode::Object { .. } => "void *".to_string(),
+    }
+}
+
+/// Map TypeId to C type string.
+fn typeid_to_c(tid: TypeId, types: &crate::types::TypeRegistry) -> String {
+    match tid {
+        TY_INTEGER => "int32_t".to_string(),
+        TY_CARDINAL => "uint32_t".to_string(),
+        TY_REAL => "float".to_string(),
+        TY_LONGREAL => "double".to_string(),
+        TY_BOOLEAN => "int".to_string(),
+        TY_CHAR => "char".to_string(),
+        TY_BITSET => "uint32_t".to_string(),
+        TY_ADDRESS => "void *".to_string(),
+        TY_LONGINT => "int64_t".to_string(),
+        TY_LONGCARD => "uint64_t".to_string(),
+        TY_WORD => "uint32_t".to_string(),
+        TY_BYTE => "uint8_t".to_string(),
+        TY_VOID => "void".to_string(),
+        _ => {
+            let t = types.get(tid);
+            match t {
+                crate::types::Type::Pointer { .. } | crate::types::Type::Address => "void *".to_string(),
+                crate::types::Type::Enumeration { .. } => "int".to_string(),
+                crate::types::Type::Set { .. } | crate::types::Type::Bitset => "uint32_t".to_string(),
+                crate::types::Type::Real => "float".to_string(),
+                crate::types::Type::LongReal => "double".to_string(),
+                crate::types::Type::Array { elem_type, .. } => typeid_to_c(*elem_type, types),
+                crate::types::Type::OpenArray { elem_type, .. } => typeid_to_c(*elem_type, types),
+                crate::types::Type::Alias { target, name, .. } => {
+                    // Named type alias — use the name as the C type
+                    if *target == TY_INTEGER || *target == TY_CARDINAL || *target == TY_REAL
+                        || *target == TY_LONGREAL || *target == TY_BOOLEAN || *target == TY_CHAR
+                        || *target == TY_LONGINT || *target == TY_LONGCARD {
+                        typeid_to_c(*target, types)
+                    } else {
+                        name.clone()
+                    }
+                }
+                crate::types::Type::Record { .. } => {
+                    // Records should be referred to by their typedef name,
+                    // but we don't have that info here — use the type name if available
+                    "int32_t".to_string() // fallback
+                }
+                _ => "int32_t".to_string(), // fallback
+            }
+        }
     }
 }
 

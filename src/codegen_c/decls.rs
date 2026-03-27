@@ -1318,6 +1318,115 @@ impl CodeGen {
         self.emit(")");
     }
 
+    /// Register procedure parameter metadata from HirProcSig.
+    pub(crate) fn register_hir_proc_params(&mut self, sig: &crate::hir::HirProcSig) {
+        let mut param_info = Vec::new();
+        for p in &sig.params {
+            param_info.push(ParamCodegenInfo {
+                name: p.name.clone(),
+                is_var: p.is_var,
+                is_open_array: p.is_open_array,
+                is_char: p.is_char,
+            });
+        }
+        self.proc_params.insert(sig.name.clone(), param_info.clone());
+        if let Some(ref ecn) = sig.export_c_name {
+            self.export_c_names.insert(sig.name.clone(), ecn.clone());
+            self.proc_params.insert(ecn.clone(), param_info);
+        }
+        // Register procedure-typed parameters as their own callables
+        for p in &sig.params {
+            if let Some(ref tn) = p.ast_type_node {
+                if let TypeNode::Named(qi) = tn {
+                    if let Some(pinfo) = self.proc_type_params.get(&qi.name).cloned() {
+                        self.proc_params.insert(p.name.clone(), pinfo);
+                    }
+                } else if let TypeNode::ProcedureType { params: pt_params, .. } = tn {
+                    let mut pinfo = Vec::new();
+                    for (idx, ptp) in pt_params.iter().enumerate() {
+                        let is_open = matches!(ptp.typ, TypeNode::OpenArray { .. });
+                        let is_ch = matches!(&ptp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
+                        for pname in &ptp.names {
+                            pinfo.push(ParamCodegenInfo {
+                                name: pname.clone(),
+                                is_var: ptp.is_var,
+                                is_open_array: is_open,
+                                is_char: is_ch,
+                            });
+                        }
+                        if ptp.names.is_empty() {
+                            pinfo.push(ParamCodegenInfo {
+                                name: format!("_p{}", idx),
+                                is_var: ptp.is_var,
+                                is_open_array: is_open,
+                                is_char: is_ch,
+                            });
+                        }
+                    }
+                    self.proc_params.insert(p.name.clone(), pinfo);
+                }
+            }
+        }
+    }
+
+    /// Emit a procedure prototype from HirProcSig.
+    pub(crate) fn gen_hir_proc_prototype(&mut self, sig: &crate::hir::HirProcSig) {
+        self.emit_indent();
+        let c_name = if let Some(ref ecn) = sig.export_c_name {
+            ecn.clone()
+        } else if let Some(mangled) = self.nested_proc_names.get(&sig.name).cloned() {
+            mangled
+        } else {
+            self.mangle(&sig.name)
+        };
+        let ret_type = if let Some(ref rt) = sig.ast_return_type {
+            self.type_to_c(rt)
+        } else {
+            sig.c_return_type.clone()
+        };
+        self.emit(&format!("{} {}(", ret_type, c_name));
+
+        // Check if this proc receives a closure environment
+        let env_type = self.closure_env_type.get(&sig.name).cloned();
+        let has_env = env_type.is_some();
+        if has_env {
+            let et = env_type.unwrap();
+            self.emit(&format!("{} *_env", et));
+        }
+
+        if sig.params.is_empty() && !has_env {
+            self.emit("void");
+        } else {
+            let mut first = !has_env;
+            for p in &sig.params {
+                if !first { self.emit(", "); }
+                first = false;
+                let c_param = self.mangle(&p.name);
+                // Resolve C type: prefer ast_type_node bridge for correct name resolution
+                let resolved_c_type = if let Some(ref tn) = p.ast_type_node {
+                    self.type_to_c(tn)
+                } else {
+                    p.c_type.clone()
+                };
+                if p.is_open_array {
+                    self.emit(&format!("{} *{}, uint32_t {}_high", resolved_c_type, c_param, c_param));
+                } else if p.is_proc_type {
+                    if let Some(ref tn) = p.ast_type_node {
+                        let decl = self.proc_type_decl(tn, &c_param, p.is_var);
+                        self.emit(&decl);
+                    } else {
+                        self.emit(&format!("void (*{})(void)", c_param));
+                    }
+                } else if p.is_var {
+                    self.emit(&format!("{} *{}", p.c_type, c_param));
+                } else {
+                    self.emit(&format!("{} {}", p.c_type, c_param));
+                }
+            }
+        }
+        self.emit(")");
+    }
+
     // ── Statements ──────────────────────────────────────────────────
 
     /// Emit extern declarations for all foreign (C ABI) definition modules.
