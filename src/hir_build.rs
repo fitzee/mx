@@ -70,6 +70,7 @@ pub fn build_module(
     let mut new_type_decls = Vec::new();
     let mut new_const_decls = Vec::new();
     let mut new_global_decls = Vec::new();
+    let mut local_module_inits = Vec::new();
     let mut new_exception_decls = Vec::new();
     let mut new_proc_decls: Vec<HirProcDecl> = Vec::new();
 
@@ -270,6 +271,14 @@ pub fn build_module(
                         }
                         _ => {}
                     }
+                }
+                // Lower local module init body
+                if let Some(body) = &local_mod.block.body {
+                    let mut hb = HirBuilder::new(&sema.types, &sema.symtab, &module_name, &sema.foreign_modules);
+                    hb.set_import_alias_map(import_aliases.clone());
+                    hb.set_imported_modules(imported_modules.clone());
+                    let hir_stmts = hb.lower_stmts(body);
+                    local_module_inits.push((local_mod.name.clone(), hir_stmts));
                 }
             }
             _ => {}
@@ -484,6 +493,7 @@ pub fn build_module(
         procedures,
         init_body,
         embedded_init_bodies,
+        local_module_inits,
         externals: Vec::new(),
     }
 }
@@ -2779,7 +2789,7 @@ impl<'a> HirBuilder<'a> {
             proc_decls: Vec::new(), except_handler: None, finally_handler: None,
             embedded_modules: Vec::new(),
             constants, types: type_decls, globals, procedures,
-            init_body, embedded_init_bodies: Vec::new(), externals: Vec::new(),
+            init_body, embedded_init_bodies: Vec::new(), local_module_inits: Vec::new(), externals: Vec::new(),
         }
     }
 
@@ -2805,7 +2815,7 @@ impl<'a> HirBuilder<'a> {
             proc_decls: Vec::new(), except_handler: None, finally_handler: None,
             embedded_modules: Vec::new(),
             constants, types: type_decls, globals, procedures,
-            init_body, embedded_init_bodies: Vec::new(), externals: Vec::new(),
+            init_body, embedded_init_bodies: Vec::new(), local_module_inits: Vec::new(), externals: Vec::new(),
         }
     }
 

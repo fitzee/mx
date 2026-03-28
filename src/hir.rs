@@ -376,6 +376,8 @@ pub struct HirModule {
     pub init_body: Option<Vec<HirStmt>>,
     /// Embedded module init bodies.
     pub embedded_init_bodies: Vec<(String, Vec<HirStmt>)>,
+    /// Local (nested) module init bodies — run in enclosing scope order.
+    pub local_module_inits: Vec<(String, Vec<HirStmt>)>,
     /// ISO module-level EXCEPT handler (rare).
     pub except_handler: Option<Vec<HirStmt>>,
     /// ISO module-level FINALLY handler (rare).

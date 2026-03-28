@@ -29,11 +29,10 @@ impl CodeGen {
 
         // Emit global variable declarations from HIR (includes local module vars)
         self.emit_hir_global_decls();
-        // Pass 2: Emit Procedures and Modules (skip Var/Const/Type)
+        // Emit procedure bodies (local module contents already hoisted into HIR)
         for decl in &m.block.decls {
-            match decl {
-                Declaration::Const(_) | Declaration::Type(_) | Declaration::Var(_) => {}
-                _ => self.gen_declaration(decl),
+            if let Declaration::Procedure(p) = decl {
+                self.gen_proc_decl(p);
             }
         }
 
@@ -68,7 +67,9 @@ impl CodeGen {
         }
 
         // Register FINALLY handler with atexit
-        if m.block.finally.is_some() {
+        let has_finally = self.prebuilt_hir.as_ref()
+            .and_then(|h| h.finally_handler.as_ref()).is_some();
+        if has_finally {
             self.emitln("atexit(m2_finally_handler);");
         }
 
@@ -77,16 +78,13 @@ impl CodeGen {
             self.emitln(&format!("{}_init();", mod_name));
         }
 
-        // Initialize local (nested) modules — run their BEGIN bodies
-        for decl in &m.block.decls {
-            if let Declaration::Module(local_mod) = decl {
-                if let Some(stmts) = &local_mod.block.body {
-                    self.emitln(&format!("/* Init local module {} */", local_mod.name));
-                    let mut hb = self.make_hir_builder();
-                    let hir_stmts = hb.lower_stmts(stmts);
-                    for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
-                }
-            }
+        // Initialize local (nested) modules — run their BEGIN bodies from HIR
+        let local_inits = self.prebuilt_hir.as_ref()
+            .map(|h| h.local_module_inits.clone())
+            .unwrap_or_default();
+        for (mod_name, stmts) in &local_inits {
+            self.emitln(&format!("/* Init local module {} */", mod_name));
+            for stmt in stmts { self.emit_hir_stmt(stmt); }
         }
 
         self.in_module_body = true;
@@ -315,11 +313,10 @@ impl CodeGen {
 
         // Pass 1: Emit global variable declarations from HIR
         self.emit_hir_global_decls();
-        // Pass 2: Emit Procedures and Modules (skip Var/Const/Type)
+        // Emit procedure bodies (local module contents already hoisted into HIR)
         for decl in &m.block.decls {
-            match decl {
-                Declaration::Const(_) | Declaration::Type(_) | Declaration::Var(_) => {}
-                _ => self.gen_declaration(decl),
+            if let Declaration::Procedure(p) = decl {
+                self.gen_proc_decl(p);
             }
         }
 
