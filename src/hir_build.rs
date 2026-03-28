@@ -3271,6 +3271,186 @@ fn collect_refs_in_desig(desig: &ast::Designator, out: &mut HashSet<String>) {
     }
 }
 
+// ── HIR-based capture analysis ──────────────────────────────────────
+
+/// Compute captures for a procedure from its HIR body.
+/// Replaces AST-walking compute_captures for procs with lowered HIR bodies.
+pub fn compute_captures_hir(
+    proc_name: &str,
+    body: &[crate::hir::HirStmt],
+    param_names: &[String],
+    local_names: &HashSet<String>,
+    outer_vars: &HashMap<String, TypeId>,
+    import_map: &HashMap<String, String>,
+    imported_modules: &HashSet<String>,
+) -> Vec<CapturedVar> {
+    let mut all_refs = HashSet::new();
+    collect_hir_refs_in_stmts(body, &mut all_refs);
+
+    // Build local set: params + declared locals + proc name itself
+    let mut locals = HashSet::new();
+    for p in param_names { locals.insert(p.clone()); }
+    for l in local_names { locals.insert(l.clone()); }
+    locals.insert(proc_name.to_string());
+
+    let mut captures: Vec<CapturedVar> = all_refs.iter()
+        .filter(|name| {
+            outer_vars.contains_key(name.as_str())
+                && !locals.contains(name.as_str())
+                && !crate::builtins::is_builtin_proc(name)
+                && !import_map.contains_key(name.as_str())
+                && !imported_modules.contains(name.as_str())
+        })
+        .map(|name| CapturedVar {
+            name: name.clone(),
+            ty: outer_vars[name],
+            is_high_companion: false,
+        })
+        .collect();
+
+    // Auto-capture _high companions
+    let mut extra = Vec::new();
+    for cap in &captures {
+        let high_name = format!("{}_high", cap.name);
+        if outer_vars.contains_key(&high_name)
+            && !captures.iter().any(|c| c.name == high_name)
+        {
+            extra.push(CapturedVar {
+                name: high_name,
+                ty: *outer_vars.get(&format!("{}_high", cap.name)).unwrap(),
+                is_high_companion: true,
+            });
+        }
+    }
+    captures.extend(extra);
+    captures.sort_by(|a, b| a.name.cmp(&b.name));
+    captures
+}
+
+fn collect_hir_refs_in_stmts(stmts: &[crate::hir::HirStmt], out: &mut HashSet<String>) {
+    for stmt in stmts { collect_hir_refs_in_stmt(stmt, out); }
+}
+
+fn collect_hir_refs_in_stmt(stmt: &crate::hir::HirStmt, out: &mut HashSet<String>) {
+    use crate::hir::HirStmtKind::*;
+    match &stmt.kind {
+        Assign { target, value } => {
+            collect_hir_refs_in_place(target, out);
+            collect_hir_refs_in_expr(value, out);
+        }
+        ProcCall { target, args } => {
+            match target {
+                crate::hir::HirCallTarget::Direct(sid) => { out.insert(sid.source_name.clone()); }
+                crate::hir::HirCallTarget::Indirect(expr) => collect_hir_refs_in_expr(expr, out),
+            }
+            for a in args { collect_hir_refs_in_expr(a, out); }
+        }
+        If { cond, then_body, elsifs, else_body } => {
+            collect_hir_refs_in_expr(cond, out);
+            collect_hir_refs_in_stmts(then_body, out);
+            for (c, b) in elsifs {
+                collect_hir_refs_in_expr(c, out);
+                collect_hir_refs_in_stmts(b, out);
+            }
+            if let Some(eb) = else_body { collect_hir_refs_in_stmts(eb, out); }
+        }
+        Case { expr, branches, else_body } => {
+            collect_hir_refs_in_expr(expr, out);
+            for branch in branches { collect_hir_refs_in_stmts(&branch.body, out); }
+            if let Some(eb) = else_body { collect_hir_refs_in_stmts(eb, out); }
+        }
+        While { cond, body } => {
+            collect_hir_refs_in_expr(cond, out);
+            collect_hir_refs_in_stmts(body, out);
+        }
+        Repeat { body, cond } => {
+            collect_hir_refs_in_stmts(body, out);
+            collect_hir_refs_in_expr(cond, out);
+        }
+        For { var, start, end, step, body, .. } => {
+            out.insert(var.clone());
+            collect_hir_refs_in_expr(start, out);
+            collect_hir_refs_in_expr(end, out);
+            if let Some(s) = step { collect_hir_refs_in_expr(s, out); }
+            collect_hir_refs_in_stmts(body, out);
+        }
+        Loop { body } => collect_hir_refs_in_stmts(body, out),
+        Return { expr } => {
+            if let Some(e) = expr { collect_hir_refs_in_expr(e, out); }
+        }
+        Exit | Retry => {}
+        Try { body, excepts, finally_body } => {
+            collect_hir_refs_in_stmts(body, out);
+            for ec in excepts { collect_hir_refs_in_stmts(&ec.body, out); }
+            if let Some(fb) = finally_body { collect_hir_refs_in_stmts(fb, out); }
+        }
+        Lock { mutex, body } => {
+            collect_hir_refs_in_expr(mutex, out);
+            collect_hir_refs_in_stmts(body, out);
+        }
+        TypeCase { expr, branches, else_body } => {
+            collect_hir_refs_in_expr(expr, out);
+            for branch in branches { collect_hir_refs_in_stmts(&branch.body, out); }
+            if let Some(eb) = else_body { collect_hir_refs_in_stmts(eb, out); }
+        }
+        Raise { expr } => {
+            if let Some(e) = expr { collect_hir_refs_in_expr(e, out); }
+        }
+        _ => {} // Empty, etc.
+    }
+}
+
+fn collect_hir_refs_in_expr(expr: &crate::hir::HirExpr, out: &mut HashSet<String>) {
+    use crate::hir::HirExprKind::*;
+    match &expr.kind {
+        IntLit(_) | RealLit(_) | StringLit(_) | CharLit(_) | BoolLit(_) | NilLit => {}
+        Place(place) => collect_hir_refs_in_place(place, out),
+        AddrOf(place) => collect_hir_refs_in_place(place, out),
+        DirectCall { target, args } => {
+            out.insert(target.source_name.clone());
+            for a in args { collect_hir_refs_in_expr(a, out); }
+        }
+        IndirectCall { callee, args } => {
+            collect_hir_refs_in_expr(callee, out);
+            for a in args { collect_hir_refs_in_expr(a, out); }
+        }
+        UnaryOp { operand, .. } => collect_hir_refs_in_expr(operand, out),
+        BinaryOp { left, right, .. } => {
+            collect_hir_refs_in_expr(left, out);
+            collect_hir_refs_in_expr(right, out);
+        }
+        SetConstructor { elements } => {
+            for elem in elements {
+                match elem {
+                    crate::hir::HirSetElement::Single(e) => collect_hir_refs_in_expr(e, out),
+                    crate::hir::HirSetElement::Range(lo, hi) => {
+                        collect_hir_refs_in_expr(lo, out);
+                        collect_hir_refs_in_expr(hi, out);
+                    }
+                }
+            }
+        }
+        Not(e) | Deref(e) | TypeTransfer(e) => collect_hir_refs_in_expr(e, out),
+    }
+}
+
+fn collect_hir_refs_in_place(place: &crate::hir::Place, out: &mut HashSet<String>) {
+    match &place.base {
+        crate::hir::PlaceBase::Local(sid) | crate::hir::PlaceBase::Global(sid) => {
+            out.insert(sid.source_name.clone());
+        }
+        crate::hir::PlaceBase::FuncRef(sid) => {
+            out.insert(sid.source_name.clone());
+        }
+        _ => {}
+    }
+    for proj in &place.projections {
+        if let crate::hir::ProjectionKind::Index(idx) = &proj.kind {
+            collect_hir_refs_in_expr(idx, out);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

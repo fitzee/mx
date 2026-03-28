@@ -581,22 +581,56 @@ impl CodeGen {
         let imported_mods: HashSet<String> = self.imported_modules.iter().cloned().collect();
 
         for np in &nested_procs {
-            let hir_captures = crate::hir_build::compute_captures(
-                np, &scope_vars_tid, &self.import_map, &imported_mods,
-            );
+            let np_name = np.heading.name.clone();
+            // Look up nested proc's HIR body for capture analysis
+            let current_mod = self.module_name.clone();
+            let hir_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+                // Search main module procedures
+                hir.procedures.iter()
+                    .find(|hp| hp.name.source_name == np_name
+                        && hp.name.module.as_deref() == Some(current_mod.as_str()))
+                    .and_then(|hp| hp.body.as_ref())
+                    .or_else(|| {
+                        // Search embedded module procedures
+                        hir.embedded_modules.iter()
+                            .find(|e| e.name == current_mod)
+                            .and_then(|e| e.procedures.iter()
+                                .find(|hp| hp.sig.name == np_name)
+                                .and_then(|hp| hp.body.as_ref()))
+                    })
+            });
+            let hir_captures = if let Some(body) = hir_body {
+                let param_names: Vec<String> = np.heading.params.iter()
+                    .flat_map(|fp| fp.names.clone())
+                    .collect();
+                let local_names: HashSet<String> = np.block.decls.iter()
+                    .filter_map(|d| match d {
+                        Declaration::Var(v) => Some(v.names.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                crate::hir_build::compute_captures_hir(
+                    &np_name, body, &param_names, &local_names,
+                    &scope_vars_tid, &self.import_map, &imported_mods,
+                )
+            } else {
+                // Fallback to AST-based capture analysis
+                crate::hir_build::compute_captures(
+                    np, &scope_vars_tid, &self.import_map, &imported_mods,
+                )
+            };
             let captures: Vec<String> = hir_captures.iter().map(|c| c.name.clone()).collect();
             if !captures.is_empty() {
                 has_any_captures = true;
-                // Add to union env struct
                 for cap_name in &captures {
                     if !all_captures.iter().any(|(n, _)| n == cap_name) {
                         let c_type = scope_vars.get(cap_name).cloned().unwrap_or("int32_t".to_string());
                         all_captures.push((cap_name.clone(), c_type));
                     }
                 }
-                // Register this nested proc as receiving the env
-                self.closure_env_type.insert(np.heading.name.clone(), env_type_name.clone());
-                child_capture_info.push((np.heading.name.clone(), captures));
+                self.closure_env_type.insert(np_name.clone(), env_type_name.clone());
+                child_capture_info.push((np_name, captures));
             }
         }
 
