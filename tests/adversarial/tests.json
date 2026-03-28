@@ -2041,5 +2041,22 @@
       "ci"
     ],
     "_comment": "Indirect call through procedure-type field in record via pointer dereference."
+  },
+  {
+    "name": "main_module_types",
+    "category": "codegen",
+    "dir": "codegen/main_module_types",
+    "main": "MainModuleTypes.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "port=8080\nmode=1\nnode=42\nitem0=3000\nbuf=hello\ncb=35\nsi=200\nset=ok\ncnt=999\n",
+    "c_scan": true,
+    "tags": [
+      "ci"
+    ],
+    "_comment": "All major type declaration kinds in main program module — exercises gen_type_decl_from_id."
   }
 ]

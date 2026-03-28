@@ -486,7 +486,8 @@ impl CodeGen {
         if let Some(ref hir) = self.prebuilt_hir {
             // Main module types
             for td in &hir.type_decls {
-                if td.type_id != crate::types::TY_VOID {
+                // Skip builtins (0..19) and TY_VOID — don't override canonical names
+                if td.type_id >= 20 {
                     entries.push((td.type_id, td.mangled.clone()));
                 }
             }

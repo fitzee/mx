@@ -103,7 +103,12 @@ pub fn build_module(
                 }
             }
             Declaration::Type(t) => {
-                let sym = sema.symtab.lookup_any(&t.name);
+                // Use scoped lookup: try module scope, then scope 0 (program module top-level)
+                let module_scope = sema.symtab.lookup_module_scope(&module_name);
+                let sym = module_scope
+                    .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &t.name))
+                    .or_else(|| sema.symtab.lookup_in_scope_direct(0, &t.name))
+                    .or_else(|| sema.symtab.lookup_any(&t.name));
                 let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
                 let exported = sym.map(|s| s.exported).unwrap_or(false);
                 let td = HirTypeDecl {
@@ -116,7 +121,11 @@ pub fn build_module(
                 type_decls_legacy.push(td);
             }
             Declaration::Const(c) => {
-                let sym = sema.symtab.lookup_any(&c.name);
+                let module_scope = sema.symtab.lookup_module_scope(&module_name);
+                let sym = module_scope
+                    .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &c.name))
+                    .or_else(|| sema.symtab.lookup_in_scope_direct(0, &c.name))
+                    .or_else(|| sema.symtab.lookup_any(&c.name));
                 let val = sym
                     .and_then(|s| match &s.kind {
                         SymbolKind::Constant(cv) => Some(const_value_to_hir(cv)),
@@ -152,6 +161,7 @@ pub fn build_module(
                 let module_scope = sema.symtab.lookup_module_scope(&module_name);
                 let var_lookup = |n: &str| -> Option<&crate::symtab::Symbol> {
                     module_scope.and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, n))
+                        .or_else(|| sema.symtab.lookup_in_scope_direct(0, n))
                         .or_else(|| sema.symtab.lookup_any(n))
                 };
                 let type_id = var_lookup(&v.names[0])

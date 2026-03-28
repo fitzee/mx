@@ -486,9 +486,14 @@ impl CodeGen {
         if self.generating_for_module.is_some() {
             self.embedded_enum_types.insert(c_type_name.clone());
         }
-        self.typeid_c_names.insert(type_id, c_type_name.clone());
-
         let resolved = self.resolve_hir_alias(type_id);
+        // Register TypeId → C name, but never override builtin TypeIds (0..19)
+        if type_id >= 20 {
+            self.typeid_c_names.insert(type_id, c_type_name.clone());
+        }
+        if resolved != type_id && resolved >= 20 {
+            self.typeid_c_names.insert(resolved, c_type_name.clone());
+        }
         let ty = self.sema.types.get(resolved).clone();
         match &ty {
             crate::types::Type::Record { fields, variants } => {
@@ -618,16 +623,19 @@ impl CodeGen {
                 }
             }
             crate::types::Type::Array { elem_type, high, .. } => {
-                if *elem_type == TY_CHAR {
+                let elem_tid = *elem_type;
+                let arr_high = *high;
+                if elem_tid == TY_CHAR {
                     self.char_array_types.insert(name.to_string());
                     self.char_array_types.insert(c_type_name.clone());
                 }
                 self.array_types.insert(name.to_string());
                 self.array_types.insert(c_type_name.clone());
-                self.array_type_high.insert(name.to_string(), format!("{}", high));
-                self.array_type_high.insert(c_type_name.clone(), format!("{}", high));
-                let ctype = self.type_id_to_c(resolved);
-                let suffix = self.type_id_array_suffix(resolved);
+                self.array_type_high.insert(name.to_string(), format!("{}", arr_high));
+                self.array_type_high.insert(c_type_name.clone(), format!("{}", arr_high));
+                // Use elem type directly (not resolved array TypeId which maps to itself)
+                let ctype = self.type_id_to_c(elem_tid);
+                let suffix = format!("[{} + 1]", arr_high);
                 self.emit_indent();
                 self.emit(&format!("typedef {} {}{};\n", ctype, c_type_name, suffix));
             }
@@ -719,8 +727,31 @@ impl CodeGen {
                 self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
             }
             _ => {
-                // Fallback: typedef via type_id_to_c
-                let ctype = self.type_id_to_c(resolved);
+                // Fallback: emit structural C type directly (bypass typeid_c_names
+                // to avoid circular typedef when a named type aliases a builtin)
+                let ctype = match self.sema.types.get(resolved) {
+                    crate::types::Type::Integer => "int32_t",
+                    crate::types::Type::Cardinal => "uint32_t",
+                    crate::types::Type::Real => "float",
+                    crate::types::Type::LongReal => "double",
+                    crate::types::Type::Boolean => "int",
+                    crate::types::Type::Char => "char",
+                    crate::types::Type::Bitset => "uint32_t",
+                    crate::types::Type::Address => "void *",
+                    crate::types::Type::LongInt => "int64_t",
+                    crate::types::Type::LongCard => "uint64_t",
+                    crate::types::Type::Word => "uint32_t",
+                    crate::types::Type::Byte => "uint8_t",
+                    crate::types::Type::Complex => "float _Complex",
+                    crate::types::Type::LongComplex => "double _Complex",
+                    _ => "int32_t",
+                };
+                // Track unsigned aliases
+                if matches!(self.sema.types.get(resolved),
+                    crate::types::Type::Cardinal | crate::types::Type::LongCard) {
+                    self.unsigned_type_aliases.insert(name.to_string());
+                    self.unsigned_type_aliases.insert(c_type_name.clone());
+                }
                 self.emit_indent();
                 self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
             }
@@ -1178,7 +1209,13 @@ impl CodeGen {
             }
         } else {
             let ctype = self.type_id_to_c(tid);
-            let array_suffix = self.type_id_array_suffix(resolved);
+            // Only add array suffix for inline (unnamed) array types.
+            // Named array types (in typeid_c_names) have the suffix in their typedef.
+            let array_suffix = if self.typeid_c_names.contains_key(&tid) {
+                String::new()
+            } else {
+                self.type_id_array_suffix(resolved)
+            };
             self.emit_indent();
             self.emit(&format!("{} {}{};\n", ctype, c_name, array_suffix));
         }
