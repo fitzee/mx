@@ -472,6 +472,12 @@ fn build_proc(
                         .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &v.names[0]))
                         .filter(|s| matches!(s.kind, SymbolKind::Variable | SymbolKind::Field));
                     if let Some(s) = sym {
+                        // Dump for debugging
+                        let resolved = {
+                            let mut id = s.typ;
+                            for _ in 0..50 { match sema.types.get(id) { crate::types::Type::Alias { target, .. } => id = *target, _ => break } }
+                            id
+                        };
                         for name in &v.names {
                             locals.push(HirLocalDecl::Var { name: name.clone(), type_id: s.typ });
                         }

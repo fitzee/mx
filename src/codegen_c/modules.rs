@@ -765,15 +765,23 @@ impl CodeGen {
                             match local {
                                 crate::hir::HirLocalDecl::Var { name, type_id } => {
                                     let resolved = self.resolve_hir_alias(*type_id);
+                                    let c_name = self.mangle(name);
                                     let is_proc = matches!(self.sema.types.get(resolved), crate::types::Type::ProcedureType { .. });
+                                    let is_ptr_to_arr = if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
+                                        matches!(self.sema.types.get(self.resolve_hir_alias(*base)), crate::types::Type::Array { .. })
+                                    } else { false };
                                     if is_proc {
-                                        let c_name = self.mangle(name);
                                         self.emit_indent();
                                         let d = self.proc_type_decl_from_id(resolved, &c_name, false);
                                         self.emit(&format!("{};\n", d));
+                                    } else if is_ptr_to_arr {
+                                        if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
+                                            let (elem_c, arr_suffix) = self.field_type_and_suffix(*base);
+                                            self.emit_indent();
+                                            self.emit(&format!("{} (*{}){};\n", elem_c, c_name, arr_suffix));
+                                        }
                                     } else {
                                         let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
-                                        let c_name = self.mangle(name);
                                         self.emit_indent();
                                         self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
                                     }
