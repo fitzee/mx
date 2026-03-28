@@ -666,69 +666,50 @@ impl CodeGen {
         self.push_var_scope();
         // Save array var tracking so procedure-local names don't collide with outer scope
         let saved_var_tracking = self.save_var_tracking();
-        for fp in &p.heading.params {
-            if matches!(fp.typ, TypeNode::OpenArray { .. }) {
-                for name in &fp.names {
-                    let mangled = self.mangle(name);
-                    if let Some(scope) = self.open_array_params.last_mut() {
-                        scope.insert(mangled);
-                    }
-                    // Register _high companion in var_types so HIR can
-                    // resolve HIGH(param) via the _high variable.
-                    let high_name = format!("{}_high", name);
-                    self.var_types.insert(high_name, "uint32_t".to_string());
+        // Register param tracking from HIR sig (TypeId-based, no AST TypeNode)
+        let hir_params = early_sig.as_ref()
+            .map(|s| s.params.clone())
+            .unwrap_or_default();
+        for hp in &hir_params {
+            let resolved = self.resolve_hir_alias(hp.type_id);
+            let is_open = matches!(self.sema.types.get(resolved), crate::types::Type::OpenArray { .. });
+            if is_open {
+                let mangled = self.mangle(&hp.name);
+                if let Some(scope) = self.open_array_params.last_mut() {
+                    scope.insert(mangled);
                 }
-            } else if fp.is_var {
-                for name in &fp.names {
-                    self.register_var_param(name);
-                }
+                let high_name = format!("{}_high", &hp.name);
+                self.var_types.insert(high_name, "uint32_t".to_string());
+            } else if hp.is_var {
+                self.register_var_param(&hp.name);
             }
             // Track named-array value params (array decays to pointer in C)
-            if !fp.is_var && !matches!(fp.typ, TypeNode::OpenArray { .. }) {
-                if let TypeNode::Named(qi) = &fp.typ {
-                    if self.array_types.contains(&qi.name) {
-                        for name in &fp.names {
-                            if let Some(scope) = self.named_array_value_params.last_mut() {
-                                scope.insert(name.clone());
-                            }
-                        }
+            if !hp.is_var && !is_open {
+                if matches!(self.sema.types.get(resolved), crate::types::Type::Array { .. }) {
+                    if let Some(scope) = self.named_array_value_params.last_mut() {
+                        scope.insert(hp.name.clone());
                     }
                 }
             }
-            // Register param type names for designator type tracking
-            if let TypeNode::Named(qi) = &fp.typ {
-                if qi.module.is_none() {
-                    for name in &fp.names {
-                        self.var_types.insert(name.clone(), qi.name.clone());
-                    }
-                }
+            // Register param type name for designator type tracking
+            if let Some(type_name) = self.type_id_source_name(hp.type_id) {
+                self.var_types.insert(hp.name.clone(), type_name);
             }
-            // Track CARDINAL/LONGCARD params for unsigned DIV/MOD
-            if matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CARDINAL" || qi.name == "LONGCARD") {
-                for name in &fp.names {
-                    self.cardinal_vars.insert(name.clone());
-                }
+            // Track unsigned/long params for DIV/MOD codegen
+            if crate::types::is_unsigned_type(&self.sema.types, resolved) {
+                self.cardinal_vars.insert(hp.name.clone());
             }
-            // Track LONGINT params for 64-bit signed DIV/MOD
-            if matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "LONGINT") {
-                for name in &fp.names {
-                    self.longint_vars.insert(name.clone());
-                }
+            if resolved == TY_LONGINT {
+                self.longint_vars.insert(hp.name.clone());
             }
-            // Track LONGCARD params for 64-bit detection
-            if matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "LONGCARD") {
-                for name in &fp.names {
-                    self.longcard_vars.insert(name.clone());
-                }
+            if resolved == TY_LONGCARD {
+                self.longcard_vars.insert(hp.name.clone());
             }
-            // Also track params whose type aliases resolve to CARDINAL/LONGCARD
-            // (e.g. Timestamp = LONGCARD)
-            if let TypeNode::Named(qi) = &fp.typ {
-                if self.unsigned_type_aliases.contains(&qi.name) {
-                    for name in &fp.names {
-                        self.cardinal_vars.insert(name.clone());
-                        self.longcard_vars.insert(name.clone());
-                    }
+            // Aliases to unsigned types (e.g. Timestamp = LONGCARD)
+            if let Some(type_name) = self.type_id_source_name(hp.type_id) {
+                if self.unsigned_type_aliases.contains(&type_name) {
+                    self.cardinal_vars.insert(hp.name.clone());
+                    self.longcard_vars.insert(hp.name.clone());
                 }
             }
         }

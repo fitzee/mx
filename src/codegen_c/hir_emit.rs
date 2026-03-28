@@ -245,6 +245,29 @@ impl super::CodeGen {
         matches!(self.sema.types.get(expr.ty), crate::types::Type::Set { .. })
     }
 
+    /// Get the M2 source name for a TypeId (builtin name or Alias name).
+    pub(crate) fn type_id_source_name(&self, tid: TypeId) -> Option<String> {
+        match tid {
+            TY_INTEGER => Some("INTEGER".into()),
+            TY_CARDINAL => Some("CARDINAL".into()),
+            TY_REAL => Some("REAL".into()),
+            TY_LONGREAL => Some("LONGREAL".into()),
+            TY_BOOLEAN => Some("BOOLEAN".into()),
+            TY_CHAR => Some("CHAR".into()),
+            TY_BITSET => Some("BITSET".into()),
+            TY_ADDRESS => Some("ADDRESS".into()),
+            TY_LONGINT => Some("LONGINT".into()),
+            TY_LONGCARD => Some("LONGCARD".into()),
+            _ => {
+                if let crate::types::Type::Alias { name, .. } = self.sema.types.get(tid) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     /// Check if an HIR expression is unsigned (CARDINAL/LONGCARD).
     fn is_hir_unsigned(&self, expr: &HirExpr) -> bool {
         expr.ty == TY_CARDINAL || expr.ty == TY_LONGCARD
