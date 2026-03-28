@@ -1,16 +1,15 @@
 use super::*;
 
 impl CodeGen {
-    pub(crate) fn gen_program_module(&mut self, m: &ProgramModule) -> CompileResult<()> {
-        self.module_name = m.name.clone();
-        self.build_import_map(&m.imports);
-
+    pub(crate) fn gen_program_module(&mut self) -> CompileResult<()> {
+        // module_name and import_map already set by post_sema_generate
         self.emit_preamble_for_imports()?;
 
+        let mod_name = self.module_name.clone();
         if self.multi_tu {
-            self.emit(&format!("/* MX_MAIN_BEGIN {} */\n", m.name));
+            self.emit(&format!("/* MX_MAIN_BEGIN {} */\n", mod_name));
         }
-        self.emitln(&format!("/* Module {} */", m.name));
+        self.emitln(&format!("/* Module {} */", mod_name));
         self.newline();
 
         // Structural declarations from prebuilt HIR
@@ -29,12 +28,12 @@ impl CodeGen {
 
         // Emit global variable declarations from HIR (includes local module vars)
         self.emit_hir_global_decls();
-        // Emit procedure bodies (local module contents already hoisted into HIR)
-        for decl in &m.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                self.gen_proc_decl(p);
-            }
+        // Emit procedure bodies from stored proc declarations
+        let procs = std::mem::take(&mut self.unit_proc_decls);
+        for p in &procs {
+            self.gen_proc_decl(p);
         }
+        self.unit_proc_decls = procs;
 
         // ISO Modula-2: generate FINALLY handler from prebuilt HIR
         let finally_body = self.prebuilt_hir.as_ref().and_then(|h| h.finally_handler.clone());
@@ -108,13 +107,14 @@ impl CodeGen {
 
     pub(crate) fn gen_definition_module(&mut self, m: &DefinitionModule) {
         self.module_name = m.name.clone();
-        self.emitln(&format!("/* Definition Module {} */", m.name));
-        self.emitln(&format!("#ifndef {}_H", m.name.to_uppercase()));
-        self.emitln(&format!("#define {}_H", m.name.to_uppercase()));
+        let mod_name = m.name.clone();
+        self.emitln(&format!("/* Definition Module {} */", mod_name));
+        self.emitln(&format!("#ifndef {}_H", mod_name.to_uppercase()));
+        self.emitln(&format!("#define {}_H", mod_name.to_uppercase()));
         self.newline();
 
         // Forward struct declarations for record types (and POINTER TO RECORD)
-        let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
+        let def_scope = self.sema.symtab.lookup_module_scope(&mod_name);
         {
             let type_syms: Vec<(String, crate::types::TypeId)> = def_scope.map(|scope_id| {
                 self.sema.symtab.symbols_in_scope(scope_id).iter()
@@ -217,13 +217,12 @@ impl CodeGen {
         self.emitln("#endif");
     }
 
-    pub(crate) fn gen_implementation_module(&mut self, m: &ImplementationModule) -> CompileResult<()> {
-        self.module_name = m.name.clone();
-        self.build_import_map(&m.imports);
-
+    pub(crate) fn gen_implementation_module(&mut self) -> CompileResult<()> {
+        // module_name, import_map, unit_proc_decls already set by post_sema_generate
         self.emit_preamble_for_imports()?;
 
-        self.emitln(&format!("/* Implementation Module {} */", m.name));
+        let mod_name = self.module_name.clone();
+        self.emitln(&format!("/* Implementation Module {} */", mod_name));
         self.newline();
 
         // Emit types and constants from the corresponding definition module.
@@ -234,9 +233,9 @@ impl CodeGen {
         } else {
             std::collections::HashSet::new()
         };
-        if let Some(def_mod) = self.def_modules.get(&m.name).cloned() {
+        if let Some(def_mod) = self.def_modules.get(&mod_name).cloned() {
             // Forward struct declarations from the definition module via sema types
-            let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
+            let def_scope = self.sema.symtab.lookup_module_scope(&mod_name);
             let def_types: Vec<(String, crate::types::TypeId)> = def_scope.map(|scope_id| {
                 self.sema.symtab.symbols_in_scope(scope_id).iter()
                     .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Type))
@@ -265,14 +264,14 @@ impl CodeGen {
             }
             // Emit type and const declarations from the definition module via sema scope
             {
-                let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
+                let def_scope = self.sema.symtab.lookup_module_scope(&mod_name);
                 let def_syms: Vec<(String, crate::symtab::SymbolKind, crate::types::TypeId, bool)> =
                     def_scope.map(|sid| {
                         self.sema.symtab.symbols_in_scope(sid).iter()
                             .map(|s| (s.name.clone(), s.kind.clone(), s.typ, s.exported))
                             .collect()
                     }).unwrap_or_default();
-                let mod_name = m.name.clone();
+                let mod_name = mod_name.clone();
                 for (name, kind, typ, exported) in &def_syms {
                     match kind {
                         crate::symtab::SymbolKind::Type if !impl_type_names.contains(name) => {
@@ -313,27 +312,22 @@ impl CodeGen {
 
         // Pass 1: Emit global variable declarations from HIR
         self.emit_hir_global_decls();
-        // Emit procedure bodies (local module contents already hoisted into HIR)
-        for decl in &m.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                self.gen_proc_decl(p);
-            }
+        // Emit procedure bodies from stored proc declarations
+        let procs = std::mem::take(&mut self.unit_proc_decls);
+        for p in &procs {
+            self.gen_proc_decl(p);
         }
+        self.unit_proc_decls = procs;
 
         // Module body = initialization function
-        if let Some(stmts) = &m.block.body {
-            self.emit_line_directive(&m.block.loc);
-            self.emitln(&format!("void {}_init(void) {{", self.mangle(&m.name)));
+        let has_init = self.prebuilt_hir.as_ref()
+            .and_then(|h| h.init_body.as_ref()).is_some();
+        if has_init {
+            self.emitln(&format!("void {}_init(void) {{", self.mangle(&mod_name)));
             self.indent += 1;
             // Use prebuilt HIR init body
-            let prebuilt = self.prebuilt_hir.as_ref()
-                .and_then(|hir| hir.init_body.clone());
-            if let Some(body) = prebuilt {
+            if let Some(body) = self.prebuilt_hir.as_ref().and_then(|h| h.init_body.clone()) {
                 for stmt in &body { self.emit_hir_stmt(stmt); }
-            } else {
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(stmts);
-                for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
             }
             self.indent -= 1;
             self.emitln("}");
