@@ -127,8 +127,6 @@ pub struct CodeGen {
     module_exports: HashMap<String, Vec<(String, Vec<ParamCodegenInfo>)>>,
     /// Pending implementation modules to be generated before the main module
     pending_modules: Option<Vec<ImplementationModule>>,
-    /// Main unit's top-level procedure declarations (extracted from CompilationUnit)
-    unit_proc_decls: Vec<crate::ast::ProcDecl>,
     /// Maps nested proc name → env struct type name it receives (e.g., "Add" → "Accumulate_env")
     closure_env_type: HashMap<String, String>,
     /// Maps env struct type name → ordered list of (var_name, c_type) fields
@@ -295,7 +293,6 @@ impl CodeGen {
             imported_modules: HashSet::new(),
             module_exports: HashMap::new(),
             pending_modules: None,
-            unit_proc_decls: Vec::new(),
             closure_env_type: HashMap::new(),
             closure_env_fields: HashMap::new(),
             env_access_names: Vec::new(),
@@ -609,15 +606,11 @@ impl CodeGen {
             self.emit("/* MX_HEADER_END */\n");
         }
 
-        // Extract module metadata and proc declarations from AST, then
-        // dispatch to gen functions that read from self (no AST params).
+        // Extract module name and imports, dispatch to gen functions.
         match unit {
             CompilationUnit::ProgramModule(m) => {
                 self.module_name = m.name.clone();
                 self.build_import_map(&m.imports);
-                self.unit_proc_decls = m.block.decls.iter()
-                    .filter_map(|d| if let Declaration::Procedure(p) = d { Some(p.clone()) } else { None })
-                    .collect();
                 self.gen_program_module()?
             }
             CompilationUnit::DefinitionModule(m) => {
@@ -627,9 +620,6 @@ impl CodeGen {
             CompilationUnit::ImplementationModule(m) => {
                 self.module_name = m.name.clone();
                 self.build_import_map(&m.imports);
-                self.unit_proc_decls = m.block.decls.iter()
-                    .filter_map(|d| if let Declaration::Procedure(p) = d { Some(p.clone()) } else { None })
-                    .collect();
                 self.gen_implementation_module()?
             }
         }

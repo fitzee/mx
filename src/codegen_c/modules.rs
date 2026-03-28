@@ -28,12 +28,16 @@ impl CodeGen {
 
         // Emit global variable declarations from HIR (includes local module vars)
         self.emit_hir_global_decls();
-        // Emit procedure bodies from stored proc declarations
-        let procs = std::mem::take(&mut self.unit_proc_decls);
-        for p in &procs {
-            self.gen_proc_decl(p);
+        // Emit procedure bodies from HIR proc declarations (non-nested only)
+        let proc_names: Vec<String> = self.prebuilt_hir.as_ref()
+            .map(|hir| hir.proc_decls.iter()
+                .filter(|pd| !pd.sig.is_nested)
+                .map(|pd| pd.sig.name.clone())
+                .collect())
+            .unwrap_or_default();
+        for name in &proc_names {
+            self.gen_proc_by_name(name);
         }
-        self.unit_proc_decls = procs;
 
         // ISO Modula-2: generate FINALLY handler from prebuilt HIR
         let finally_body = self.prebuilt_hir.as_ref().and_then(|h| h.finally_handler.clone());
@@ -312,12 +316,16 @@ impl CodeGen {
 
         // Pass 1: Emit global variable declarations from HIR
         self.emit_hir_global_decls();
-        // Emit procedure bodies from stored proc declarations
-        let procs = std::mem::take(&mut self.unit_proc_decls);
-        for p in &procs {
-            self.gen_proc_decl(p);
+        // Emit procedure bodies from HIR proc declarations (non-nested only)
+        let proc_names: Vec<String> = self.prebuilt_hir.as_ref()
+            .map(|hir| hir.proc_decls.iter()
+                .filter(|pd| !pd.sig.is_nested)
+                .map(|pd| pd.sig.name.clone())
+                .collect())
+            .unwrap_or_default();
+        for name in &proc_names {
+            self.gen_proc_by_name(name);
         }
-        self.unit_proc_decls = procs;
 
         // Module body = initialization function
         let has_init = self.prebuilt_hir.as_ref()
