@@ -543,7 +543,7 @@ impl CodeGen {
 
         // ── Closure analysis for nested procedures ──────────────────────
         // Build the set of variables available in this scope (params + locals + env vars)
-        let mut scope_vars = self.build_scope_vars(p);
+        let mut scope_vars = self.build_scope_vars(&p.heading.name);
         // Also include vars this proc received through its own env (for deep nesting)
         if let Some(my_env_vars) = self.env_access_names.last() {
             for env_var in my_env_vars {
@@ -1041,18 +1041,18 @@ impl CodeGen {
 
     /// Build a map of variable name → C type for a procedure's own params and local vars.
     /// Uses HirProcSig params + HirProc.locals for TypeId-based resolution.
-    pub(crate) fn build_scope_vars(&self, p: &ProcDecl) -> HashMap<String, String> {
+    pub(crate) fn build_scope_vars(&self, proc_name: &str) -> HashMap<String, String> {
         let mut vars = HashMap::new();
         let current_module = self.module_name.clone();
         // Try to get params from HirProcSig
         let hir_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
             hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == current_module)
                 .map(|pd| pd.sig.clone())
                 .or_else(|| hir.embedded_modules.iter()
                     .find(|e| e.name == current_module)
                     .and_then(|e| e.procedures.iter()
-                        .find(|pd| pd.sig.name == p.heading.name)
+                        .find(|pd| pd.sig.name == proc_name)
                         .map(|pd| pd.sig.clone())))
         });
         if let Some(ref sig) = hir_sig {
@@ -1069,7 +1069,7 @@ impl CodeGen {
         // Local vars from HirProc.locals
         let hir_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
             hir.procedures.iter()
-                .find(|hp| hp.name.source_name == p.heading.name
+                .find(|hp| hp.name.source_name == proc_name
                     && hp.name.module.as_deref() == Some(current_module.as_str()))
                 .map(|hp| hp.locals.clone())
         });
