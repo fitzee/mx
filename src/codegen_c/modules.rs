@@ -702,42 +702,6 @@ impl CodeGen {
                             }
                         }
                     }
-                } else {
-                    // Fallback to AST prototype
-                    let ret_type = if let Some(rt) = &p.heading.return_type {
-                        self.type_to_c(rt)
-                    } else {
-                        "void".to_string()
-                    };
-                    if let Some(ref ecn) = p.heading.export_c_name {
-                        self.emit(&format!("{} {}", ret_type, ecn));
-                    } else if self.multi_tu {
-                        self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
-                    } else {
-                        self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
-                    }
-                    self.emit("(");
-                    if p.heading.params.is_empty() {
-                        self.emit("void");
-                    } else {
-                        let mut first = true;
-                        for fp in &p.heading.params {
-                            let ctype = self.type_to_c(&fp.typ);
-                            let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
-                            for name in &fp.names {
-                                if !first { self.emit(", "); }
-                                first = false;
-                                let c_param = self.mangle(name);
-                                if is_open {
-                                    self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                                } else if fp.is_var {
-                                    self.emit(&format!("{} *{}", ctype, c_param));
-                                } else {
-                                    self.emit(&format!("{} {}", ctype, c_param));
-                                }
-                            }
-                        }
-                    }
                 }
                 self.emit(") {\n");
                 self.indent += 1;
