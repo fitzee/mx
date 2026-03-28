@@ -942,10 +942,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         )
     })?;
 
-    // Phase 5: full sema analysis of all impl modules (after main unit)
-    for imp in &all_impl_mods {
-        sema.analyze_impl_module(imp);
-    }
+    // Impl modules already analyzed by register_impl_module (Phase 3).
+    // A second analyze_impl_module pass would create duplicate proc scopes.
     sema.fixup_record_field_types();
 
     // ── Phase 4: HIR construction ──────────────────────────────────

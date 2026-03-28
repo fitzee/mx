@@ -486,7 +486,13 @@ impl CodeGen {
         if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
             let mut deps: Vec<String> = Vec::new();
             for sym in self.sema.symtab.symbols_in_scope(scope_id) {
-                // Symbols imported from other modules have sym.module set
+                // Whole-module imports (IMPORT Json) create Module symbols
+                if let crate::symtab::SymbolKind::Module { .. } = &sym.kind {
+                    if sym.name != name && !deps.contains(&sym.name) {
+                        deps.push(sym.name.clone());
+                    }
+                }
+                // FROM Module IMPORT name — symbol has module set
                 if let Some(ref src_mod) = sym.module {
                     if src_mod != name && !deps.contains(src_mod) {
                         deps.push(src_mod.clone());
@@ -527,8 +533,15 @@ impl CodeGen {
             if let Some(emb) = hir.embedded_modules.iter().find(|e| e.name == name) {
                 for hi in &emb.imports {
                     if !hi.is_qualified {
-                        if !deps.contains(&hi.module) {
+                        if !deps.contains(&hi.module) && !hi.module.is_empty() {
                             deps.push(hi.module.clone());
+                        }
+                    } else {
+                        // IMPORT Module — qualified import, module name is in names
+                        for n in &hi.names {
+                            if !deps.contains(&n.name) {
+                                deps.push(n.name.clone());
+                            }
                         }
                     }
                 }
