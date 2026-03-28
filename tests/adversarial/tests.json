@@ -2058,5 +2058,22 @@
       "ci"
     ],
     "_comment": "All major type declaration kinds in main program module — exercises gen_type_decl_from_id."
+  },
+  {
+    "name": "proc_local_decls",
+    "category": "codegen",
+    "dir": "codegen/proc_local_decls",
+    "main": "ProcLocalDecls.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "buf=hello\ncolor=1\nconst=18\ncbuf=hi\nnested=37\nvec=600\n",
+    "c_scan": true,
+    "tags": [
+      "ci"
+    ],
+    "_comment": "PIM4 proc-local TYPE, CONST, VAR, nested PROCEDURE with closures."
   }
 ]

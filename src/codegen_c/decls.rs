@@ -512,7 +512,8 @@ impl CodeGen {
                     }
                 }
                 self.record_fields.insert(name.to_string(), field_names);
-                // Emit struct body
+                // Forward typedef + struct body
+                self.emitln(&format!("typedef struct {} {};", c_type_name, c_type_name));
                 self.emitln(&format!("struct {} {{", c_type_name));
                 self.indent += 1;
                 for f in fields {
@@ -1483,13 +1484,23 @@ impl CodeGen {
             self.indent += 1;
         }
 
-        // Use prebuilt HIR body if available, otherwise fall back to on-demand
+        // Use prebuilt HIR body if available — search top-level and nested procs
         let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
             let proc_name = &p.heading.name;
+            let mod_name = &self.module_name;
+            // Search top-level procs
             hir.procedures.iter()
                 .find(|hp| hp.name.source_name == *proc_name
-                    && hp.name.module.as_deref() == Some(&self.module_name))
+                    && hp.name.module.as_deref() == Some(mod_name.as_str()))
                 .and_then(|hp| hp.body.clone())
+                .or_else(|| {
+                    // Search nested procs within top-level procs
+                    hir.procedures.iter()
+                        .flat_map(|hp| hp.nested_procs.iter())
+                        .find(|np| np.name.source_name == *proc_name
+                            && np.name.module.as_deref() == Some(mod_name.as_str()))
+                        .and_then(|np| np.body.clone())
+                })
         });
         if let Some(body) = prebuilt_body {
             for stmt in &body {

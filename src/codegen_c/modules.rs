@@ -1145,6 +1145,9 @@ impl CodeGen {
             return;
         };
         for pd in &procs {
+            // Skip nested procs — they get forward-declared by gen_proc_decl
+            // after computing their mangled names
+            if pd.sig.is_nested { continue; }
             self.register_hir_proc_params(&pd.sig);
             self.gen_hir_proc_prototype(&pd.sig);
             self.emit(";\n");

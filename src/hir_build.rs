@@ -480,12 +480,59 @@ fn build_proc(
         None
     };
 
-    // Build nested procs
+    // Build nested procs — enter parent proc scope first so nested scope lookup works
     let mut nested = Vec::new();
     for decl in &p.block.decls {
         if let Declaration::Procedure(np) = decl {
-            let nested_proc = build_proc(np, module_name, imported_modules, import_aliases, sema);
-            nested.push(nested_proc);
+            let mut nhb = HirBuilder::new(
+                &sema.types, &sema.symtab, module_name, &sema.foreign_modules,
+            );
+            nhb.set_imported_modules(imported_modules.to_vec());
+            nhb.set_import_alias_map(import_aliases.clone());
+            // Enter the parent proc scope so the nested proc's scope can be found as a child
+            nhb.enter_procedure_named(&p.heading.name);
+            nhb.enter_procedure_named(&np.heading.name);
+            // Register nested proc's open array _high companions
+            for fp in &np.heading.params {
+                if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                    for name in &fp.names {
+                        let high_name = format!("{}_high", name);
+                        nhb.register_var(&high_name, TY_INTEGER);
+                        nhb.register_local(&high_name);
+                    }
+                }
+            }
+            let nbody = if let Some(stmts) = &np.block.body {
+                Some(nhb.lower_stmts(stmts))
+            } else {
+                None
+            };
+            let nparams: Vec<HirParam> = np.heading.params.iter().flat_map(|fp| {
+                let is_open = matches!(fp.typ, ast::TypeNode::OpenArray { .. });
+                fp.names.iter().map(move |name| HirParam {
+                    name: name.clone(),
+                    ty: TY_INTEGER,
+                    is_var: fp.is_var,
+                    is_open_array: is_open,
+                })
+            }).collect();
+            nested.push(HirProc {
+                name: SymbolId {
+                    mangled: format!("{}_{}", module_name, np.heading.name),
+                    source_name: np.heading.name.clone(),
+                    module: Some(module_name.to_string()),
+                    ty: TY_VOID,
+                    is_var_param: false,
+                    is_open_array: false,
+                },
+                params: nparams,
+                return_type: None,
+                captures: Vec::new(),
+                locals: Vec::new(),
+                body: nbody,
+                nested_procs: Vec::new(),
+                is_exported: false,
+            });
         }
     }
 
@@ -592,28 +639,59 @@ fn build_proc_decl(
         },
         body: None,
         locals: {
-            // Populate local declarations with TypeIds from the proc's scope
             let proc_scope = sema.symtab.lookup_module_scope(&h.name);
+            let lookup = |name: &str| -> Option<&crate::symtab::Symbol> {
+                proc_scope
+                    .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, name))
+                    .or_else(|| sema.symtab.lookup_module_scope(module_name)
+                        .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, name)))
+                    .or_else(|| sema.symtab.lookup_innermost(name))
+            };
             let mut locals = Vec::new();
             for d in block_decls {
-                if let ast::Declaration::Var(v) = d {
-                    // Look up in proc scope first, then module scope
-                    let var_tid = proc_scope
-                        .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &v.names[0]))
-                        .or_else(|| sema.symtab.lookup_module_scope(module_name)
-                            .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &v.names[0])))
-                        .or_else(|| sema.symtab.lookup_innermost(&v.names[0]))
-                        .map(|s| s.typ)
-                        .unwrap_or(TY_INTEGER);
-                    for name in &v.names {
-                        locals.push(HirLocalDecl {
-                            name: name.clone(),
-                            type_id: var_tid,
-                            c_type: String::new(),
-                            c_array_suffix: String::new(),
-                            is_proc_type: false,
+                match d {
+                    ast::Declaration::Var(v) => {
+                        let tid = lookup(&v.names[0]).map(|s| s.typ).unwrap_or(TY_INTEGER);
+                        for name in &v.names {
+                            locals.push(HirLocalDecl::Var {
+                                name: name.clone(),
+                                type_id: tid,
+                            });
+                        }
+                    }
+                    ast::Declaration::Type(t) => {
+                        let tid = lookup(&t.name).map(|s| s.typ).unwrap_or(TY_VOID);
+                        locals.push(HirLocalDecl::Type {
+                            name: t.name.clone(),
+                            type_id: tid,
                         });
                     }
+                    ast::Declaration::Const(c) => {
+                        let sym = lookup(&c.name);
+                        let val = sym
+                            .and_then(|s| match &s.kind {
+                                SymbolKind::Constant(cv) => Some(const_value_to_hir(cv)),
+                                _ => None,
+                            })
+                            .unwrap_or(ConstVal::Integer(0));
+                        let tid = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                        locals.push(HirLocalDecl::Const(HirConstDecl {
+                            name: c.name.clone(),
+                            mangled: c.name.clone(),
+                            value: val.clone(),
+                            type_id: tid,
+                            exported: false,
+                            c_type: const_val_c_type(&val),
+                        }));
+                    }
+                    ast::Declaration::Exception(e) => {
+                        locals.push(HirLocalDecl::Exception {
+                            name: e.name.clone(),
+                            mangled: format!("M2_EXC_{}", e.name),
+                            exc_id: 0,
+                        });
+                    }
+                    _ => {} // Procedure and Module handled separately
                 }
             }
             locals

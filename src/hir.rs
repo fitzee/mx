@@ -517,14 +517,24 @@ pub struct HirParamDecl {
     pub needs_high: bool,
 }
 
-/// Local variable declaration inside a procedure.
+/// Local declaration inside a procedure body (var, type, const, or exception).
+/// Stored in source order to preserve const-before-type dependencies.
 #[derive(Debug, Clone)]
-pub struct HirLocalDecl {
-    pub name: String,
-    pub type_id: TypeId,
-    pub c_type: String,
-    pub c_array_suffix: String,
-    pub is_proc_type: bool,
+pub enum HirLocalDecl {
+    Var {
+        name: String,
+        type_id: TypeId,
+    },
+    Type {
+        name: String,
+        type_id: TypeId,
+    },
+    Const(HirConstDecl),
+    Exception {
+        name: String,
+        mangled: String,
+        exc_id: i64,
+    },
 }
 
 // ── Embedded module ─────────────────────────────────────────────────

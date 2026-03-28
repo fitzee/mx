@@ -436,6 +436,10 @@ impl CodeGen {
     /// native stdlib (m2_Module_Name), foreign modules (bare name).
     pub(crate) fn resolve_func_ref_name(&self, sid: &crate::hir::SymbolId) -> String {
         let orig = self.original_import_name(&sid.source_name);
+        // Check nested proc mangled names first
+        if let Some(mangled) = self.nested_proc_names.get(&sid.source_name) {
+            return mangled.clone();
+        }
         if let Some(ref module) = sid.module {
             if module == &self.module_name && !self.embedded_local_procs.contains(&sid.source_name) {
                 return self.mangle(&sid.source_name);

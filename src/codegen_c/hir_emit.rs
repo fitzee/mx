@@ -104,7 +104,21 @@ impl super::CodeGen {
                 } else {
                     self.hir_args_to_string(args, &c_name)
                 };
-                format!("{}({})", c_name, arg_strs)
+                // Prepend closure env argument if callee has one
+                if self.closure_env_type.contains_key(&target.source_name) {
+                    let env_name = if self.child_env_type_stack.last().is_some() {
+                        "&_child_env"
+                    } else {
+                        "&_env"
+                    };
+                    if arg_strs.is_empty() {
+                        format!("{}({})", c_name, env_name)
+                    } else {
+                        format!("{}({}, {})", c_name, env_name, arg_strs)
+                    }
+                } else {
+                    format!("{}({})", c_name, arg_strs)
+                }
             }
 
             HirExprKind::IndirectCall { callee, args } => {
@@ -286,6 +300,10 @@ impl super::CodeGen {
 
     /// Resolve a call target SymbolId to a C function name.
     fn resolve_call_name(&self, target: &SymbolId) -> String {
+        // Check nested proc mangled names first
+        if let Some(mangled) = self.nested_proc_names.get(&target.source_name) {
+            return mangled.clone();
+        }
         let orig = self.original_import_name(&target.source_name);
         if let Some(ref module) = target.module {
             // Same module AND it's the main module (not embedded): no prefix
@@ -576,7 +594,30 @@ impl super::CodeGen {
                     }
                 };
                 self.emit_indent();
-                self.emit(&format!("{}({});\n", name, arg_str));
+                // Prepend closure env for nested procs with captures
+                let call_target_name = match target {
+                    HirCallTarget::Direct(sid) => Some(sid.source_name.clone()),
+                    _ => None,
+                };
+                if let Some(ref tname) = call_target_name {
+                    if self.closure_env_type.contains_key(tname.as_str()) {
+                        // Use _child_env if we're in the parent proc, _env if we're in a sibling
+                        let env_name = if self.child_env_type_stack.last().is_some() {
+                            "&_child_env"
+                        } else {
+                            "&_env"
+                        };
+                        if arg_str.is_empty() {
+                            self.emit(&format!("{}({});\n", name, env_name));
+                        } else {
+                            self.emit(&format!("{}({}, {});\n", name, env_name, arg_str));
+                        }
+                    } else {
+                        self.emit(&format!("{}({});\n", name, arg_str));
+                    }
+                } else {
+                    self.emit(&format!("{}({});\n", name, arg_str));
+                }
             }
 
             HirStmtKind::If { cond, then_body, elsifs, else_body } => {
