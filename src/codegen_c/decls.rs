@@ -860,77 +860,72 @@ impl CodeGen {
     /// Emit extern declarations for all foreign (C ABI) definition modules.
     pub(crate) fn gen_foreign_extern_decls(&mut self) {
         const STDLIB_C_HELPERS: &[&str] = &["CStr", "CIO", "CMem", "CMath", "CRand"];
-        for def in self.foreign_def_modules.clone() {
-            if STDLIB_C_HELPERS.contains(&def.name.as_str()) { continue; }
-            self.emitln(&format!("/* Foreign C bindings: {} */", def.name));
-            for d in &def.definitions {
-                match d {
-                    Definition::Procedure(h) => {
-                        // Build HirProcSig and emit via TypeId
-                        let sig = crate::hir_build::build_proc_decl(
-                            h, &[], &def.name, &self.sema, false, None).sig;
-                        self.emit_indent();
-                        self.emit("extern ");
-                        let ret_type = match sig.return_type {
-                            Some(rt) => self.type_id_to_c(rt),
-                            None => "void".to_string(),
-                        };
-                        self.emit(&format!("{} {}", ret_type, h.name));
-                        self.emit("(");
-                        if sig.params.is_empty() {
-                            self.emit("void");
-                        } else {
-                            let mut first = true;
-                            for sp in &sig.params {
-                                if !first { self.emit(", "); }
-                                first = false;
-                                let ctype = self.type_id_to_c(sp.type_id);
-                                let c_param = self.mangle(&sp.name);
-                                if sp.is_open_array {
-                                    self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                                } else if sp.is_var {
-                                    self.emit(&format!("{} *{}", ctype, c_param));
-                                } else {
-                                    self.emit(&format!("{} {}", ctype, c_param));
+        let foreign_names: Vec<String> = self.foreign_def_modules.iter()
+            .filter(|d| !STDLIB_C_HELPERS.contains(&d.name.as_str()))
+            .map(|d| d.name.clone())
+            .collect();
+        for mod_name in &foreign_names {
+            self.emitln(&format!("/* Foreign C bindings: {} */", mod_name));
+            if let Some(scope_id) = self.sema.symtab.lookup_module_scope(mod_name) {
+                let syms: Vec<(String, crate::symtab::SymbolKind, crate::types::TypeId, bool)> =
+                    self.sema.symtab.symbols_in_scope(scope_id).iter()
+                        .map(|s| (s.name.clone(), s.kind.clone(), s.typ, s.exported))
+                        .collect();
+                for (name, kind, typ, exported) in &syms {
+                    match kind {
+                        crate::symtab::SymbolKind::Procedure { params, return_type, .. } => {
+                            self.emit_indent();
+                            self.emit("extern ");
+                            let ret_type = match return_type {
+                                Some(rt) => self.type_id_to_c(*rt),
+                                None => "void".to_string(),
+                            };
+                            self.emit(&format!("{} {}(", ret_type, name));
+                            if params.is_empty() {
+                                self.emit("void");
+                            } else {
+                                let mut first = true;
+                                for p in params {
+                                    if !first { self.emit(", "); }
+                                    first = false;
+                                    let resolved = self.resolve_hir_alias(p.typ);
+                                    let ctype = self.type_id_to_c(p.typ);
+                                    let c_param = self.mangle(&p.name);
+                                    if matches!(self.sema.types.get(resolved), crate::types::Type::OpenArray { .. }) {
+                                        self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
+                                    } else if p.is_var {
+                                        self.emit(&format!("{} *{}", ctype, c_param));
+                                    } else {
+                                        self.emit(&format!("{} {}", ctype, c_param));
+                                    }
                                 }
                             }
+                            self.emit(");\n");
                         }
-                        self.emit(");\n");
-                    }
-                    Definition::Var(v) => {
-                        let sym = self.sema.symtab.lookup_innermost(&v.names[0]);
-                        let tid = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
-                        let (ctype, arr_suffix) = self.field_type_and_suffix(self.resolve_hir_alias(tid));
-                        for name in &v.names {
+                        crate::symtab::SymbolKind::Variable => {
+                            let (ctype, arr_suffix) = self.field_type_and_suffix(self.resolve_hir_alias(*typ));
                             self.emit_indent();
                             self.emitln(&format!("extern {} {}{};", ctype, name, arr_suffix));
                         }
-                    }
-                    Definition::Const(c) => {
-                        let sym = self.sema.symtab.lookup_innermost(&c.name);
-                        if let Some(s) = sym {
-                            if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
-                                let val = crate::hir_build::const_value_to_hir(cv);
-                                let hc = crate::hir::HirConstDecl {
-                                    name: c.name.clone(),
-                                    mangled: self.mangle(&c.name),
-                                    value: val.clone(),
-                                    type_id: s.typ,
-                                    exported: s.exported,
-                                    c_type: crate::hir_build::const_val_c_type(&val),
-                                };
-                                self.gen_hir_const_decl(&hc);
+                        crate::symtab::SymbolKind::Constant(cv) => {
+                            let val = crate::hir_build::const_value_to_hir(cv);
+                            let hc = crate::hir::HirConstDecl {
+                                name: name.clone(),
+                                mangled: self.mangle(name),
+                                value: val.clone(),
+                                type_id: *typ,
+                                exported: *exported,
+                                c_type: crate::hir_build::const_val_c_type(&val),
+                            };
+                            self.gen_hir_const_decl(&hc);
+                        }
+                        crate::symtab::SymbolKind::Type => {
+                            if *typ != crate::types::TY_VOID {
+                                self.gen_type_decl_from_id(name, *typ);
                             }
                         }
+                        _ => {}
                     }
-                    Definition::Type(t) => {
-                        let sym = self.sema.symtab.lookup_innermost(&t.name);
-                        let tid = sym.map(|s| s.typ).unwrap_or(crate::types::TY_VOID);
-                        if tid != crate::types::TY_VOID {
-                            self.gen_type_decl_from_id(&t.name, tid);
-                        }
-                    }
-                    Definition::Exception(_) => {}
                 }
             }
             self.newline();
