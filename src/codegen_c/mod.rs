@@ -396,28 +396,8 @@ impl CodeGen {
     /// These will be generated as embedded code when the main module is compiled.
     pub fn add_imported_module(&mut self, imp: ImplementationModule) {
         let mod_name = imp.name.clone();
-        // Extract exported procedure info from the implementation module
-        let mut exports = Vec::new();
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                let mut param_info = Vec::new();
-                for fp in &p.heading.params {
-                    let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                    let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
-                    for name in &fp.names {
-                        param_info.push(ParamCodegenInfo {
-                            name: name.clone(),
-                            is_var: fp.is_var,
-                            is_open_array,
-                            is_char,
-                        });
-                    }
-                }
-                exports.push((p.heading.name.clone(), param_info));
-            }
-        }
-        self.module_exports.insert(mod_name.clone(), exports);
-        // Store the implementation for later code generation
+        let exports = self.build_module_exports_from_sema(&mod_name);
+        self.module_exports.insert(mod_name, exports);
         if self.pending_modules.is_none() {
             self.pending_modules = Some(Vec::new());
         }
@@ -433,11 +413,13 @@ impl CodeGen {
     pub fn register_def_module(&mut self, def: &crate::ast::DefinitionModule) {
         self.sema.register_def_module(def);
 
-        // Register type names from this def module for type-cast recognition
-        for d in &def.definitions {
-            if let Definition::Type(td) = d {
-                self.known_type_names.insert(td.name.clone());
-                self.known_type_names.insert(format!("{}_{}", def.name, td.name));
+        // Register type names from sema scope for type-cast recognition
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&def.name) {
+            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
+                if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
+                    self.known_type_names.insert(sym.name.clone());
+                    self.known_type_names.insert(format!("{}_{}", def.name, sym.name));
+                }
             }
         }
 
@@ -449,27 +431,7 @@ impl CodeGen {
         if def.foreign_lang.is_some() {
             self.foreign_modules.insert(def.name.clone());
             self.foreign_def_modules.push(def.clone());
-
-            // Register proc_params and module_exports from the foreign .def
-            let mut exports = Vec::new();
-            for d in &def.definitions {
-                if let Definition::Procedure(h) = d {
-                    let mut param_info = Vec::new();
-                    for fp in &h.params {
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
-                        for name in &fp.names {
-                            param_info.push(ParamCodegenInfo {
-                                name: name.clone(),
-                                is_var: fp.is_var,
-                                is_open_array,
-                                is_char,
-                            });
-                        }
-                    }
-                    exports.push((h.name.clone(), param_info));
-                }
-            }
+            let exports = self.build_module_exports_from_sema(&def.name);
             self.module_exports.insert(def.name.clone(), exports);
         }
     }
@@ -533,14 +495,14 @@ impl CodeGen {
 
     /// Register .def metadata without running sema (sema already populated by driver).
     pub fn register_def_module_no_sema(&mut self, def: &crate::ast::DefinitionModule) {
-        for d in &def.definitions {
-            if let Definition::Type(td) = d {
-                self.known_type_names.insert(td.name.clone());
-                let prefixed = format!("{}_{}", def.name, td.name);
-                self.known_type_names.insert(prefixed.clone());
-                // Register TypeId → C name from def module scope
-                if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&def.name) {
-                    if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, &td.name) {
+        // Register type names from sema scope (replaces AST Definition::Type iteration)
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&def.name) {
+            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
+                if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
+                    self.known_type_names.insert(sym.name.clone());
+                    let prefixed = format!("{}_{}", def.name, sym.name);
+                    self.known_type_names.insert(prefixed.clone());
+                    if sym.typ >= 20 {
                         self.typeid_c_names.insert(sym.typ, prefixed);
                     }
                 }
@@ -552,25 +514,7 @@ impl CodeGen {
         if def.foreign_lang.is_some() {
             self.foreign_modules.insert(def.name.clone());
             self.foreign_def_modules.push(def.clone());
-            let mut exports = Vec::new();
-            for d in &def.definitions {
-                if let Definition::Procedure(h) = d {
-                    let mut param_info = Vec::new();
-                    for fp in &h.params {
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
-                        for name in &fp.names {
-                            param_info.push(ParamCodegenInfo {
-                                name: name.clone(),
-                                is_var: fp.is_var,
-                                is_open_array,
-                                is_char,
-                            });
-                        }
-                    }
-                    exports.push((h.name.clone(), param_info));
-                }
-            }
+            let exports = self.build_module_exports_from_sema(&def.name);
             self.module_exports.insert(def.name.clone(), exports);
         }
     }
@@ -578,25 +522,7 @@ impl CodeGen {
     /// Add an implementation module without running sema registration.
     pub fn add_imported_module_no_sema(&mut self, imp: ImplementationModule) {
         let mod_name = imp.name.clone();
-        let mut exports = Vec::new();
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                let mut param_info = Vec::new();
-                for fp in &p.heading.params {
-                    let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                    let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
-                    for name in &fp.names {
-                        param_info.push(ParamCodegenInfo {
-                            name: name.clone(),
-                            is_var: fp.is_var,
-                            is_open_array,
-                            is_char,
-                        });
-                    }
-                }
-                exports.push((p.heading.name.clone(), param_info));
-            }
-        }
+        let exports = self.build_module_exports_from_sema(&mod_name);
         self.module_exports.insert(mod_name, exports);
         if self.pending_modules.is_none() {
             self.pending_modules = Some(Vec::new());
@@ -606,6 +532,29 @@ impl CodeGen {
 
     pub fn is_foreign_module(&self, name: &str) -> bool {
         self.foreign_modules.contains(name)
+    }
+
+    /// Build module exports (proc name → ParamCodegenInfo) from sema symtab.
+    /// Replaces 4 copies of AST Declaration::Procedure / TypeNode iteration.
+    fn build_module_exports_from_sema(&self, mod_name: &str) -> Vec<(String, Vec<ParamCodegenInfo>)> {
+        let mut exports = Vec::new();
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(mod_name) {
+            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
+                if let crate::symtab::SymbolKind::Procedure { params, .. } = &sym.kind {
+                    let param_info: Vec<ParamCodegenInfo> = params.iter().map(|p| {
+                        let is_open = matches!(self.sema.types.get(p.typ), crate::types::Type::OpenArray { .. });
+                        ParamCodegenInfo {
+                            name: p.name.clone(),
+                            is_var: p.is_var,
+                            is_open_array: is_open,
+                            is_char: p.typ == crate::types::TY_CHAR,
+                        }
+                    }).collect();
+                    exports.push((sym.name.clone(), param_info));
+                }
+            }
+        }
+        exports
     }
 
 
