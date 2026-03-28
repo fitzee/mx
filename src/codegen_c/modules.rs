@@ -310,40 +310,37 @@ impl CodeGen {
                     }
                 }
             }
-            // Emit type and const declarations from the definition module via TypeId
-            let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
-            for d in &def_mod.definitions {
-                match d {
-                    Definition::Type(t) => {
-                        if !impl_type_names.contains(&t.name) {
-                            let tid = def_scope
-                                .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &t.name))
-                                .map(|s| s.typ)
-                                .unwrap_or(crate::types::TY_VOID);
-                            if tid != crate::types::TY_VOID {
-                                self.gen_type_decl_from_id(&t.name, tid);
+            // Emit type and const declarations from the definition module via sema scope
+            {
+                let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
+                let def_syms: Vec<(String, crate::symtab::SymbolKind, crate::types::TypeId, bool)> =
+                    def_scope.map(|sid| {
+                        self.sema.symtab.symbols_in_scope(sid).iter()
+                            .map(|s| (s.name.clone(), s.kind.clone(), s.typ, s.exported))
+                            .collect()
+                    }).unwrap_or_default();
+                let mod_name = m.name.clone();
+                for (name, kind, typ, exported) in &def_syms {
+                    match kind {
+                        crate::symtab::SymbolKind::Type if !impl_type_names.contains(name) => {
+                            if *typ != crate::types::TY_VOID {
+                                self.gen_type_decl_from_id(name, *typ);
                             }
                         }
-                    }
-                    Definition::Const(c) => {
-                        let sym = def_scope
-                            .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &c.name));
-                        if let Some(s) = sym {
-                            if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
-                                let val = crate::hir_build::const_value_to_hir(cv);
-                                let hc = crate::hir::HirConstDecl {
-                                    name: c.name.clone(),
-                                    mangled: format!("{}_{}", m.name, c.name),
-                                    value: val.clone(),
-                                    type_id: s.typ,
-                                    exported: s.exported,
-                                    c_type: crate::hir_build::const_val_c_type(&val),
-                                };
-                                self.gen_hir_const_decl(&hc);
-                            }
+                        crate::symtab::SymbolKind::Constant(cv) => {
+                            let val = crate::hir_build::const_value_to_hir(cv);
+                            let hc = crate::hir::HirConstDecl {
+                                name: name.clone(),
+                                mangled: format!("{}_{}", mod_name, name),
+                                value: val.clone(),
+                                type_id: *typ,
+                                exported: *exported,
+                                c_type: crate::hir_build::const_val_c_type(&val),
+                            };
+                            self.gen_hir_const_decl(&hc);
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
@@ -462,12 +459,14 @@ impl CodeGen {
         // Pre-register ALL type names from this embedded module in embedded_enum_types.
         // This is needed so that forward references (e.g., POINTER TO Record declared
         // before the Record type) resolve to the correct prefixed C name.
-        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            for d in &def_mod.definitions {
-                if let Definition::Type(t) = d {
-                    let prefixed = format!("{}_{}", imp.name, self.mangle(&t.name));
-                    self.embedded_enum_types.insert(prefixed);
-                }
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&imp.name) {
+            let type_names: Vec<String> = self.sema.symtab.symbols_in_scope(scope_id).iter()
+                .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Type))
+                .map(|s| s.name.clone())
+                .collect();
+            for name in &type_names {
+                let prefixed = format!("{}_{}", imp.name, self.mangle(name));
+                self.embedded_enum_types.insert(prefixed);
             }
         }
         if let Some(ref emb) = hir_emb {
@@ -520,19 +519,23 @@ impl CodeGen {
             }
         }
 
-        // Emit type and const declarations from the corresponding definition module,
-        // but skip types that are redefined in the implementation module.
-        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            // Register def-module constants and exported VARs as local vars for module-prefixed references
-            for d in &def_mod.definitions {
-                match d {
-                    Definition::Const(c) => {
-                        self.embedded_local_vars.insert(c.name.clone());
+        // Emit type and const declarations from the def module via sema scope
+        if self.def_modules.contains_key(&imp.name) {
+            let def_scope = self.sema.symtab.lookup_module_scope(&imp.name);
+            let def_syms: Vec<(String, crate::symtab::SymbolKind, crate::types::TypeId, bool)> =
+                def_scope.map(|sid| {
+                    self.sema.symtab.symbols_in_scope(sid).iter()
+                        .map(|s| (s.name.clone(), s.kind.clone(), s.typ, s.exported))
+                        .collect()
+                }).unwrap_or_default();
+            // Register def-module constants and exported VARs as local vars
+            for (name, kind, _, _) in &def_syms {
+                match kind {
+                    crate::symtab::SymbolKind::Constant(_) => {
+                        self.embedded_local_vars.insert(name.clone());
                     }
-                    Definition::Var(v) => {
-                        for name in &v.names {
-                            self.embedded_local_vars.insert(name.clone());
-                        }
+                    crate::symtab::SymbolKind::Variable => {
+                        self.embedded_local_vars.insert(name.clone());
                     }
                     _ => {}
                 }
@@ -540,48 +543,39 @@ impl CodeGen {
             let impl_type_names: HashSet<String> = if let Some(ref emb) = hir_emb {
                 emb.type_decls.iter().map(|td| td.name.clone()).collect()
             } else {
-                imp.block.decls.iter()
-                    .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-                    .collect()
+                HashSet::new()
             };
-            let def_scope = self.sema.symtab.lookup_module_scope(&def_mod.name);
-            for d in &def_mod.definitions {
-                match d {
-                    Definition::Type(t) => {
-                        if !impl_type_names.contains(&t.name) {
-                            let tid = def_scope
-                                .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &t.name))
-                                .map(|s| s.typ)
-                                .unwrap_or(crate::types::TY_VOID);
-                            if tid != crate::types::TY_VOID {
-                                self.gen_type_decl_from_id(&t.name, tid);
-                            }
+            let imp_name = imp.name.clone();
+            for (name, kind, typ, exported) in &def_syms {
+                match kind {
+                    crate::symtab::SymbolKind::Type if !impl_type_names.contains(name) => {
+                        if *typ != crate::types::TY_VOID {
+                            self.gen_type_decl_from_id(name, *typ);
                         }
                     }
-                    Definition::Const(c) => {
-                        let sym = def_scope
-                            .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &c.name));
-                        if let Some(s) = sym {
-                            if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
-                                let val = crate::hir_build::const_value_to_hir(cv);
-                                let hc = crate::hir::HirConstDecl {
-                                    name: c.name.clone(),
-                                    mangled: format!("{}_{}", imp.name, c.name),
-                                    value: val.clone(),
-                                    type_id: s.typ,
-                                    exported: s.exported,
-                                    c_type: crate::hir_build::const_val_c_type(&val),
-                                };
-                                self.gen_hir_const_decl(&hc);
-                            }
-                        }
+                    crate::symtab::SymbolKind::Constant(cv) => {
+                        let val = crate::hir_build::const_value_to_hir(cv);
+                        let hc = crate::hir::HirConstDecl {
+                            name: name.clone(),
+                            mangled: format!("{}_{}", imp_name, name),
+                            value: val.clone(),
+                            type_id: *typ,
+                            exported: *exported,
+                            c_type: crate::hir_build::const_val_c_type(&val),
+                        };
+                        self.gen_hir_const_decl(&hc);
                     }
-                    Definition::Exception(e) => {
+                    _ => {}
+                }
+            }
+            // Exception declarations from the definition module (M2+ only)
+            if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+                for d in &def_mod.definitions {
+                    if let Definition::Exception(e) = d {
                         self.exception_names.insert(e.name.clone());
                         let mangled = format!("M2_EXC_{}", self.mangle(&e.name));
                         self.emitln(&format!("#define {} __COUNTER__", mangled));
                     }
-                    _ => {}
                 }
             }
         }
@@ -660,20 +654,16 @@ impl CodeGen {
         // In multi-TU mode, emit extern declarations for exported vars and init function.
         // This allows other TUs (including main) to reference these symbols.
         if self.multi_tu {
-            if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-                let def_scope = self.sema.symtab.lookup_module_scope(&def_mod.name);
-                for d in &def_mod.definitions {
-                    if let Definition::Var(v) = d {
-                        let tid = def_scope
-                            .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &v.names[0]))
-                            .map(|s| s.typ).unwrap_or(TY_INTEGER);
-                        let ctype = self.type_id_to_c(tid);
-                        let array_suffix = self.type_id_array_suffix(tid);
-                        for name in &v.names {
-                            let c_name = format!("{}_{}", imp.name, name);
-                            self.emitln(&format!("extern {} {}{};", ctype, c_name, array_suffix));
-                        }
-                    }
+            if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&imp.name) {
+                let var_syms: Vec<(String, crate::types::TypeId)> = self.sema.symtab.symbols_in_scope(scope_id).iter()
+                    .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Variable) && s.exported)
+                    .map(|s| (s.name.clone(), s.typ))
+                    .collect();
+                for (name, tid) in &var_syms {
+                    let ctype = self.type_id_to_c(*tid);
+                    let array_suffix = self.type_id_array_suffix(*tid);
+                    let c_name = format!("{}_{}", imp.name, name);
+                    self.emitln(&format!("extern {} {}{};", ctype, c_name, array_suffix));
                 }
             }
             // Always emit init prototype — harmless if module has no body
@@ -688,28 +678,23 @@ impl CodeGen {
             self.emit(&format!("/* MX_MODULE_DEFS {} */\n", imp.name));
         }
 
-        // Variable declarations from definition module (exported VARs) via TypeId
-        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            let def_scope = self.sema.symtab.lookup_module_scope(&def_mod.name);
-            for d in &def_mod.definitions {
-                if let Definition::Var(v) = d {
-                    let tid = def_scope
-                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &v.names[0]))
-                        .map(|s| s.typ)
-                        .unwrap_or(TY_INTEGER);
-                    for name in &v.names {
-                        let g = crate::hir::HirGlobalDecl {
-                            name: name.clone(),
-                            mangled: format!("{}_{}", imp.name, name),
-                            type_id: tid,
-                            exported: true,
-                            c_type: String::new(),
-                            c_array_suffix: String::new(),
-                            is_proc_type: false,
-                        };
-                        self.gen_hir_global_decl(&g);
-                    }
-                }
+        // Variable declarations from definition module (exported VARs) via sema scope
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&imp.name) {
+            let var_syms: Vec<(String, crate::types::TypeId)> = self.sema.symtab.symbols_in_scope(scope_id).iter()
+                .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Variable) && s.exported)
+                .map(|s| (s.name.clone(), s.typ))
+                .collect();
+            for (name, tid) in &var_syms {
+                let g = crate::hir::HirGlobalDecl {
+                    name: name.clone(),
+                    mangled: format!("{}_{}", imp.name, name),
+                    type_id: *tid,
+                    exported: true,
+                    c_type: String::new(),
+                    c_array_suffix: String::new(),
+                    is_proc_type: false,
+                };
+                self.gen_hir_global_decl(&g);
             }
         }
 
