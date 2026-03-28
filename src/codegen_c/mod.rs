@@ -3,6 +3,14 @@ mod stmts;
 mod exprs;
 mod types;
 mod m2plus;
+
+/// Module kind for AST-free code generation dispatch.
+#[derive(Debug, Clone, Copy)]
+pub enum ModuleKind {
+    Program,
+    Definition,
+    Implementation,
+}
 mod modules;
 mod decls;
 mod hir_emit;
@@ -653,55 +661,57 @@ impl CodeGen {
         self.sema.fixup_record_field_types();
     }
 
+    pub fn set_module_name(&mut self, name: &str) { self.module_name = name.to_string(); }
+
+    /// Generate C code — AST-free entry point. Module name must be pre-set.
+    pub fn generate_module(&mut self, kind: ModuleKind) -> CompileResult<String> {
+        self.post_sema_generate_internal(kind)?;
+        Ok(self.output.clone())
+    }
+
+    /// Legacy: generate from CompilationUnit (extracts name internally).
     pub fn generate_or_errors(&mut self, unit: &CompilationUnit) -> Result<String, Vec<CompileError>> {
         self.sema.analyze(unit)?;
         self.analyze_all_impl_modules();
-        self.post_sema_generate(unit).map_err(|e| vec![e])?;
+        let (name, kind) = Self::extract_module_info(unit);
+        self.module_name = name;
+        self.post_sema_generate_internal(kind).map_err(|e| vec![e])?;
         Ok(self.output.clone())
     }
 
+    /// Legacy: generate from CompilationUnit (sema already done).
     pub fn generate(&mut self, unit: &CompilationUnit) -> CompileResult<String> {
-        // Sema already fully populated by driver — just generate code.
-        self.post_sema_generate(unit)?;
+        let (name, kind) = Self::extract_module_info(unit);
+        self.module_name = name;
+        self.post_sema_generate_internal(kind)?;
         Ok(self.output.clone())
     }
 
-    fn post_sema_generate(&mut self, unit: &CompilationUnit) -> CompileResult<()> {
-        // Scan compilation unit to determine which M2+ features are needed
+    fn extract_module_info(unit: &CompilationUnit) -> (String, ModuleKind) {
+        match unit {
+            CompilationUnit::ProgramModule(m) => (m.name.clone(), ModuleKind::Program),
+            CompilationUnit::DefinitionModule(m) => (m.name.clone(), ModuleKind::Definition),
+            CompilationUnit::ImplementationModule(m) => (m.name.clone(), ModuleKind::Implementation),
+        }
+    }
+
+    fn post_sema_generate_internal(&mut self, kind: ModuleKind) -> CompileResult<()> {
         if self.m2plus {
             self.scan_m2plus_features();
-            if self.uses_gc {
-                self.emit("#define M2_USE_GC 1\n");
-            }
-            if self.uses_threads {
-                self.emit("#define M2_USE_THREADS 1\n");
-            }
+            if self.uses_gc { self.emit("#define M2_USE_GC 1\n"); }
+            if self.uses_threads { self.emit("#define M2_USE_THREADS 1\n"); }
         }
-
-        if self.multi_tu {
-            self.emit("/* MX_HEADER_BEGIN */\n");
-        }
-        // Generate header
+        if self.multi_tu { self.emit("/* MX_HEADER_BEGIN */\n"); }
         self.emit(&stdlib::generate_runtime_header());
-        if self.multi_tu {
-            self.emit("/* MX_HEADER_END */\n");
-        }
+        if self.multi_tu { self.emit("/* MX_HEADER_END */\n"); }
 
-        // Extract module name and imports, dispatch to gen functions.
-        // Extract module name from AST, dispatch to HIR-driven gen functions
-        self.module_name = match unit {
-            CompilationUnit::ProgramModule(m) => m.name.clone(),
-            CompilationUnit::DefinitionModule(m) => m.name.clone(),
-            CompilationUnit::ImplementationModule(m) => m.name.clone(),
-        };
-        let is_def = matches!(unit, CompilationUnit::DefinitionModule(_));
-        if !is_def {
+        if !matches!(kind, ModuleKind::Definition) {
             self.build_import_map_from_hir();
         }
-        match unit {
-            CompilationUnit::ProgramModule(_) => self.gen_program_module()?,
-            CompilationUnit::DefinitionModule(_) => self.gen_definition_module(),
-            CompilationUnit::ImplementationModule(_) => self.gen_implementation_module()?,
+        match kind {
+            ModuleKind::Program => self.gen_program_module()?,
+            ModuleKind::Definition => self.gen_definition_module(),
+            ModuleKind::Implementation => self.gen_implementation_module()?,
         }
         Ok(())
     }

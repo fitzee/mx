@@ -992,12 +992,12 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         // Share sema from the driver — all .def/.mod already registered.
         llvm_codegen.set_sema(sema.clone());
         llvm_codegen.prebuilt_hir = Some(hir_module.clone());
-        // Register backend-specific metadata (def_modules, foreign_modules, exports)
+        // Register backend-specific metadata (no AST — names only)
         for def_mod in &all_sorted_defs {
-            llvm_codegen.register_def_module_no_sema(def_mod);
+            llvm_codegen.register_def_by_name(&def_mod.name, def_mod.foreign_lang.is_some());
         }
         for imp_mod in &all_impl_mods {
-            llvm_codegen.add_imported_module(imp_mod.clone());
+            llvm_codegen.add_imported_module_by_name(&imp_mod.name);
         }
 
         // Generate LLVM IR
@@ -1215,6 +1215,13 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     }
 
     // ── C backend (default) ─────────────────────────────────────────
+    // Determine module kind and name for AST-free generation
+    let (mod_name, mod_kind) = match &unit {
+        CompilationUnit::ProgramModule(m) => (m.name.clone(), crate::codegen_c::ModuleKind::Program),
+        CompilationUnit::DefinitionModule(m) => (m.name.clone(), crate::codegen_c::ModuleKind::Definition),
+        CompilationUnit::ImplementationModule(m) => (m.name.clone(), crate::codegen_c::ModuleKind::Implementation),
+    };
+    codegen.set_module_name(&mod_name);
     let c_code = if opts.diagnostics_json {
         match codegen.generate_or_errors(&unit) {
             Ok(code) => code,
@@ -1229,7 +1236,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
         }
     } else {
-        codegen.generate(&unit)?
+        codegen.generate_module(mod_kind)?
     };
 
     if opts.verbose {

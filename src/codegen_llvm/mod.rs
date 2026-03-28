@@ -345,6 +345,50 @@ impl LLVMCodeGen {
     }
 
     /// Register a .def module's non-sema state only (when sema is shared).
+    pub fn register_def_by_name(&mut self, name: &str, is_foreign: bool) {
+        if is_foreign {
+            self.foreign_modules.insert(name.to_string());
+            // Build exports from sema
+            let mut exports = Vec::new();
+            if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
+                let syms: Vec<(String, Vec<crate::symtab::ParamInfo>)> =
+                    self.sema.symtab.symbols_in_scope(scope_id).iter()
+                        .filter_map(|sym| {
+                            if let crate::symtab::SymbolKind::Procedure { params, .. } = &sym.kind {
+                                Some((sym.name.clone(), params.clone()))
+                            } else { None }
+                        })
+                        .collect();
+                for (proc_name, params) in syms {
+                    let param_info: Vec<ParamLLVMInfo> = params.iter().map(|p| {
+                        let resolved = {
+                            let mut id = p.typ;
+                            loop {
+                                if let crate::types::Type::Alias { target, .. } = self.sema.types.get(id) { id = *target; } else { break id; }
+                            }
+                        };
+                        let is_open = matches!(self.sema.types.get(resolved), crate::types::Type::OpenArray { .. });
+                        let llvm_ty = self.tl_type_str(p.typ);
+                        let elem_ty = if is_open {
+                            if let crate::types::Type::OpenArray { elem_type } = self.sema.types.get(resolved) {
+                                Some(self.tl_type_str(*elem_type))
+                            } else { None }
+                        } else { None };
+                        ParamLLVMInfo {
+                            name: p.name.clone(),
+                            is_var: p.is_var,
+                            is_open_array: is_open,
+                            llvm_type: if p.is_var { "ptr".to_string() } else { llvm_ty },
+                            open_array_elem_type: elem_ty,
+                        }
+                    }).collect();
+                    exports.push((proc_name, param_info));
+                }
+            }
+            self.module_exports.insert(name.to_string(), exports);
+        }
+    }
+
     pub fn register_def_module_no_sema(&mut self, def: &DefinitionModule) {
         self.register_def_module_impl(def, false);
     }
@@ -390,11 +434,12 @@ impl LLVMCodeGen {
         }
     }
 
+    pub fn add_imported_module_by_name(&mut self, name: &str) {
+        self.imported_modules.insert(name.to_string());
+    }
+
     pub fn add_imported_module(&mut self, imp: ImplementationModule) {
-        let mod_name = imp.name.clone();
-        // Don't resolve LLVM types here — sema hasn't analyzed these modules yet.
-        // Just store the module; exports will be built after sema analysis.
-        self.imported_modules.insert(mod_name);
+        self.imported_modules.insert(imp.name.clone());
         if self.pending_modules.is_none() {
             self.pending_modules = Some(Vec::new());
         }
