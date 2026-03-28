@@ -584,38 +584,36 @@ impl CodeGen {
             let np_name = np.heading.name.clone();
             // Look up nested proc's HIR body for capture analysis
             let current_mod = self.module_name.clone();
-            let hir_body = self.prebuilt_hir.as_ref().and_then(|hir| {
-                // Search main module procedures
+            // Find nested proc in HIR — extract body, params, locals
+            let hir_proc_info = self.prebuilt_hir.as_ref().and_then(|hir| {
                 hir.procedures.iter()
                     .find(|hp| hp.name.source_name == np_name
                         && hp.name.module.as_deref() == Some(current_mod.as_str()))
-                    .and_then(|hp| hp.body.as_ref())
-                    .or_else(|| {
-                        // Search embedded module procedures
-                        hir.embedded_modules.iter()
-                            .find(|e| e.name == current_mod)
-                            .and_then(|e| e.procedures.iter()
-                                .find(|hp| hp.sig.name == np_name)
-                                .and_then(|hp| hp.body.as_ref()))
+                    .map(|hp| {
+                        let params: Vec<String> = hp.params.iter().map(|p| p.name.clone()).collect();
+                        let locals: HashSet<String> = hp.locals.iter()
+                            .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
+                            .collect();
+                        (hp.body.as_ref(), params, locals)
                     })
+                    .or_else(|| hir.embedded_modules.iter()
+                        .find(|e| e.name == current_mod)
+                        .and_then(|e| e.procedures.iter()
+                            .find(|hp| hp.sig.name == np_name)
+                            .map(|hp| {
+                                let params: Vec<String> = hp.sig.params.iter().map(|p| p.name.clone()).collect();
+                                let locals: HashSet<String> = hp.locals.iter()
+                                    .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
+                                    .collect();
+                                (hp.body.as_ref(), params, locals)
+                            })))
             });
-            let hir_captures = if let Some(body) = hir_body {
-                let param_names: Vec<String> = np.heading.params.iter()
-                    .flat_map(|fp| fp.names.clone())
-                    .collect();
-                let local_names: HashSet<String> = np.block.decls.iter()
-                    .filter_map(|d| match d {
-                        Declaration::Var(v) => Some(v.names.clone()),
-                        _ => None,
-                    })
-                    .flatten()
-                    .collect();
+            let hir_captures = if let Some((Some(body), param_names, local_names)) = hir_proc_info {
                 crate::hir_build::compute_captures_hir(
                     &np_name, body, &param_names, &local_names,
                     &scope_vars_tid, &self.import_map, &imported_mods,
                 )
             } else {
-                // Fallback to AST-based capture analysis
                 crate::hir_build::compute_captures(
                     np, &scope_vars_tid, &self.import_map, &imported_mods,
                 )
@@ -666,25 +664,30 @@ impl CodeGen {
                 // Compute captures using HIR body if available, AST fallback otherwise
                 let current_mod = self.module_name.clone();
                 let np_name = np.heading.name.clone();
-                let np_hir_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+                let np_hir_info = self.prebuilt_hir.as_ref().and_then(|hir| {
                     hir.procedures.iter()
                         .find(|hp| hp.name.source_name == np_name
                             && hp.name.module.as_deref() == Some(current_mod.as_str()))
-                        .and_then(|hp| hp.body.as_ref())
+                        .map(|hp| {
+                            let params: Vec<String> = hp.params.iter().map(|p| p.name.clone()).collect();
+                            let locals: HashSet<String> = hp.locals.iter()
+                                .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
+                                .collect();
+                            (hp.body.as_ref(), params, locals)
+                        })
                         .or_else(|| hir.embedded_modules.iter()
                             .find(|e| e.name == current_mod)
                             .and_then(|e| e.procedures.iter()
                                 .find(|hp| hp.sig.name == np_name)
-                                .and_then(|hp| hp.body.as_ref())))
+                                .map(|hp| {
+                                    let params: Vec<String> = hp.sig.params.iter().map(|p| p.name.clone()).collect();
+                                    let locals: HashSet<String> = hp.locals.iter()
+                                        .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
+                                        .collect();
+                                    (hp.body.as_ref(), params, locals)
+                                })))
                 });
-                let np_hir_caps = if let Some(body) = np_hir_body {
-                    let param_names: Vec<String> = np.heading.params.iter()
-                        .flat_map(|fp| fp.names.clone()).collect();
-                    let local_names: HashSet<String> = np.block.decls.iter()
-                        .filter_map(|d| match d {
-                            Declaration::Var(v) => Some(v.names.clone()),
-                            _ => None,
-                        }).flatten().collect();
+                let np_hir_caps = if let Some((Some(body), param_names, local_names)) = np_hir_info {
                     crate::hir_build::compute_captures_hir(
                         &np_name, body, &param_names, &local_names,
                         &scope_vars_tid, &self.import_map, &imported_mods,
