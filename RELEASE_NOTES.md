@@ -1,5 +1,29 @@
 # Release Notes
 
+## 1.5.0 (2026-03-28)
+
+### Features
+
+- **Prebuilt HirModule** — `build_module()` constructs a complete HirModule as a distinct pipeline phase after sema, containing structural declarations (types, consts, globals, proc signatures, embedded modules) and pre-lowered statement bodies. Both C and LLVM backends iterate from HirModule for all structural emission.
+
+- **TypeId → C type resolver** — Context-aware `type_id_to_c()` resolves TypeIds to C typedef names using a `typeid_c_names` map populated from HirModule type_decls, def-module registration, and gen_type_decl emission. Delegates to `named_type_to_c` for module-dependent name prefixing. Handles all type kinds including records, enums, pointers, arrays, procedure types, and sets.
+
+- **AST bridge removal** — All `ast_type_node` and `ast_return_type` bridge fields removed from HIR types. Procedure prototypes, global variable declarations, type declarations, and record forward declarations all use pure TypeId resolution. HIR + sema are the only contract between frontend and backend.
+
+### Bug fixes
+
+- **Scoped symtab lookups** — `build_module()` uses `lookup_module_scope` + `lookup_in_scope_direct` instead of `lookup_any` for type, const, var, and proc extraction. Prevents cross-module TypeId conflicts when names collide across scopes.
+
+- **Import AS alias resolution** — Fixed native stdlib arg stripping for import aliases in M2+ modules.
+
+- **FOR BY step direction** — Fixed downward FOR loops with negative step producing wrong direction comparison.
+
+- **WITH scope lookup** — Fixed `lookup_any` returning wrong type for common names in WITH scope resolution.
+
+### Test coverage
+
+- **Main module types adversarial test** — Exercises all type declaration kinds (Record, Enum, Pointer-to-Record, Array, ProcedureType, Set, Subrange, Alias) in a program module body.
+
 ## 1.4.1 (2026-03-26)
 
 ### Bug fixes
