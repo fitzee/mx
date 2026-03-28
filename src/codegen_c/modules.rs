@@ -109,9 +109,8 @@ impl CodeGen {
         Ok(())
     }
 
-    pub(crate) fn gen_definition_module(&mut self, m: &DefinitionModule) {
-        self.module_name = m.name.clone();
-        let mod_name = m.name.clone();
+    pub(crate) fn gen_definition_module(&mut self) {
+        let mod_name = self.module_name.clone();
         self.emitln(&format!("/* Definition Module {} */", mod_name));
         self.emitln(&format!("#ifndef {}_H", mod_name.to_uppercase()));
         self.emitln(&format!("#define {}_H", mod_name.to_uppercase()));
@@ -183,8 +182,8 @@ impl CodeGen {
                             if let crate::symtab::SymbolKind::Procedure { params, return_type, .. } = &sym.kind {
                                 let sig = crate::hir::HirProcSig {
                                     name: name.clone(),
-                                    mangled: format!("{}_{}", m.name, name),
-                                    module: m.name.clone(),
+                                    mangled: format!("{}_{}", mod_name, name),
+                                    module: mod_name.clone(),
                                     params: params.iter().map(|p| {
                                         let resolved = self.resolve_hir_alias(p.typ);
                                         let is_open = matches!(self.sema.types.get(resolved), crate::types::Type::OpenArray { .. });
