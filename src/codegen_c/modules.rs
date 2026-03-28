@@ -222,15 +222,39 @@ impl CodeGen {
                     }
                 }
             }
-            // Emit type and const declarations from the definition module
+            // Emit type and const declarations from the definition module via TypeId
+            let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
             for d in &def_mod.definitions {
                 match d {
                     Definition::Type(t) => {
                         if !impl_type_names.contains(&t.name) {
-                            self.gen_type_decl(t);
+                            let tid = def_scope
+                                .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &t.name))
+                                .map(|s| s.typ)
+                                .unwrap_or(crate::types::TY_VOID);
+                            if tid != crate::types::TY_VOID {
+                                self.gen_type_decl_from_id(&t.name, tid);
+                            }
                         }
                     }
-                    Definition::Const(c) => self.gen_const_decl(c),
+                    Definition::Const(c) => {
+                        let sym = def_scope
+                            .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &c.name));
+                        if let Some(s) = sym {
+                            if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
+                                let val = crate::hir_build::const_value_to_hir(cv);
+                                let hc = crate::hir::HirConstDecl {
+                                    name: c.name.clone(),
+                                    mangled: format!("{}_{}", m.name, c.name),
+                                    value: val.clone(),
+                                    type_id: s.typ,
+                                    exported: s.exported,
+                                    c_type: crate::hir_build::const_val_c_type(&val),
+                                };
+                                self.gen_hir_const_decl(&hc);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1052,21 +1076,52 @@ impl CodeGen {
                             }
                         }
 
-                        // Forward declare record types
+                        // Forward declare record types via TypeId
+                        let donly_scope = self.sema.symtab.lookup_module_scope(mod_name);
                         for d in &def_mod.definitions {
                             if let Definition::Type(t) = d {
-                                if matches!(&t.typ, Some(TypeNode::Record { .. })) {
-                                    let cn = self.type_decl_c_name(&t.name);
-                                    self.emitln(&format!("typedef struct {} {};", cn, cn));
+                                if let Some(sid) = donly_scope {
+                                    if let Some(sym) = self.sema.symtab.lookup_in_scope(sid, &t.name) {
+                                        let resolved = self.resolve_hir_alias(sym.typ);
+                                        if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
+                                            let cn = self.type_decl_c_name(&t.name);
+                                            self.emitln(&format!("typedef struct {} {};", cn, cn));
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        // Emit type and constant declarations
+                        // Emit type and constant declarations via TypeId
                         for d in &def_mod.definitions {
                             match d {
-                                Definition::Type(t) => self.gen_type_decl(t),
-                                Definition::Const(c) => self.gen_const_decl(c),
+                                Definition::Type(t) => {
+                                    let tid = donly_scope
+                                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &t.name))
+                                        .map(|s| s.typ)
+                                        .unwrap_or(crate::types::TY_VOID);
+                                    if tid != crate::types::TY_VOID {
+                                        self.gen_type_decl_from_id(&t.name, tid);
+                                    }
+                                }
+                                Definition::Const(c) => {
+                                    let sym = donly_scope
+                                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &c.name));
+                                    if let Some(s) = sym {
+                                        if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
+                                            let val = crate::hir_build::const_value_to_hir(cv);
+                                            let hc = crate::hir::HirConstDecl {
+                                                name: c.name.clone(),
+                                                mangled: format!("{}_{}", mod_name, c.name),
+                                                value: val.clone(),
+                                                type_id: s.typ,
+                                                exported: s.exported,
+                                                c_type: crate::hir_build::const_val_c_type(&val),
+                                            };
+                                            self.gen_hir_const_decl(&hc);
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }
