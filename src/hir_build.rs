@@ -625,7 +625,7 @@ fn build_proc(
 }
 
 /// Build a HirProcDecl (sig + locals) from an AST ProcHeading + block declarations.
-fn build_proc_decl(
+pub fn build_proc_decl(
     h: &ast::ProcHeading,
     block_decls: &[ast::Declaration],
     module_name: &str,

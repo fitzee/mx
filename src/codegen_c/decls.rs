@@ -570,7 +570,9 @@ impl CodeGen {
         if let Some(ref sig) = early_sig {
             self.register_hir_proc_params(sig);
         } else {
-            self.register_proc_params(&p.heading);
+            let fallback_sig = crate::hir_build::build_proc_decl(
+                &p.heading, &p.block.decls, &self.module_name, &self.sema, false, None).sig;
+            self.register_hir_proc_params(&fallback_sig);
         }
 
         // Collect nested procedure declarations and other declarations
@@ -709,7 +711,9 @@ impl CodeGen {
         if let Some(ref sig) = early_sig {
             self.gen_hir_proc_prototype(sig);
         } else {
-            self.gen_proc_prototype(&p.heading);
+            let fallback_sig = crate::hir_build::build_proc_decl(
+                &p.heading, &p.block.decls, &self.module_name, &self.sema, false, None).sig;
+            self.gen_hir_proc_prototype(&fallback_sig);
         }
         self.emit(" {\n");
         self.indent += 1;

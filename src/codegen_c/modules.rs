@@ -41,8 +41,10 @@ impl CodeGen {
                             self.gen_hir_proc_prototype(s);
                             self.emit(";\n");
                         } else {
-                            self.register_proc_params(&p.heading);
-                            self.gen_proc_prototype(&p.heading);
+                            let fallback_sig = crate::hir_build::build_proc_decl(
+                                &p.heading, &p.block.decls, &self.module_name, &self.sema, false, None).sig;
+                            self.register_hir_proc_params(&fallback_sig);
+                            self.gen_hir_proc_prototype(&fallback_sig);
                             self.emit(";\n");
                         }
                     }
@@ -223,8 +225,11 @@ impl CodeGen {
                     }
                 }
                 Definition::Procedure(h) => {
-                    // Still AST — no HirProcSig for def-module procs
-                    self.gen_proc_prototype(h);
+                    // Build HirProcSig on the fly from def module scope
+                    let sig = crate::hir_build::build_proc_decl(
+                        h, &[], &m.name, &self.sema, false, None).sig;
+                    self.register_hir_proc_params(&sig);
+                    self.gen_hir_proc_prototype(&sig);
                     self.emit(";\n");
                 }
                 Definition::Exception(e) => {
