@@ -810,11 +810,20 @@ impl LLVMCodeGen {
             self.emitln(&format!("{}:", body_label));
             self.in_sjlj_context = true;
             {
+                let mod_name = self.module_name.clone();
                 let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
                     hir.procedures.iter()
                         .find(|hp| hp.name.source_name == p.heading.name
-                            && hp.name.module.as_deref() == Some(&self.module_name))
+                            && hp.name.module.as_deref() == Some(mod_name.as_str()))
                         .and_then(|hp| hp.body.clone())
+                        .or_else(|| {
+                            // Search nested procs
+                            hir.procedures.iter()
+                                .flat_map(|hp| hp.nested_procs.iter())
+                                .find(|np| np.name.source_name == p.heading.name
+                                    && np.name.module.as_deref() == Some(mod_name.as_str()))
+                                .and_then(|np| np.body.clone())
+                        })
                 });
                 if let Some(body) = prebuilt_body {
                     self.gen_hir_statements(&body);
@@ -841,10 +850,18 @@ impl LLVMCodeGen {
             }
         } else {
             let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+                let mod_name2 = self.module_name.clone();
                 hir.procedures.iter()
                     .find(|hp| hp.name.source_name == p.heading.name
-                        && hp.name.module.as_deref() == Some(&self.module_name))
+                        && hp.name.module.as_deref() == Some(mod_name2.as_str()))
                     .and_then(|hp| hp.body.clone())
+                    .or_else(|| {
+                        hir.procedures.iter()
+                            .flat_map(|hp| hp.nested_procs.iter())
+                            .find(|np| np.name.source_name == p.heading.name
+                                && np.name.module.as_deref() == Some(mod_name2.as_str()))
+                            .and_then(|np| np.body.clone())
+                    })
             });
             if let Some(body) = prebuilt_body {
                 self.gen_hir_statements(&body);

@@ -1311,11 +1311,9 @@ impl<'a> HirBuilder<'a> {
             name.to_string()
         } else if sym.module.is_some() && !self.is_foreign_module(&source_module) {
             if crate::stdlib::is_native_stdlib(&source_module) {
-                // Native stdlib: normalize to the definition's case
                 let canonical_name = self.resolve_canonical_name(&source_module, &original_name);
                 format!("{}_{}", source_module, canonical_name)
             } else if crate::stdlib::is_stdlib_module(&source_module) {
-                // Non-native stdlib: use the C runtime name (e.g., m2_Args_ArgCount)
                 crate::stdlib::map_stdlib_call(&source_module, &original_name)
                     .unwrap_or_else(|| format!("{}_{}", source_module, original_name))
             } else {
@@ -1323,6 +1321,26 @@ impl<'a> HirBuilder<'a> {
             }
         } else if self.is_foreign_module(&source_module) {
             original_name.clone()
+        } else if matches!(&sym.kind, SymbolKind::Procedure { .. }) && self.in_procedure {
+            // Check if this is a nested proc (defined directly in current scope)
+            let is_nested_proc = self.current_scope.map(|sid| {
+                self.symtab.lookup_in_scope_direct(sid, &original_name)
+                    .map(|s| matches!(s.kind, SymbolKind::Procedure { .. }))
+                    .unwrap_or(false)
+            }).unwrap_or(false);
+            if is_nested_proc {
+                if let Some(scope) = self.current_scope {
+                    if let Some(parent_name) = self.symtab.scope_name(scope) {
+                        format!("{}_{}_{}", self.module_name, parent_name, original_name)
+                    } else {
+                        self.mangle(&original_name)
+                    }
+                } else {
+                    self.mangle(&original_name)
+                }
+            } else {
+                self.mangle(&original_name)
+            }
         } else {
             self.mangle(&original_name)
         };
