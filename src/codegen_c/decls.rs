@@ -663,10 +663,37 @@ impl CodeGen {
             self.nested_proc_names.insert(np.heading.name.clone(), mangled);
             // If this nested proc has captures, push its env access names
             if let Some(_) = self.closure_env_type.get(&np.heading.name) {
-                // Compute which vars this specific proc (and its descendants) needs from outer scopes
-                let np_hir_caps = crate::hir_build::compute_captures(
-                    &np, &scope_vars_tid, &self.import_map, &imported_mods,
-                );
+                // Compute captures using HIR body if available, AST fallback otherwise
+                let current_mod = self.module_name.clone();
+                let np_name = np.heading.name.clone();
+                let np_hir_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+                    hir.procedures.iter()
+                        .find(|hp| hp.name.source_name == np_name
+                            && hp.name.module.as_deref() == Some(current_mod.as_str()))
+                        .and_then(|hp| hp.body.as_ref())
+                        .or_else(|| hir.embedded_modules.iter()
+                            .find(|e| e.name == current_mod)
+                            .and_then(|e| e.procedures.iter()
+                                .find(|hp| hp.sig.name == np_name)
+                                .and_then(|hp| hp.body.as_ref())))
+                });
+                let np_hir_caps = if let Some(body) = np_hir_body {
+                    let param_names: Vec<String> = np.heading.params.iter()
+                        .flat_map(|fp| fp.names.clone()).collect();
+                    let local_names: HashSet<String> = np.block.decls.iter()
+                        .filter_map(|d| match d {
+                            Declaration::Var(v) => Some(v.names.clone()),
+                            _ => None,
+                        }).flatten().collect();
+                    crate::hir_build::compute_captures_hir(
+                        &np_name, body, &param_names, &local_names,
+                        &scope_vars_tid, &self.import_map, &imported_mods,
+                    )
+                } else {
+                    crate::hir_build::compute_captures(
+                        &np, &scope_vars_tid, &self.import_map, &imported_mods,
+                    )
+                };
                 let np_captures: Vec<String> = np_hir_caps.iter().map(|c| c.name.clone()).collect();
                 self.env_access_names.push(np_captures.iter().cloned().collect());
             }
