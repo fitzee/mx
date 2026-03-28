@@ -635,15 +635,14 @@ impl CodeGen {
             }
         }
 
-        // Procedure bodies (with module prefix) — prototype via TypeId to match forward decl
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                let emb_sig = hir_emb.as_ref().and_then(|e| {
-                    e.procedures.iter()
-                        .find(|pd| pd.sig.name == p.heading.name)
-                        .map(|pd| pd.sig.clone())
-                });
-                if let Some(ref sig) = emb_sig {
+        // Procedure bodies (with module prefix) — iterate from HIR proc sigs
+        let emb_procs: Vec<crate::hir::HirProcSig> = hir_emb.as_ref()
+            .map(|e| e.procedures.iter().map(|pd| pd.sig.clone()).collect())
+            .unwrap_or_default();
+        for sig in &emb_procs {
+            {
+                let emb_sig: Option<crate::hir::HirProcSig> = Some(sig.clone());
+                {
                     let static_prefix = if sig.export_c_name.is_some() || self.multi_tu { "" } else { "static " };
                     let ret_type = match sig.return_type {
                         Some(rt) => self.type_id_to_c(rt),
@@ -716,14 +715,14 @@ impl CodeGen {
                 self.open_array_params.push(oa_params);
                 let saved_var_tracking = self.save_var_tracking();
                 self.named_array_value_params.push(na_params);
-                self.parent_proc_stack.push(p.heading.name.clone());
+                self.parent_proc_stack.push(sig.name.clone());
 
                 // Local declarations from HirProc.locals (populated by build_proc with correct scope)
                 {
                     let mod_name = self.module_name.clone();
                     let proc_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
                         hir.procedures.iter()
-                            .find(|hp| hp.name.source_name == p.heading.name
+                            .find(|hp| hp.name.source_name == sig.name
                                 && hp.name.module.as_deref() == Some(mod_name.as_str()))
                             .map(|hp| hp.locals.clone())
                     });
@@ -765,31 +764,13 @@ impl CodeGen {
                                 }
                             }
                         }
-                    } else {
-                        // No HirProc (native stdlib or forward-only): emit via AST
-                        for d in &p.block.decls {
-                            match d {
-                                Declaration::Var(_) | Declaration::Const(_)
-                                | Declaration::Type(_) | Declaration::Exception(_) => {
-                                    self.gen_declaration(d);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                // Procedure and Module declarations still via AST
-                for d in &p.block.decls {
-                    match d {
-                        Declaration::Procedure(_) | Declaration::Module(_) => self.gen_declaration(d),
-                        _ => {}
                     }
                 }
 
                 // Body statements — use prebuilt HIR
                 let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
                     hir.procedures.iter()
-                        .find(|hp| hp.name.source_name == p.heading.name
+                        .find(|hp| hp.name.source_name == sig.name
                             && hp.name.module.as_deref() == Some(&self.module_name))
                         .and_then(|hp| hp.body.clone())
                 });
