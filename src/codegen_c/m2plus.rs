@@ -55,62 +55,44 @@ impl CodeGen {
 
     // M2+ statement codegen (TRY/EXCEPT, LOCK, TYPECASE) is in hir_emit.rs
 
-    /// Scan compilation unit to determine which M2+ runtime features are needed.
-    pub(crate) fn scan_m2plus_features(&mut self, unit: &CompilationUnit) {
-        match unit {
-            CompilationUnit::ProgramModule(m) => {
-                self.scan_imports_for_features(&m.imports);
-                self.scan_block_for_features(&m.block);
-            }
-            CompilationUnit::ImplementationModule(m) => {
-                self.scan_imports_for_features(&m.imports);
-                self.scan_block_for_features(&m.block);
-            }
-            CompilationUnit::DefinitionModule(m) => {
-                self.scan_imports_for_features(&m.imports);
-            }
-        }
-    }
-
-    pub(crate) fn scan_imports_for_features(&mut self, imports: &[Import]) {
-        for imp in imports {
-            if let Some(ref from_mod) = imp.from_module {
-                match from_mod.as_str() {
-                    "Thread" | "Mutex" | "Condition"
-                    | "THREAD" | "MUTEX" | "CONDITION" => self.uses_threads = true,
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    pub(crate) fn scan_block_for_features(&mut self, block: &Block) {
-        for decl in &block.decls {
-            if let Declaration::Type(td) = decl {
-                if let Some(ref ty) = td.typ {
-                    self.scan_type_for_gc(ty);
-                }
-            }
-        }
-        if let Some(ref body) = block.body {
-            self.scan_stmts_for_features(body);
-        }
-    }
-
-    pub(crate) fn scan_type_for_gc(&mut self, ty: &TypeNode) {
-        match ty {
-            TypeNode::Ref { .. } | TypeNode::RefAny { .. } | TypeNode::Object { .. } => {
-                self.uses_gc = true;
-            }
-            _ => {}
-        }
-    }
-
-    pub(crate) fn scan_stmts_for_features(&mut self, stmts: &[Statement]) {
-        for s in stmts {
-            match &s.kind {
-                StatementKind::Lock { .. } => self.uses_threads = true,
+    /// Scan sema + HIR to determine which M2+ runtime features are needed.
+    /// Replaces AST walking with queries on import_map, type registry, and HIR.
+    pub(crate) fn scan_m2plus_features(&mut self) {
+        // Check imports for threading modules
+        for module in self.import_map.values() {
+            match module.as_str() {
+                "Thread" | "Mutex" | "Condition"
+                | "THREAD" | "MUTEX" | "CONDITION" => self.uses_threads = true,
                 _ => {}
+            }
+        }
+        // Check sema type registry for Ref/Object types → GC needed
+        for tid in 0..self.sema.types.len() {
+            match self.sema.types.get(tid) {
+                crate::types::Type::Ref { .. } | crate::types::Type::Object { .. } => {
+                    self.uses_gc = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        // Check HIR for Lock statements → threads needed
+        if let Some(ref hir) = self.prebuilt_hir {
+            fn scan_stmts_for_lock(stmts: &[crate::hir::HirStmt]) -> bool {
+                stmts.iter().any(|s| matches!(s.kind, crate::hir::HirStmtKind::Lock { .. }))
+            }
+            for proc in &hir.procedures {
+                if let Some(ref body) = proc.body {
+                    if scan_stmts_for_lock(body) {
+                        self.uses_threads = true;
+                        break;
+                    }
+                }
+            }
+            if let Some(ref init) = hir.init_body {
+                if scan_stmts_for_lock(init) {
+                    self.uses_threads = true;
+                }
             }
         }
     }

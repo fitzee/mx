@@ -244,28 +244,15 @@ impl CodeGen {
     /// stdlib .def/.mod file. PIM4 is case-sensitive, but users may import
     /// with different casing (e.g., `Entier` when .def has `entier`).
     /// Returns the .def name if a case-insensitive match is found.
-    fn resolve_native_stdlib_name(&self, module: &str, import_name: &str) -> String {
-        if let Some(def_mod) = self.def_modules.get(module) {
+    pub(crate) fn resolve_native_stdlib_name(&self, module: &str, import_name: &str) -> String {
+        // Search the module's sema scope for a case-insensitive procedure name match
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(module) {
             let lower = import_name.to_ascii_lowercase();
-            for d in &def_mod.definitions {
-                if let Definition::Procedure(h) = d {
-                    if h.name.to_ascii_lowercase() == lower {
-                        return h.name.clone();
-                    }
-                }
-            }
-        }
-        // Also check pending implementation modules
-        if let Some(ref pending) = self.pending_modules {
-            for imp in pending {
-                if imp.name == module {
-                    for decl in &imp.block.decls {
-                        if let Declaration::Procedure(p) = decl {
-                            if p.heading.name.to_ascii_lowercase() == import_name.to_ascii_lowercase() {
-                                return p.heading.name.clone();
-                            }
-                        }
-                    }
+            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
+                if matches!(sym.kind, crate::symtab::SymbolKind::Procedure { .. })
+                    && sym.name.to_ascii_lowercase() == lower
+                {
+                    return sym.name.clone();
                 }
             }
         }

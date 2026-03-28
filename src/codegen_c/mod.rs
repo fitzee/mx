@@ -639,7 +639,7 @@ impl CodeGen {
     fn post_sema_generate(&mut self, unit: &CompilationUnit) -> CompileResult<()> {
         // Scan compilation unit to determine which M2+ features are needed
         if self.m2plus {
-            self.scan_m2plus_features(unit);
+            self.scan_m2plus_features();
             if self.uses_gc {
                 self.emit("#define M2_USE_GC 1\n");
             }
