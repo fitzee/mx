@@ -1170,30 +1170,67 @@ impl CodeGen {
         }
     }
 
-    /// Build a map of variable name → C type for a procedure's own params and local vars
+    /// Build a map of variable name → C type for a procedure's own params and local vars.
+    /// Uses HirProcSig params + HirProc.locals for TypeId-based resolution.
     pub(crate) fn build_scope_vars(&self, p: &ProcDecl) -> HashMap<String, String> {
         let mut vars = HashMap::new();
-        for fp in &p.heading.params {
-            let c_type = self.type_to_c(&fp.typ);
-            let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
-            for name in &fp.names {
-                if is_open {
-                    // Open array params are passed as pointers in C (e.g., char *s),
-                    // so the scope var type must be the pointer type, not the element type.
-                    // The env struct format "{} *{}" adds another pointer level for indirection.
-                    vars.insert(name.clone(), format!("{}*", c_type));
-                    // Also track the _high companion
-                    vars.insert(format!("{}_high", name), "uint32_t".to_string());
+        let current_module = self.module_name.clone();
+        // Try to get params from HirProcSig
+        let hir_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
+                .map(|pd| pd.sig.clone())
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == current_module)
+                    .and_then(|e| e.procedures.iter()
+                        .find(|pd| pd.sig.name == p.heading.name)
+                        .map(|pd| pd.sig.clone())))
+        });
+        if let Some(ref sig) = hir_sig {
+            for param in &sig.params {
+                let c_type = self.type_id_to_c(param.type_id);
+                if param.is_open_array {
+                    vars.insert(param.name.clone(), format!("{}*", c_type));
+                    vars.insert(format!("{}_high", param.name), "uint32_t".to_string());
                 } else {
-                    vars.insert(name.clone(), c_type.clone());
+                    vars.insert(param.name.clone(), c_type);
+                }
+            }
+        } else {
+            for fp in &p.heading.params {
+                let c_type = self.type_to_c(&fp.typ);
+                let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                for name in &fp.names {
+                    if is_open {
+                        vars.insert(name.clone(), format!("{}*", c_type));
+                        vars.insert(format!("{}_high", name), "uint32_t".to_string());
+                    } else {
+                        vars.insert(name.clone(), c_type.clone());
+                    }
                 }
             }
         }
-        for decl in &p.block.decls {
-            if let Declaration::Var(v) = decl {
-                let c_type = self.type_to_c(&v.typ);
-                for name in &v.names {
-                    vars.insert(name.clone(), c_type.clone());
+        // Local vars from HirProc.locals
+        let hir_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
+            hir.procedures.iter()
+                .find(|hp| hp.name.source_name == p.heading.name
+                    && hp.name.module.as_deref() == Some(current_module.as_str()))
+                .map(|hp| hp.locals.clone())
+        });
+        if let Some(ref locals) = hir_locals {
+            for local in locals {
+                if let crate::hir::HirLocalDecl::Var { name, type_id } = local {
+                    let c_type = self.type_id_to_c(*type_id);
+                    vars.insert(name.clone(), c_type);
+                }
+            }
+        } else {
+            for decl in &p.block.decls {
+                if let Declaration::Var(v) = decl {
+                    let c_type = self.type_to_c(&v.typ);
+                    for name in &v.names {
+                        vars.insert(name.clone(), c_type.clone());
+                    }
                 }
             }
         }

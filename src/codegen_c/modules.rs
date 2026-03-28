@@ -25,14 +25,26 @@ impl CodeGen {
 
         // Forward declarations for procedures from HIR
         self.emit_hir_forward_decls();
-        // Also forward-declare procs from nested local modules (still AST-driven)
+        // Also forward-declare procs from nested local modules
         for decl in &m.block.decls {
             if let Declaration::Module(local_mod) = decl {
                 for d in &local_mod.block.decls {
                     if let Declaration::Procedure(p) = d {
-                        self.register_proc_params(&p.heading);
-                        self.gen_proc_prototype(&p.heading);
-                        self.emit(";\n");
+                        let mod_name = self.module_name.clone();
+                        let sig = self.prebuilt_hir.as_ref().and_then(|hir| {
+                            hir.proc_decls.iter()
+                                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == mod_name)
+                                .map(|pd| pd.sig.clone())
+                        });
+                        if let Some(ref s) = sig {
+                            self.register_hir_proc_params(s);
+                            self.gen_hir_proc_prototype(s);
+                            self.emit(";\n");
+                        } else {
+                            self.register_proc_params(&p.heading);
+                            self.gen_proc_prototype(&p.heading);
+                            self.emit(";\n");
+                        }
                     }
                 }
             }
