@@ -161,24 +161,33 @@ impl CodeGen {
         self.newline();
 
         // Forward struct declarations for record types (and POINTER TO RECORD)
-        for def in &m.definitions {
-            if let Definition::Type(t) = def {
-                let cn = self.mangle(&t.name);
-                match &t.typ {
-                    Some(TypeNode::Record { .. }) => {
+        let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
+        {
+            let type_syms: Vec<(String, crate::types::TypeId)> = def_scope.map(|scope_id| {
+                self.sema.symtab.symbols_in_scope(scope_id).iter()
+                    .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Type))
+                    .map(|s| (s.name.clone(), s.typ))
+                    .collect()
+            }).unwrap_or_default();
+            for (name, tid) in &type_syms {
+                let resolved = self.resolve_hir_alias(*tid);
+                let cn = self.mangle(name);
+                match self.sema.types.get(resolved) {
+                    crate::types::Type::Record { .. } => {
                         self.emitln(&format!("typedef struct {} {};", cn, cn));
                     }
-                    Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
-                        let tag = format!("{}_r", cn);
-                        self.emitln(&format!("typedef struct {} {};", tag, tag));
-                        self.emitln(&format!("typedef {} *{};", tag, cn));
+                    crate::types::Type::Pointer { base } => {
+                        let base_resolved = self.resolve_hir_alias(*base);
+                        if matches!(self.sema.types.get(base_resolved), crate::types::Type::Record { .. }) {
+                            let tag = format!("{}_r", cn);
+                            self.emitln(&format!("typedef struct {} {};", tag, tag));
+                            self.emitln(&format!("typedef {} *{};", tag, cn));
+                        }
                     }
                     _ => {}
                 }
             }
         }
-
-        let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
         for def in &m.definitions {
             match def {
                 Definition::Const(c) => {
@@ -255,26 +264,37 @@ impl CodeGen {
         // Emit types and constants from the corresponding definition module.
         // The implementation module's scope includes all .def exports, but
         // m2c must emit them explicitly in the generated C.
-        let impl_type_names: std::collections::HashSet<String> = m.block.decls.iter()
-            .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-            .collect();
+        let impl_type_names: std::collections::HashSet<String> = if let Some(ref hir) = self.prebuilt_hir {
+            hir.type_decls.iter().map(|td| td.name.clone()).collect()
+        } else {
+            std::collections::HashSet::new()
+        };
         if let Some(def_mod) = self.def_modules.get(&m.name).cloned() {
-            // Forward struct declarations from the definition module
-            for d in &def_mod.definitions {
-                if let Definition::Type(t) = d {
-                    if !impl_type_names.contains(&t.name) {
-                        let cn = self.mangle(&t.name);
-                        match &t.typ {
-                            Some(TypeNode::Record { .. }) => {
-                                self.emitln(&format!("typedef struct {} {};", cn, cn));
-                            }
-                            Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
+            // Forward struct declarations from the definition module via sema types
+            let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
+            let def_types: Vec<(String, crate::types::TypeId)> = def_scope.map(|scope_id| {
+                self.sema.symtab.symbols_in_scope(scope_id).iter()
+                    .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Type))
+                    .map(|s| (s.name.clone(), s.typ))
+                    .collect()
+            }).unwrap_or_default();
+            for (name, tid) in &def_types {
+                if !impl_type_names.contains(name) {
+                    let resolved = self.resolve_hir_alias(*tid);
+                    let cn = self.mangle(name);
+                    match self.sema.types.get(resolved) {
+                        crate::types::Type::Record { .. } => {
+                            self.emitln(&format!("typedef struct {} {};", cn, cn));
+                        }
+                        crate::types::Type::Pointer { base } => {
+                            let base_resolved = self.resolve_hir_alias(*base);
+                            if matches!(self.sema.types.get(base_resolved), crate::types::Type::Record { .. }) {
                                 let tag = format!("{}_r", cn);
                                 self.emitln(&format!("typedef struct {} {};", tag, tag));
                                 self.emitln(&format!("typedef {} *{};", tag, cn));
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
             }
@@ -456,13 +476,20 @@ impl CodeGen {
                     .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
                     .collect()
             };
-            for d in &def_mod.definitions {
-                if let Definition::Type(t) = d {
-                    if !impl_type_names.contains(&t.name) {
-                        if matches!(&t.typ, Some(TypeNode::Record { .. })) {
-                            let cn = self.type_decl_c_name(&t.name);
-                            self.emitln(&format!("typedef struct {} {};", cn, cn));
-                        }
+            {
+                let def_scope = self.sema.symtab.lookup_module_scope(&imp.name);
+                let def_types: Vec<(String, crate::types::TypeId)> = def_scope.map(|sid| {
+                    self.sema.symtab.symbols_in_scope(sid).iter()
+                        .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Type)
+                            && !impl_type_names.contains(&s.name))
+                        .map(|s| (s.name.clone(), s.typ))
+                        .collect()
+                }).unwrap_or_default();
+                for (name, tid) in &def_types {
+                    let resolved = self.resolve_hir_alias(*tid);
+                    if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
+                        let cn = self.type_decl_c_name(name);
+                        self.emitln(&format!("typedef struct {} {};", cn, cn));
                     }
                 }
             }
@@ -732,48 +759,35 @@ impl CodeGen {
                 self.emit(") {\n");
                 self.indent += 1;
 
-                // Track VAR and open array params for body codegen (from AST)
+                // Track VAR and open array params for body codegen (from HIR sig)
                 let mut param_vars = HashMap::new();
                 let mut oa_params = HashSet::new();
-                for fp in &p.heading.params {
-                    let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
-                    for name in &fp.names {
-                        let c_param = self.mangle(name);
-                        if is_open { oa_params.insert(c_param); }
-                        else if fp.is_var { param_vars.insert(name.clone(), true); }
+                let mut na_params = HashSet::new();
+                if let Some(ref sig) = emb_sig {
+                    for hp in &sig.params {
+                        let resolved = self.resolve_hir_alias(hp.type_id);
+                        let is_open = matches!(self.sema.types.get(resolved), crate::types::Type::OpenArray { .. });
+                        let mangled = self.mangle(&hp.name);
+                        if is_open {
+                            oa_params.insert(mangled);
+                            let high_name = format!("{}_high", &hp.name);
+                            self.var_types.insert(high_name, "uint32_t".to_string());
+                        } else if hp.is_var {
+                            param_vars.insert(hp.name.clone(), true);
+                        }
+                        if let Some(type_name) = self.type_id_source_name(hp.type_id) {
+                            self.var_types.insert(hp.name.clone(), type_name);
+                        }
+                        if !hp.is_var && !is_open {
+                            if matches!(self.sema.types.get(resolved), crate::types::Type::Array { .. }) {
+                                na_params.insert(hp.name.clone());
+                            }
+                        }
                     }
                 }
                 self.var_params.push(param_vars);
                 self.open_array_params.push(oa_params);
                 let saved_var_tracking = self.save_var_tracking();
-                let mut na_params = HashSet::new();
-
-                // Register param type names and _high companions
-                for fp in &p.heading.params {
-                    if matches!(fp.typ, TypeNode::OpenArray { .. }) {
-                        for name in &fp.names {
-                            let high_name = format!("{}_high", name);
-                            self.var_types.insert(high_name, "uint32_t".to_string());
-                        }
-                    }
-                    if let TypeNode::Named(qi) = &fp.typ {
-                        if qi.module.is_none() {
-                            for name in &fp.names {
-                                self.var_types.insert(name.clone(), qi.name.clone());
-                            }
-                        }
-                    }
-                    // Track named-array value params (array decays to pointer in C)
-                    if !fp.is_var && !matches!(fp.typ, TypeNode::OpenArray { .. }) {
-                        if let TypeNode::Named(qi) = &fp.typ {
-                            if self.array_types.contains(&qi.name) {
-                                for name in &fp.names {
-                                    na_params.insert(name.clone());
-                                }
-                            }
-                        }
-                    }
-                }
                 self.named_array_value_params.push(na_params);
                 self.parent_proc_stack.push(p.heading.name.clone());
 
@@ -1075,15 +1089,12 @@ impl CodeGen {
                         }
                     }
                     // If this imported name is an enum type, also import its variant names
-                    if let Some(def_mod) = self.def_modules.get(from_mod.as_str()) {
-                        for d in &def_mod.definitions {
-                            if let Definition::Type(t) = d {
-                                if t.name == *original {
-                                    if let Some(TypeNode::Enumeration { variants, .. }) = &t.typ {
-                                        for v in variants {
-                                            extra_variants.push((v.clone(), from_mod.clone()));
-                                        }
-                                    }
+                    if let Some(scope_id) = self.sema.symtab.lookup_module_scope(from_mod) {
+                        if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, original) {
+                            let resolved = self.resolve_hir_alias(sym.typ);
+                            if let crate::types::Type::Enumeration { variants, .. } = self.sema.types.get(resolved) {
+                                for v in variants {
+                                    extra_variants.push((v.clone(), from_mod.clone()));
                                 }
                             }
                         }
