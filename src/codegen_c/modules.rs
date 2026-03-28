@@ -515,13 +515,11 @@ impl CodeGen {
                 }
             }
             // Exception declarations from the definition module (M2+ only)
-            if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-                for d in &def_mod.definitions {
-                    if let Definition::Exception(e) = d {
-                        self.exception_names.insert(e.name.clone());
-                        let mangled = format!("M2_EXC_{}", self.mangle(&e.name));
-                        self.emitln(&format!("#define {} __COUNTER__", mangled));
-                    }
+            if let Some(exc_names) = self.def_exception_names.get(&imp.name).cloned() {
+                for exc_name in &exc_names {
+                    self.exception_names.insert(exc_name.clone());
+                    let mangled = format!("M2_EXC_{}", self.mangle(exc_name));
+                    self.emitln(&format!("#define {} __COUNTER__", mangled));
                 }
             }
         }

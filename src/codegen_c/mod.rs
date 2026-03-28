@@ -127,6 +127,8 @@ pub struct CodeGen {
     module_exports: HashMap<String, Vec<(String, Vec<ParamCodegenInfo>)>>,
     /// Pending implementation modules to be generated before the main module
     pending_modules: Option<Vec<ImplementationModule>>,
+    /// Exception names from definition modules (M2+ only), keyed by module name
+    def_exception_names: HashMap<String, Vec<String>>,
     /// Maps nested proc name → env struct type name it receives (e.g., "Add" → "Accumulate_env")
     closure_env_type: HashMap<String, String>,
     /// Maps env struct type name → ordered list of (var_name, c_type) fields
@@ -293,6 +295,7 @@ impl CodeGen {
             imported_modules: HashSet::new(),
             module_exports: HashMap::new(),
             pending_modules: None,
+            def_exception_names: HashMap::new(),
             closure_env_type: HashMap::new(),
             closure_env_fields: HashMap::new(),
             env_access_names: Vec::new(),
@@ -507,6 +510,13 @@ impl CodeGen {
                     }
                 }
             }
+        }
+        // Extract M2+ exception names for later emission
+        let exc_names: Vec<String> = def.definitions.iter()
+            .filter_map(|d| if let crate::ast::Definition::Exception(e) = d { Some(e.name.clone()) } else { None })
+            .collect();
+        if !exc_names.is_empty() {
+            self.def_exception_names.insert(def.name.clone(), exc_names);
         }
         if def.foreign_lang.is_none() {
             self.def_modules.insert(def.name.clone(), def.clone());
