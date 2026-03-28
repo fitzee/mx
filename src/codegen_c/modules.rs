@@ -379,26 +379,6 @@ impl CodeGen {
             for c in &emb.const_decls {
                 self.embedded_local_vars.insert(c.name.clone());
             }
-        } else {
-            // Fallback to AST if no HIR available
-            for decl in &imp.block.decls {
-                match decl {
-                    Declaration::Procedure(p) => {
-                        if p.heading.export_c_name.is_none() {
-                            self.embedded_local_procs.insert(p.heading.name.clone());
-                        }
-                    }
-                    Declaration::Var(v) => {
-                        for name in &v.names {
-                            self.embedded_local_vars.insert(name.clone());
-                        }
-                    }
-                    Declaration::Const(c) => {
-                        self.embedded_local_vars.insert(c.name.clone());
-                    }
-                    _ => {}
-                }
-            }
         }
 
         if self.multi_tu {
@@ -435,13 +415,9 @@ impl CodeGen {
 
         // From the definition module:
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            let impl_type_names: HashSet<String> = if let Some(ref emb) = hir_emb {
-                emb.type_decls.iter().map(|td| td.name.clone()).collect()
-            } else {
-                imp.block.decls.iter()
-                    .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-                    .collect()
-            };
+            let impl_type_names: HashSet<String> = hir_emb.as_ref()
+                .map(|emb| emb.type_decls.iter().map(|td| td.name.clone()).collect())
+                .unwrap_or_default();
             {
                 let def_scope = self.sema.symtab.lookup_module_scope(&imp.name);
                 let def_types: Vec<(String, crate::types::TypeId)> = def_scope.map(|sid| {
