@@ -482,6 +482,23 @@ impl CodeGen {
                 }
             }
         }
+        // Extract import deps from sema scope (for topo sorting)
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
+            let mut deps: Vec<String> = Vec::new();
+            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
+                // Symbols imported from other modules have sym.module set
+                if let Some(ref src_mod) = sym.module {
+                    if src_mod != name && !deps.contains(src_mod) {
+                        deps.push(src_mod.clone());
+                    }
+                }
+            }
+            self.module_import_deps.entry(name.to_string())
+                .and_modify(|existing| {
+                    for d in &deps { if !existing.contains(d) { existing.push(d.clone()); } }
+                })
+                .or_insert(deps);
+        }
         if !is_foreign {
             self.def_module_names.insert(name.to_string());
         }

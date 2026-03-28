@@ -293,6 +293,16 @@ pub fn build_module(
         merged_modules.extend(imp_modules);
         let mut merged_aliases = import_aliases.clone();
         merged_aliases.extend(imp_aliases);
+        // Also include imports from the corresponding definition module (via sema scope)
+        if let Some(scope_id) = sema.symtab.lookup_module_scope(&imp.name) {
+            for sym in sema.symtab.symbols_in_scope(scope_id) {
+                if let Some(ref src_mod) = sym.module {
+                    if src_mod != &imp.name && !merged_modules.contains(src_mod) {
+                        merged_modules.push(src_mod.clone());
+                    }
+                }
+            }
+        }
 
         for decl in &imp.block.decls {
             if let Declaration::Procedure(p) = decl {
@@ -433,10 +443,15 @@ pub fn build_module(
         new_embedded_modules.push(HirEmbeddedModule {
             name: imp.name.clone(),
             is_foreign,
-            imports: extract_imports(&imp.imports).0.into_iter().map(|m| HirImport {
-                module: m,
-                names: Vec::new(),
-                is_qualified: false,
+            imports: imp.imports.iter().map(|ii| {
+                HirImport {
+                    module: ii.from_module.clone().unwrap_or_default(),
+                    names: ii.names.iter().map(|n| HirImportName {
+                        name: n.name.clone(),
+                        local_name: n.local_name().to_string(),
+                    }).collect(),
+                    is_qualified: ii.from_module.is_none(),
+                }
             }).collect(),
             type_decls: emp_type_decls,
             const_decls: emp_const_decls,

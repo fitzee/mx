@@ -360,21 +360,66 @@ impl CodeGen {
         self.module_name = imp.name.clone();
         self.import_map.clear();
         self.import_alias_map.clear();
-        // Build import map from HIR embedded module imports (covers both def + impl imports)
+        // Build import map from HIR embedded module imports
         if let Some(ref emb) = hir_emb {
             for hi in &emb.imports {
-                if !hi.is_qualified {
+                if !hi.is_qualified && !hi.module.is_empty() {
                     self.imported_modules.insert(hi.module.clone());
                     for name in &hi.names {
-                        self.import_map.insert(name.local_name.clone(), hi.module.clone());
-                        if name.name != name.local_name {
-                            self.import_alias_map.insert(name.local_name.clone(), name.name.clone());
+                        if !name.local_name.is_empty() {
+                            self.import_map.insert(name.local_name.clone(), hi.module.clone());
+                            if name.name != name.local_name {
+                                self.import_alias_map.insert(name.local_name.clone(), name.name.clone());
+                            }
+                        }
+                        // Register stdlib proc params
+                        if stdlib::is_stdlib_module(&hi.module) && !stdlib::is_native_stdlib(&hi.module) {
+                            if let Some(params) = stdlib::get_stdlib_proc_params(&hi.module, &name.name) {
+                                let info: Vec<ParamCodegenInfo> = params.into_iter().map(|(pname, is_var, is_char, is_open_array)| {
+                                    ParamCodegenInfo { name: pname, is_var, is_char, is_open_array }
+                                }).collect();
+                                let prefixed = format!("{}_{}", hi.module, name.name);
+                                self.proc_params.insert(prefixed, info.clone());
+                                self.proc_params.insert(name.local_name.clone(), info);
+                            }
+                        }
+                    }
+                    // Enum variant import
+                    for name in &hi.names {
+                        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&hi.module) {
+                            if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, &name.name) {
+                                let resolved = self.resolve_hir_alias(sym.typ);
+                                if let crate::types::Type::Enumeration { variants, .. } = self.sema.types.get(resolved) {
+                                    for v in variants {
+                                        self.import_map.entry(v.clone()).or_insert(hi.module.clone());
+                                    }
+                                }
+                            }
                         }
                     }
                 } else {
                     for name in &hi.names {
                         self.imported_modules.insert(name.name.clone());
                     }
+                }
+            }
+        }
+        // Supplement from sema scope: def module imports may not be in HIR impl imports
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&imp.name) {
+            let syms: Vec<(String, crate::symtab::SymbolKind, Option<String>)> = self.sema.symtab.symbols_in_scope(scope_id).iter()
+                .map(|s| (s.name.clone(), s.kind.clone(), s.module.clone()))
+                .collect();
+            for (sym_name, kind, sym_module) in &syms {
+                // FROM Module IMPORT name — symbol has module != current
+                if let Some(ref src_mod) = sym_module {
+                    if src_mod != &imp.name {
+                        self.import_map.entry(sym_name.clone()).or_insert(src_mod.clone());
+                        self.imported_modules.insert(src_mod.clone());
+                    }
+                }
+                // IMPORT Module — Module symbol with scope_id
+                if let crate::symtab::SymbolKind::Module { .. } = kind {
+                    self.imported_modules.insert(sym_name.clone());
                 }
             }
         }
@@ -468,9 +513,12 @@ impl CodeGen {
         // Emit type and const declarations from the def module via sema scope
         if self.def_module_names.contains(&imp.name) {
             let def_scope = self.sema.symtab.lookup_module_scope(&imp.name);
+            let imp_name_ref = imp.name.clone();
             let def_syms: Vec<(String, crate::symtab::SymbolKind, crate::types::TypeId, bool)> =
                 def_scope.map(|sid| {
                     self.sema.symtab.symbols_in_scope(sid).iter()
+                        // Only include symbols defined in this module (not imported from others)
+                        .filter(|s| s.module.as_ref().map_or(true, |m| m == &imp_name_ref))
                         .map(|s| (s.name.clone(), s.kind.clone(), s.typ, s.exported))
                         .collect()
                 }).unwrap_or_default();
@@ -491,6 +539,11 @@ impl CodeGen {
             } else {
                 HashSet::new()
             };
+            let impl_const_names: HashSet<String> = if let Some(ref emb) = hir_emb {
+                emb.const_decls.iter().map(|c| c.name.clone()).collect()
+            } else {
+                HashSet::new()
+            };
             let imp_name = imp.name.clone();
             for (name, kind, typ, exported) in &def_syms {
                 match kind {
@@ -499,7 +552,7 @@ impl CodeGen {
                             self.gen_type_decl_from_id(name, *typ);
                         }
                     }
-                    crate::symtab::SymbolKind::Constant(cv) => {
+                    crate::symtab::SymbolKind::Constant(cv) if !impl_const_names.contains(name) => {
                         let val = crate::hir_build::const_value_to_hir(cv);
                         let hc = crate::hir::HirConstDecl {
                             name: name.clone(),
