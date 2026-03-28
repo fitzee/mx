@@ -357,10 +357,30 @@ impl CodeGen {
         self.module_name = imp.name.clone();
         self.import_map.clear();
         self.import_alias_map.clear();
-        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            self.build_import_map(&def_mod.imports);
+        // Build import map from HIR embedded module imports (covers both def + impl imports)
+        if let Some(ref emb) = hir_emb {
+            for hi in &emb.imports {
+                if !hi.is_qualified {
+                    self.imported_modules.insert(hi.module.clone());
+                    for name in &hi.names {
+                        self.import_map.insert(name.local_name.clone(), hi.module.clone());
+                        if name.name != name.local_name {
+                            self.import_alias_map.insert(name.local_name.clone(), name.name.clone());
+                        }
+                    }
+                } else {
+                    for name in &hi.names {
+                        self.imported_modules.insert(name.name.clone());
+                    }
+                }
+            }
+        } else {
+            // Fallback to AST imports
+            if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+                self.build_import_map(&def_mod.imports);
+            }
+            self.build_import_map(&imp.imports);
         }
-        self.build_import_map(&imp.imports);
 
         // Track local procedure and variable names from HIR
         self.embedded_local_procs.clear();
