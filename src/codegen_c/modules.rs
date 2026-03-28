@@ -46,7 +46,16 @@ impl CodeGen {
             if let Declaration::Module(local_mod) = decl {
                 for d in &local_mod.block.decls {
                     if let Declaration::Var(v) = d {
-                        self.gen_var_decl(v);
+                        // TypeId-based var emission for nested module vars
+                        let sym = self.sema.symtab.lookup_innermost(&v.names[0]);
+                        let tid = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                        let resolved = self.resolve_hir_alias(tid);
+                        let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
+                        for name in &v.names {
+                            let c_name = self.mangle_decl_name(name);
+                            self.emit_indent();
+                            self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
+                        }
                     }
                 }
             }

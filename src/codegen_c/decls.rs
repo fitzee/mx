@@ -87,7 +87,37 @@ impl CodeGen {
                     self.gen_type_decl_from_id(&t.name, tid);
                 }
             }
-            Declaration::Var(v) => self.gen_var_decl(v),
+            Declaration::Var(v) => {
+                let sym = self.sema.symtab.lookup_innermost(&v.names[0]);
+                let tid = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                let resolved = self.resolve_hir_alias(tid);
+                let is_proc = matches!(self.sema.types.get(resolved), crate::types::Type::ProcedureType { .. });
+                let is_ptr_to_arr = if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
+                    matches!(self.sema.types.get(self.resolve_hir_alias(*base)), crate::types::Type::Array { .. })
+                } else { false };
+                if is_proc {
+                    let c_name = self.mangle_decl_name(&v.names[0]);
+                    self.emit_indent();
+                    let d = self.proc_type_decl_from_id(resolved, &c_name, false);
+                    self.emit(&format!("{};\n", d));
+                } else if is_ptr_to_arr {
+                    if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
+                        let (elem_c, arr_suffix) = self.field_type_and_suffix(*base);
+                        for name in &v.names {
+                            let c_name = self.mangle_decl_name(name);
+                            self.emit_indent();
+                            self.emit(&format!("{} (*{}){};\n", elem_c, c_name, arr_suffix));
+                        }
+                    }
+                } else {
+                    let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
+                    for name in &v.names {
+                        let c_name = self.mangle_decl_name(name);
+                        self.emit_indent();
+                        self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
+                    }
+                }
+            }
             Declaration::Procedure(p) => self.gen_proc_decl(p),
             Declaration::Module(m) => {
                 let inside_proc = !self.parent_proc_stack.is_empty();
@@ -1242,7 +1272,22 @@ impl CodeGen {
     }
 
     pub(crate) fn gen_proc_decl(&mut self, p: &ProcDecl) {
-        self.register_proc_params(&p.heading);
+        let current_module = self.module_name.clone();
+        let early_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
+                .map(|pd| pd.sig.clone())
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == current_module)
+                    .and_then(|e| e.procedures.iter()
+                        .find(|pd| pd.sig.name == p.heading.name)
+                        .map(|pd| pd.sig.clone())))
+        });
+        if let Some(ref sig) = early_sig {
+            self.register_hir_proc_params(sig);
+        } else {
+            self.register_proc_params(&p.heading);
+        }
 
         // Collect nested procedure declarations and other declarations
         // Also hoist procedures from local modules inside this procedure
@@ -1377,19 +1422,7 @@ impl CodeGen {
         // ── Generate this procedure ─────────────────────────────────────
         self.newline();
         self.emit_line_directive(&p.loc);
-        // Use HirProcSig (TypeId-based) for prototype to match forward decls
-        let current_module = self.module_name.clone();
-        let hir_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
-            hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
-                .map(|pd| pd.sig.clone())
-                .or_else(|| hir.embedded_modules.iter()
-                    .find(|e| e.name == current_module)
-                    .and_then(|e| e.procedures.iter()
-                        .find(|pd| pd.sig.name == p.heading.name)
-                        .map(|pd| pd.sig.clone())))
-        });
-        if let Some(ref sig) = hir_sig {
+        if let Some(ref sig) = early_sig {
             self.gen_hir_proc_prototype(sig);
         } else {
             self.gen_proc_prototype(&p.heading);
@@ -1814,17 +1847,37 @@ impl CodeGen {
                         self.emit(");\n");
                     }
                     Definition::Var(v) => {
-                        self.emit_indent();
-                        let ctype = self.type_to_c(&v.typ);
+                        let sym = self.sema.symtab.lookup_innermost(&v.names[0]);
+                        let tid = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                        let (ctype, arr_suffix) = self.field_type_and_suffix(self.resolve_hir_alias(tid));
                         for name in &v.names {
-                            self.emitln(&format!("extern {} {};", ctype, name));
+                            self.emit_indent();
+                            self.emitln(&format!("extern {} {}{};", ctype, name, arr_suffix));
                         }
                     }
                     Definition::Const(c) => {
-                        self.gen_const_decl(c);
+                        let sym = self.sema.symtab.lookup_innermost(&c.name);
+                        if let Some(s) = sym {
+                            if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
+                                let val = crate::hir_build::const_value_to_hir(cv);
+                                let hc = crate::hir::HirConstDecl {
+                                    name: c.name.clone(),
+                                    mangled: self.mangle(&c.name),
+                                    value: val.clone(),
+                                    type_id: s.typ,
+                                    exported: s.exported,
+                                    c_type: crate::hir_build::const_val_c_type(&val),
+                                };
+                                self.gen_hir_const_decl(&hc);
+                            }
+                        }
                     }
                     Definition::Type(t) => {
-                        self.gen_type_decl(t);
+                        let sym = self.sema.symtab.lookup_innermost(&t.name);
+                        let tid = sym.map(|s| s.typ).unwrap_or(crate::types::TY_VOID);
+                        if tid != crate::types::TY_VOID {
+                            self.gen_type_decl_from_id(&t.name, tid);
+                        }
                     }
                     Definition::Exception(_) => {}
                 }

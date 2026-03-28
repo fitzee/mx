@@ -109,12 +109,6 @@ impl CodeGen {
 
     // ── Modula-2+ Exception Declaration ─────────────────────────────
 
-    pub(crate) fn gen_exception_decl(&mut self, e: &ExceptionDecl) {
-        let exc_id = self.next_exception_id();
-        self.exception_names.insert(e.name.clone());
-        self.emitln(&format!("static const int M2_EXC_{} = {};", self.mangle(&e.name), exc_id));
-    }
-
     pub(crate) fn next_exception_id(&mut self) -> usize {
         self.exception_counter += 1;
         self.exception_counter
