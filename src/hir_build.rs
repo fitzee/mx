@@ -639,12 +639,25 @@ fn build_proc_decl(
         },
         body: None,
         locals: {
-            let proc_scope = sema.symtab.lookup_module_scope(&h.name);
+            // Find the proc scope as a child of the module scope (not by bare name)
+            let module_scope = sema.symtab.lookup_module_scope(module_name);
+            let proc_scope = module_scope.and_then(|msid| {
+                let count = sema.symtab.scope_count();
+                for id in 0..count {
+                    if sema.symtab.scope_name(id) == Some(&h.name)
+                        && sema.symtab.scope_parent(id) == Some(msid) {
+                        return Some(id);
+                    }
+                }
+                // Fallback: any scope with this name
+                sema.symtab.lookup_module_scope(&h.name)
+            });
             let lookup = |name: &str| -> Option<&crate::symtab::Symbol> {
                 proc_scope
                     .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, name))
-                    .or_else(|| sema.symtab.lookup_module_scope(module_name)
+                    .or_else(|| module_scope
                         .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, name)))
+                    .or_else(|| sema.symtab.lookup_in_scope_direct(0, name))
                     .or_else(|| sema.symtab.lookup_innermost(name))
             };
             let mut locals = Vec::new();

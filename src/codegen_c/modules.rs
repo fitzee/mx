@@ -751,9 +751,46 @@ impl CodeGen {
                 self.named_array_value_params.push(na_params);
                 self.parent_proc_stack.push(p.heading.name.clone());
 
-                // Local declarations
+                // Local declarations — emit const/type/var from HirProcDecl.locals,
+                // proc/module via gen_declaration
+                if let Some(ref emb) = hir_emb {
+                    if let Some(pd) = emb.procedures.iter().find(|pd| pd.sig.name == p.heading.name) {
+                        for local in &pd.locals {
+                            match local {
+                                crate::hir::HirLocalDecl::Var { name, type_id } => {
+                                    let resolved = self.resolve_hir_alias(*type_id);
+                                    let is_proc = matches!(self.sema.types.get(resolved), crate::types::Type::ProcedureType { .. });
+                                    if is_proc {
+                                        let c_name = self.mangle(name);
+                                        self.emit_indent();
+                                        let d = self.proc_type_decl_from_id(resolved, &c_name, false);
+                                        self.emit(&format!("{};\n", d));
+                                    } else {
+                                        let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
+                                        self.emit_indent();
+                                        self.emit(&format!("{} {}{};\n", ctype, name, arr_suffix));
+                                    }
+                                }
+                                crate::hir::HirLocalDecl::Type { name, type_id } => {
+                                    self.gen_type_decl_from_id(name, *type_id);
+                                }
+                                crate::hir::HirLocalDecl::Const(hc) => {
+                                    self.gen_hir_const_decl(hc);
+                                }
+                                crate::hir::HirLocalDecl::Exception { name, mangled, exc_id } => {
+                                    self.exception_names.insert(name.clone());
+                                    self.emitln(&format!("#define {} {}", mangled, exc_id));
+                                }
+                            }
+                        }
+                    }
+                }
+                // Procedure and Module declarations still via AST
                 for d in &p.block.decls {
-                    self.gen_declaration(d);
+                    match d {
+                        Declaration::Procedure(_) | Declaration::Module(_) => self.gen_declaration(d),
+                        _ => {}
+                    }
                 }
 
                 // Body statements — use prebuilt HIR

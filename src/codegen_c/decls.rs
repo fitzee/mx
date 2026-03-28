@@ -63,14 +63,33 @@ impl CodeGen {
 
     pub(crate) fn gen_declaration(&mut self, decl: &Declaration) {
         match decl {
-            Declaration::Const(c) => self.gen_const_decl(c),
-            Declaration::Type(t) => self.gen_type_decl(t),
+            Declaration::Const(c) => {
+                let sym = self.sema.symtab.lookup_innermost(&c.name);
+                if let Some(s) = sym {
+                    if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
+                        let val = crate::hir_build::const_value_to_hir(cv);
+                        let hc = crate::hir::HirConstDecl {
+                            name: c.name.clone(),
+                            mangled: self.mangle(&c.name),
+                            value: val.clone(),
+                            type_id: s.typ,
+                            exported: s.exported,
+                            c_type: crate::hir_build::const_val_c_type(&val),
+                        };
+                        self.gen_hir_const_decl(&hc);
+                    }
+                }
+            }
+            Declaration::Type(t) => {
+                let sym = self.sema.symtab.lookup_innermost(&t.name);
+                let tid = sym.map(|s| s.typ).unwrap_or(crate::types::TY_VOID);
+                if tid != crate::types::TY_VOID {
+                    self.gen_type_decl_from_id(&t.name, tid);
+                }
+            }
             Declaration::Var(v) => self.gen_var_decl(v),
             Declaration::Procedure(p) => self.gen_proc_decl(p),
             Declaration::Module(m) => {
-                // Nested module - generate inline.
-                // If inside a procedure, procedures were already hoisted; skip them here.
-                // At program/implementation module level, generate them normally.
                 let inside_proc = !self.parent_proc_stack.is_empty();
                 self.emitln(&format!("/* Nested module {} */", m.name));
                 for d in &m.block.decls {
@@ -81,7 +100,9 @@ impl CodeGen {
                 }
             }
             Declaration::Exception(e) => {
-                self.gen_exception_decl(e);
+                self.exception_names.insert(e.name.clone());
+                let mangled = format!("M2_EXC_{}", self.mangle(&e.name));
+                self.emitln(&format!("#define {} __COUNTER__", mangled));
             }
         }
     }
@@ -1449,9 +1470,63 @@ impl CodeGen {
             }
         }
 
-        // Local declarations (excluding procedures, which were lifted)
+        // Local declarations from HirProcDecl.locals (TypeId-based)
+        let current_module = self.module_name.clone();
+        let proc_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
+            // Search main module procs
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
+                .map(|pd| pd.locals.clone())
+                .or_else(|| {
+                    // Search embedded module procs
+                    hir.embedded_modules.iter()
+                        .find(|e| e.name == current_module)
+                        .and_then(|e| e.procedures.iter()
+                            .find(|pd| pd.sig.name == p.heading.name)
+                            .map(|pd| pd.locals.clone()))
+                })
+        });
+        if let Some(locals) = proc_locals {
+            for local in &locals {
+                match local {
+                    crate::hir::HirLocalDecl::Var { name, type_id } => {
+                        let resolved = self.resolve_hir_alias(*type_id);
+                        let is_proc = matches!(self.sema.types.get(resolved), crate::types::Type::ProcedureType { .. });
+                        if is_proc {
+                            let c_name = self.mangle_decl_name(name);
+                            self.emit_indent();
+                            let d = self.proc_type_decl_from_id(resolved, &c_name, false);
+                            self.emit(&format!("{};\n", d));
+                        } else {
+                            let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
+                            self.emit_indent();
+                            let c_name = self.mangle_decl_name(name);
+                            self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
+                        }
+                    }
+                    crate::hir::HirLocalDecl::Type { name, type_id } => {
+                        self.gen_type_decl_from_id(name, *type_id);
+                    }
+                    crate::hir::HirLocalDecl::Const(hc) => {
+                        self.gen_hir_const_decl(hc);
+                    }
+                    crate::hir::HirLocalDecl::Exception { name, mangled, exc_id } => {
+                        self.exception_names.insert(name.clone());
+                        self.emitln(&format!("#define {} {}", mangled, exc_id));
+                    }
+                }
+            }
+        } else {
+            // Fallback: AST
+            for decl in &other_decls {
+                self.gen_declaration(decl);
+            }
+        }
+        // Module declarations still via AST (nested modules)
         for decl in &other_decls {
-            self.gen_declaration(decl);
+            if let Declaration::Module(_) = decl {
+                self.gen_declaration(decl);
+            }
         }
 
         // If this proc has nested procs with captures, declare and init the child env
