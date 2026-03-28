@@ -1175,59 +1175,50 @@ impl CodeGen {
                         self.import_alias_map.clear();
                         self.build_import_map(&def_mod.imports);
 
-                        // Pre-register type names in embedded_enum_types
-                        for d in &def_mod.definitions {
-                            if let Definition::Type(t) = d {
-                                let prefixed = format!("{}_{}", mod_name, self.mangle(&t.name));
+                        // Pre-register type names, forward-declare records, emit types+consts from sema scope
+                        let donly_scope = self.sema.symtab.lookup_module_scope(mod_name);
+                        let donly_syms: Vec<(String, crate::symtab::SymbolKind, crate::types::TypeId, bool)> =
+                            donly_scope.map(|sid| {
+                                self.sema.symtab.symbols_in_scope(sid).iter()
+                                    .map(|s| (s.name.clone(), s.kind.clone(), s.typ, s.exported))
+                                    .collect()
+                            }).unwrap_or_default();
+                        // Pre-register type names
+                        for (name, kind, _, _) in &donly_syms {
+                            if matches!(kind, crate::symtab::SymbolKind::Type) {
+                                let prefixed = format!("{}_{}", mod_name, self.mangle(name));
                                 self.embedded_enum_types.insert(prefixed);
                             }
                         }
-
-                        // Forward declare record types via TypeId
-                        let donly_scope = self.sema.symtab.lookup_module_scope(mod_name);
-                        for d in &def_mod.definitions {
-                            if let Definition::Type(t) = d {
-                                if let Some(sid) = donly_scope {
-                                    if let Some(sym) = self.sema.symtab.lookup_in_scope(sid, &t.name) {
-                                        let resolved = self.resolve_hir_alias(sym.typ);
-                                        if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
-                                            let cn = self.type_decl_c_name(&t.name);
-                                            self.emitln(&format!("typedef struct {} {};", cn, cn));
-                                        }
-                                    }
+                        // Forward declare record types
+                        for (name, kind, typ, _) in &donly_syms {
+                            if matches!(kind, crate::symtab::SymbolKind::Type) {
+                                let resolved = self.resolve_hir_alias(*typ);
+                                if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
+                                    let cn = self.type_decl_c_name(name);
+                                    self.emitln(&format!("typedef struct {} {};", cn, cn));
                                 }
                             }
                         }
-
-                        // Emit type and constant declarations via TypeId
-                        for d in &def_mod.definitions {
-                            match d {
-                                Definition::Type(t) => {
-                                    let tid = donly_scope
-                                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &t.name))
-                                        .map(|s| s.typ)
-                                        .unwrap_or(crate::types::TY_VOID);
-                                    if tid != crate::types::TY_VOID {
-                                        self.gen_type_decl_from_id(&t.name, tid);
+                        // Emit type and constant declarations
+                        for (name, kind, typ, exported) in &donly_syms {
+                            match kind {
+                                crate::symtab::SymbolKind::Type => {
+                                    if *typ != crate::types::TY_VOID {
+                                        self.gen_type_decl_from_id(name, *typ);
                                     }
                                 }
-                                Definition::Const(c) => {
-                                    let sym = donly_scope
-                                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &c.name));
-                                    if let Some(s) = sym {
-                                        if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
-                                            let val = crate::hir_build::const_value_to_hir(cv);
-                                            let hc = crate::hir::HirConstDecl {
-                                                name: c.name.clone(),
-                                                mangled: format!("{}_{}", mod_name, c.name),
-                                                value: val.clone(),
-                                                type_id: s.typ,
-                                                exported: s.exported,
-                                                c_type: crate::hir_build::const_val_c_type(&val),
-                                            };
-                                            self.gen_hir_const_decl(&hc);
-                                        }
-                                    }
+                                crate::symtab::SymbolKind::Constant(cv) => {
+                                    let val = crate::hir_build::const_value_to_hir(cv);
+                                    let hc = crate::hir::HirConstDecl {
+                                        name: name.clone(),
+                                        mangled: format!("{}_{}", mod_name, name),
+                                        value: val.clone(),
+                                        type_id: *typ,
+                                        exported: *exported,
+                                        c_type: crate::hir_build::const_val_c_type(&val),
+                                    };
+                                    self.gen_hir_const_decl(&hc);
                                 }
                                 _ => {}
                             }
