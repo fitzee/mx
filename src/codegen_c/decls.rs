@@ -498,58 +498,52 @@ impl CodeGen {
     }
 
     pub(crate) fn gen_proc_decl(&mut self, p: &ProcDecl) {
+        self.gen_proc_by_name(&p.heading.name);
+    }
+
+    pub(crate) fn gen_proc_by_name(&mut self, proc_name: &str) {
         let current_module = self.module_name.clone();
         let early_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
             hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == current_module)
                 .map(|pd| pd.sig.clone())
                 .or_else(|| hir.embedded_modules.iter()
                     .find(|e| e.name == current_module)
                     .and_then(|e| e.procedures.iter()
-                        .find(|pd| pd.sig.name == p.heading.name)
+                        .find(|pd| pd.sig.name == proc_name)
                         .map(|pd| pd.sig.clone())))
         });
         if let Some(ref sig) = early_sig {
             self.register_hir_proc_params(sig);
-        } else {
-            let fallback_sig = crate::hir_build::build_proc_decl(
-                &p.heading, &p.block.decls, &self.module_name, &self.sema, false, None).sig;
-            self.register_hir_proc_params(&fallback_sig);
         }
 
-        // Collect nested procedure declarations and other declarations
-        // Also hoist procedures from local modules inside this procedure
-        let mut nested_procs = Vec::new();
-        let mut other_decls = Vec::new();
-        for decl in &p.block.decls {
-            match decl {
-                Declaration::Procedure(np) => {
-                    nested_procs.push(np.clone());
-                }
-                Declaration::Module(m) => {
-                    // Hoist procs from local module (illegal to define C functions inside C functions)
-                    for d in &m.block.decls {
-                        if let Declaration::Procedure(np) = d {
-                            nested_procs.push(np.clone());
-                        }
-                    }
-                    other_decls.push(decl);
-                }
-                _ => {
-                    other_decls.push(decl);
-                }
-            }
-        }
+        // Get nested proc names from HIR (replaces AST Declaration::Procedure iteration)
+        let nested_proc_names: Vec<String> = self.prebuilt_hir.as_ref().map(|hir| {
+            // Search top-level procs
+            hir.procedures.iter()
+                .find(|hp| hp.name.source_name == proc_name
+                    && hp.name.module.as_deref() == Some(current_module.as_str()))
+                .map(|hp| hp.nested_procs.iter().map(|np| np.name.source_name.clone()).collect())
+                .or_else(|| {
+                    // Search embedded module procs
+                    hir.embedded_modules.iter()
+                        .find(|e| e.name == current_module)
+                        .and_then(|e| e.procedures.iter()
+                            .find(|pd| pd.sig.name == proc_name)
+                            .map(|_| Vec::new())) // embedded procs don't track nested_procs in HirProcDecl
+                })
+                .unwrap_or_default()
+        }).unwrap_or_default();
 
         // ── Closure analysis for nested procedures ──────────────────────
         // Build the set of variables available in this scope (params + locals + env vars)
-        let mut scope_vars = self.build_scope_vars(&p.heading.name);
+        let mut scope_vars = self.build_scope_vars(&proc_name);
         // Also include vars this proc received through its own env (for deep nesting)
         if let Some(my_env_vars) = self.env_access_names.last() {
             for env_var in my_env_vars {
                 if !scope_vars.contains_key(env_var) {
                     // Look up the type from the env struct fields
-                    if let Some(my_env_type) = self.closure_env_type.get(&p.heading.name).cloned() {
+                    if let Some(my_env_type) = self.closure_env_type.get(proc_name).cloned() {
                         if let Some(fields) = self.closure_env_fields.get(&my_env_type) {
                             for (fname, ftype) in fields {
                                 if fname == env_var {
@@ -564,7 +558,7 @@ impl CodeGen {
         }
 
         // Compute captures for each nested proc
-        let env_type_name = format!("{}_env", p.heading.name);
+        let env_type_name = format!("{}_env", proc_name);
         let mut all_captures: Vec<(String, String)> = Vec::new(); // (var_name, c_type) union
         let mut child_capture_info: Vec<(String, Vec<String>)> = Vec::new(); // (proc_name, [var_names])
         let mut has_any_captures = false;
@@ -580,14 +574,12 @@ impl CodeGen {
             .collect();
         let imported_mods: HashSet<String> = self.imported_modules.iter().cloned().collect();
 
-        for np in &nested_procs {
-            let np_name = np.heading.name.clone();
-            // Look up nested proc's HIR body for capture analysis
+        for np_name in &nested_proc_names {
             let current_mod = self.module_name.clone();
-            // Find nested proc in HIR — extract body, params, locals
+            // Find nested proc in HIR — extract body, params, locals for capture analysis
             let hir_proc_info = self.prebuilt_hir.as_ref().and_then(|hir| {
                 hir.procedures.iter()
-                    .find(|hp| hp.name.source_name == np_name
+                    .find(|hp| hp.name.source_name == *np_name
                         && hp.name.module.as_deref() == Some(current_mod.as_str()))
                     .map(|hp| {
                         let params: Vec<String> = hp.params.iter().map(|p| p.name.clone()).collect();
@@ -596,27 +588,14 @@ impl CodeGen {
                             .collect();
                         (hp.body.as_ref(), params, locals)
                     })
-                    .or_else(|| hir.embedded_modules.iter()
-                        .find(|e| e.name == current_mod)
-                        .and_then(|e| e.procedures.iter()
-                            .find(|hp| hp.sig.name == np_name)
-                            .map(|hp| {
-                                let params: Vec<String> = hp.sig.params.iter().map(|p| p.name.clone()).collect();
-                                let locals: HashSet<String> = hp.locals.iter()
-                                    .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                                    .collect();
-                                (hp.body.as_ref(), params, locals)
-                            })))
             });
             let hir_captures = if let Some((Some(body), param_names, local_names)) = hir_proc_info {
                 crate::hir_build::compute_captures_hir(
-                    &np_name, body, &param_names, &local_names,
+                    np_name, body, &param_names, &local_names,
                     &scope_vars_tid, &self.import_map, &imported_mods,
                 )
             } else {
-                crate::hir_build::compute_captures(
-                    np, &scope_vars_tid, &self.import_map, &imported_mods,
-                )
+                Vec::new() // No HIR body available — no captures
             };
             let captures: Vec<String> = hir_captures.iter().map(|c| c.name.clone()).collect();
             if !captures.is_empty() {
@@ -628,7 +607,7 @@ impl CodeGen {
                     }
                 }
                 self.closure_env_type.insert(np_name.clone(), env_type_name.clone());
-                child_capture_info.push((np_name, captures));
+                child_capture_info.push((np_name.clone(), captures));
             }
         }
 
@@ -652,21 +631,17 @@ impl CodeGen {
         self.child_captures_stack.push(child_capture_info.clone());
 
         // Push parent proc name — stays for entire proc scope (nested proc mangling + Module skip)
-        self.parent_proc_stack.push(p.heading.name.clone());
+        self.parent_proc_stack.push(proc_name.to_string());
 
         // Generate nested procs (lifted to top level, with env param if they have captures)
-        for np in &nested_procs {
-            // Register mangled name for nested procs if we have a parent
-            let mangled = format!("{}_{}", p.heading.name, np.heading.name);
-            self.nested_proc_names.insert(np.heading.name.clone(), mangled);
-            // If this nested proc has captures, push its env access names
-            if let Some(_) = self.closure_env_type.get(&np.heading.name) {
-                // Compute captures using HIR body if available, AST fallback otherwise
+        for np_name in &nested_proc_names {
+            let mangled = format!("{}_{}", proc_name, np_name);
+            self.nested_proc_names.insert(np_name.clone(), mangled);
+            if let Some(_) = self.closure_env_type.get(np_name) {
                 let current_mod = self.module_name.clone();
-                let np_name = np.heading.name.clone();
-                let np_hir_info = self.prebuilt_hir.as_ref().and_then(|hir| {
+                let hir_proc_info = self.prebuilt_hir.as_ref().and_then(|hir| {
                     hir.procedures.iter()
-                        .find(|hp| hp.name.source_name == np_name
+                        .find(|hp| hp.name.source_name == *np_name
                             && hp.name.module.as_deref() == Some(current_mod.as_str()))
                         .map(|hp| {
                             let params: Vec<String> = hp.params.iter().map(|p| p.name.clone()).collect();
@@ -675,34 +650,20 @@ impl CodeGen {
                                 .collect();
                             (hp.body.as_ref(), params, locals)
                         })
-                        .or_else(|| hir.embedded_modules.iter()
-                            .find(|e| e.name == current_mod)
-                            .and_then(|e| e.procedures.iter()
-                                .find(|hp| hp.sig.name == np_name)
-                                .map(|hp| {
-                                    let params: Vec<String> = hp.sig.params.iter().map(|p| p.name.clone()).collect();
-                                    let locals: HashSet<String> = hp.locals.iter()
-                                        .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                                        .collect();
-                                    (hp.body.as_ref(), params, locals)
-                                })))
                 });
-                let np_hir_caps = if let Some((Some(body), param_names, local_names)) = np_hir_info {
+                let np_hir_caps = if let Some((Some(body), param_names, local_names)) = hir_proc_info {
                     crate::hir_build::compute_captures_hir(
-                        &np_name, body, &param_names, &local_names,
+                        np_name, body, &param_names, &local_names,
                         &scope_vars_tid, &self.import_map, &imported_mods,
                     )
                 } else {
-                    crate::hir_build::compute_captures(
-                        &np, &scope_vars_tid, &self.import_map, &imported_mods,
-                    )
+                    Vec::new()
                 };
                 let np_captures: Vec<String> = np_hir_caps.iter().map(|c| c.name.clone()).collect();
                 self.env_access_names.push(np_captures.iter().cloned().collect());
             }
-            self.gen_proc_decl(&np);
-            // Pop env access names if we pushed them
-            if self.closure_env_type.contains_key(&np.heading.name) {
+            self.gen_proc_by_name(np_name);
+            if self.closure_env_type.contains_key(np_name) {
                 self.env_access_names.pop();
             }
         }
@@ -713,13 +674,8 @@ impl CodeGen {
 
         // ── Generate this procedure ─────────────────────────────────────
         self.newline();
-        self.emit_line_directive(&p.loc);
         if let Some(ref sig) = early_sig {
             self.gen_hir_proc_prototype(sig);
-        } else {
-            let fallback_sig = crate::hir_build::build_proc_decl(
-                &p.heading, &p.block.decls, &self.module_name, &self.sema, false, None).sig;
-            self.gen_hir_proc_prototype(&fallback_sig);
         }
         self.emit(" {\n");
         self.indent += 1;
@@ -783,13 +739,13 @@ impl CodeGen {
         let proc_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
             // Search HirProc (legacy, populated by build_proc with correct scope)
             hir.procedures.iter()
-                .find(|hp| hp.name.source_name == p.heading.name
+                .find(|hp| hp.name.source_name == proc_name
                     && hp.name.module.as_deref() == Some(current_module.as_str()))
                 .map(|hp| hp.locals.clone())
                 .or_else(|| {
                     hir.procedures.iter()
                         .flat_map(|hp| hp.nested_procs.iter())
-                        .find(|np| np.name.source_name == p.heading.name
+                        .find(|np| np.name.source_name == proc_name
                             && np.name.module.as_deref() == Some(current_module.as_str()))
                         .map(|np| np.locals.clone())
                 })
@@ -832,18 +788,8 @@ impl CodeGen {
                     }
                 }
             }
-        } else {
-            // Proc not in hir.procedures (e.g., deeply nested or native stdlib)
-            for decl in &other_decls {
-                self.gen_declaration(decl);
-            }
         }
-        // Module declarations still via AST (nested modules)
-        for decl in &other_decls {
-            if let Declaration::Module(_) = decl {
-                self.gen_declaration(decl);
-            }
-        }
+        // Local declarations from HIR cover all cases — no AST fallback needed
 
         // If this proc has nested procs with captures, declare and init the child env
         if has_any_captures {
@@ -867,28 +813,17 @@ impl CodeGen {
         self.child_env_type_stack.push(if has_any_captures { Some(env_type_name.clone()) } else { None });
         self.child_captures_stack.push(child_capture_info);
 
-        // Body (with optional EXCEPT handler)
-        let has_except = p.block.except.is_some();
-        if has_except {
-            self.emitln("m2_exception_active = 1;");
-            self.emitln("if (setjmp(m2_exception_buf) == 0) {");
-            self.indent += 1;
-        }
-
-        // Use prebuilt HIR body if available — search top-level and nested procs
+        // Body from HIR — search top-level and nested procs
+        let mod_name = self.module_name.clone();
         let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
-            let proc_name = &p.heading.name;
-            let mod_name = &self.module_name;
-            // Search top-level procs
             hir.procedures.iter()
-                .find(|hp| hp.name.source_name == *proc_name
+                .find(|hp| hp.name.source_name == proc_name
                     && hp.name.module.as_deref() == Some(mod_name.as_str()))
                 .and_then(|hp| hp.body.clone())
                 .or_else(|| {
-                    // Search nested procs within top-level procs
                     hir.procedures.iter()
                         .flat_map(|hp| hp.nested_procs.iter())
-                        .find(|np| np.name.source_name == *proc_name
+                        .find(|np| np.name.source_name == proc_name
                             && np.name.module.as_deref() == Some(mod_name.as_str()))
                         .and_then(|np| np.body.clone())
                 })
@@ -897,25 +832,6 @@ impl CodeGen {
             for stmt in &body {
                 self.emit_hir_stmt(stmt);
             }
-        } else if let Some(stmts) = &p.block.body {
-            // No prebuilt HIR found — this is unexpected if build_module ran.
-            // Fall through to empty body (the procedure has no statements).
-            let _ = stmts;
-        }
-
-        if has_except {
-            self.indent -= 1;
-            self.emitln("} else {");
-            self.indent += 1;
-            self.emitln("/* EXCEPT handler */");
-            if let Some(except_stmts) = &p.block.except {
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(except_stmts);
-                for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
-            }
-            self.indent -= 1;
-            self.emitln("}");
-            self.emitln("m2_exception_active = 0;");
         }
 
         self.child_env_type_stack.pop();
