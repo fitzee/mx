@@ -136,8 +136,8 @@ pub struct CodeGen {
     /// Pending implementation modules to be generated before the main module
     /// Pending module names for embedded generation (topo-sorted before emission)
     pending_module_names: Vec<String>,
-    /// Import dependencies per module (for topo sorting): mod_name → [dep_mod_names]
-    module_import_deps: HashMap<String, Vec<String>>,
+    /// Stored import lists per module (for topo sorting and import map building)
+    module_imports: HashMap<String, Vec<crate::hir::HirImport>>,
     /// Exception names from definition modules (M2+ only), keyed by module name
     def_exception_names: HashMap<String, Vec<String>>,
     /// Maps nested proc name → env struct type name it receives (e.g., "Add" → "Accumulate_env")
@@ -306,7 +306,7 @@ impl CodeGen {
             imported_modules: HashSet::new(),
             module_exports: HashMap::new(),
             pending_module_names: Vec::new(),
-            module_import_deps: HashMap::new(),
+            module_imports: HashMap::new(),
             def_exception_names: HashMap::new(),
             closure_env_type: HashMap::new(),
             closure_env_fields: HashMap::new(),
@@ -482,29 +482,6 @@ impl CodeGen {
                 }
             }
         }
-        // Extract import deps from sema scope (for topo sorting)
-        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
-            let mut deps: Vec<String> = Vec::new();
-            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
-                // Whole-module imports (IMPORT Json) create Module symbols
-                if let crate::symtab::SymbolKind::Module { .. } = &sym.kind {
-                    if sym.name != name && !deps.contains(&sym.name) {
-                        deps.push(sym.name.clone());
-                    }
-                }
-                // FROM Module IMPORT name — symbol has module set
-                if let Some(ref src_mod) = sym.module {
-                    if src_mod != name && !deps.contains(src_mod) {
-                        deps.push(src_mod.clone());
-                    }
-                }
-            }
-            self.module_import_deps.entry(name.to_string())
-                .and_modify(|existing| {
-                    for d in &deps { if !existing.contains(d) { existing.push(d.clone()); } }
-                })
-                .or_insert(deps);
-        }
         if !is_foreign {
             self.def_module_names.insert(name.to_string());
         }
@@ -515,39 +492,18 @@ impl CodeGen {
         }
     }
 
+    /// Store import list for a module (used for topo sorting and import map building).
+    pub fn register_module_imports(&mut self, name: &str, imports: Vec<crate::hir::HirImport>) {
+        self.module_imports.entry(name.to_string())
+            .and_modify(|existing| existing.extend(imports.clone()))
+            .or_insert(imports);
+    }
+
     /// Add an imported implementation module by name (no AST needed).
+    /// Import list must be registered via register_module_imports first.
     pub fn add_imported_module_by_name(&mut self, name: &str) {
         let exports = self.build_module_exports_from_sema(name);
         self.module_exports.insert(name.to_string(), exports);
-        // Import deps come from sema scope (already registered)
-        let mut deps = Vec::new();
-        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
-            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
-                if let crate::symtab::SymbolKind::Module { .. } = &sym.kind {
-                    deps.push(sym.name.clone());
-                }
-            }
-        }
-        // Also extract from HIR embedded module imports if available
-        if let Some(ref hir) = self.prebuilt_hir {
-            if let Some(emb) = hir.embedded_modules.iter().find(|e| e.name == name) {
-                for hi in &emb.imports {
-                    if !hi.is_qualified {
-                        if !deps.contains(&hi.module) && !hi.module.is_empty() {
-                            deps.push(hi.module.clone());
-                        }
-                    } else {
-                        // IMPORT Module — qualified import, module name is in names
-                        for n in &hi.names {
-                            if !deps.contains(&n.name) {
-                                deps.push(n.name.clone());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        self.module_import_deps.insert(name.to_string(), deps);
         self.pending_module_names.push(name.to_string());
     }
 

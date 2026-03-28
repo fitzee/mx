@@ -634,6 +634,19 @@ fn emit_diagnostics_jsonl(errors: &[CompileError]) {
     }
 }
 
+fn ast_imports_to_hir(imports: &[crate::ast::Import]) -> Vec<crate::hir::HirImport> {
+    imports.iter().map(|imp| {
+        crate::hir::HirImport {
+            module: imp.from_module.clone().unwrap_or_default(),
+            names: imp.names.iter().map(|n| crate::hir::HirImportName {
+                name: n.name.clone(),
+                local_name: n.local_name().to_string(),
+            }).collect(),
+            is_qualified: imp.from_module.is_none(),
+        }
+    }).collect()
+}
+
 pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     let source = fs::read_to_string(&opts.input).map_err(|e| {
         let err = CompileError::driver(format!("cannot read '{}': {}", opts.input.display(), e));
@@ -975,8 +988,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     codegen.prebuilt_hir = Some(hir_module.clone());
     for def_mod in &all_sorted_defs {
         codegen.register_def_by_name(&def_mod.name, def_mod.foreign_lang.is_some());
+        codegen.register_module_imports(&def_mod.name, ast_imports_to_hir(&def_mod.imports));
     }
     for imp_mod in &all_impl_mods {
+        codegen.register_module_imports(&imp_mod.name, ast_imports_to_hir(&imp_mod.imports));
         codegen.add_imported_module_by_name(&imp_mod.name);
     }
     codegen.populate_typeid_c_names();

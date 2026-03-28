@@ -360,9 +360,9 @@ impl CodeGen {
         self.module_name = imp.name.clone();
         self.import_map.clear();
         self.import_alias_map.clear();
-        // Build import map from HIR embedded module imports
-        if let Some(ref emb) = hir_emb {
-            for hi in &emb.imports {
+        // Build import map from stored module imports (both def + impl)
+        if let Some(imports) = self.module_imports.get(&imp.name).cloned() {
+            for hi in &imports {
                 if !hi.is_qualified && !hi.module.is_empty() {
                     self.imported_modules.insert(hi.module.clone());
                     for name in &hi.names {
@@ -401,25 +401,6 @@ impl CodeGen {
                     for name in &hi.names {
                         self.imported_modules.insert(name.name.clone());
                     }
-                }
-            }
-        }
-        // Supplement from sema scope: def module imports may not be in HIR impl imports
-        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&imp.name) {
-            let syms: Vec<(String, crate::symtab::SymbolKind, Option<String>)> = self.sema.symtab.symbols_in_scope(scope_id).iter()
-                .map(|s| (s.name.clone(), s.kind.clone(), s.module.clone()))
-                .collect();
-            for (sym_name, kind, sym_module) in &syms {
-                // FROM Module IMPORT name — symbol has module != current
-                if let Some(ref src_mod) = sym_module {
-                    if src_mod != &imp.name {
-                        self.import_map.entry(sym_name.clone()).or_insert(src_mod.clone());
-                        self.imported_modules.insert(src_mod.clone());
-                    }
-                }
-                // IMPORT Module — Module symbol with scope_id
-                if let crate::symtab::SymbolKind::Module { .. } = kind {
-                    self.imported_modules.insert(sym_name.clone());
                 }
             }
         }
@@ -947,21 +928,29 @@ impl CodeGen {
         self.typeid_c_names = new_typeid_names;
     }
 
-    /// Topologically sort module names using pre-extracted import dependencies.
+    /// Topologically sort module names using stored import lists.
     fn topo_sort_by_deps(&self, module_names: &[String]) -> CompileResult<Vec<String>> {
         let names: HashSet<String> = module_names.iter().cloned().collect();
         let mut deps: HashMap<String, Vec<String>> = HashMap::new();
         for mod_name in module_names {
-            let mut my_deps = Vec::new();
-            // Get deps from pre-extracted module imports
-            if let Some(import_deps) = self.module_import_deps.get(mod_name) {
-                for dep in import_deps {
-                    if names.contains(dep) && !my_deps.contains(dep) {
-                        my_deps.push(dep.clone());
+            let mut my_deps: Vec<String> = Vec::new();
+            // Extract deps from stored import list (both def and impl imports)
+            if let Some(imports) = self.module_imports.get(mod_name) {
+                for hi in imports {
+                    if !hi.is_qualified && !hi.module.is_empty() {
+                        if names.contains(&hi.module) && !my_deps.contains(&hi.module) {
+                            my_deps.push(hi.module.clone());
+                        }
+                    } else {
+                        // IMPORT Module — qualified import
+                        for n in &hi.names {
+                            if names.contains(&n.name) && !my_deps.contains(&n.name) {
+                                my_deps.push(n.name.clone());
+                            }
+                        }
                     }
                 }
             }
-            // Def module deps are already merged into module_import_deps during registration
             deps.insert(mod_name.clone(), my_deps);
         }
         // Topo sort using DFS
