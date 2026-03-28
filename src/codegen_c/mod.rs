@@ -668,48 +668,6 @@ impl CodeGen {
     // ── Shared emission helpers ───────────────────────────────────────
 
 
-    /// Try to evaluate a constant integer expression at compile time
-    fn try_eval_const_int(&self, expr: &Expr) -> Option<i64> {
-        match &expr.kind {
-            ExprKind::IntLit(v) => Some(*v),
-            ExprKind::CharLit(c) => Some(*c as i64),
-            ExprKind::BoolLit(b) => Some(if *b { 1 } else { 0 }),
-            ExprKind::Designator(d) => {
-                if d.selectors.is_empty() && d.ident.module.is_none() {
-                    self.const_int_values.get(&d.ident.name).copied()
-                } else {
-                    None
-                }
-            }
-            ExprKind::UnaryOp { op, operand } => {
-                let v = self.try_eval_const_int(operand)?;
-                match op {
-                    UnaryOp::Neg => Some(-v),
-                    UnaryOp::Pos => Some(v),
-                }
-            }
-            ExprKind::BinaryOp { op, left, right } => {
-                let l = self.try_eval_const_int(left)?;
-                let r = self.try_eval_const_int(right)?;
-                match op {
-                    BinaryOp::Add => Some(l + r),
-                    BinaryOp::Sub => Some(l - r),
-                    BinaryOp::Mul => Some(l * r),
-                    BinaryOp::IntDiv => if r != 0 { Some(l / r) } else { None },
-                    BinaryOp::Mod => if r != 0 { Some(l % r) } else { None },
-                    _ => None,
-                }
-            }
-            ExprKind::Not(e) => {
-                let v = self.try_eval_const_int(e)?;
-                Some(if v == 0 { 1 } else { 0 })
-            }
-            ExprKind::Deref(_) => None,
-            _ => None,
-        }
-    }
-
-
     fn register_var_param(&mut self, name: &str) {
         if let Some(scope) = self.var_params.last_mut() {
             scope.insert(name.to_string(), true);
@@ -764,6 +722,11 @@ mod tests {
         let unit = parse(input);
         let mut cg = CodeGen::new();
         cg.set_debug(debug);
+        // Run sema + build HIR (required by the HIR-based codegen pipeline)
+        cg.sema.analyze(&unit).unwrap();
+        let hir = crate::hir_build::build_module(&unit, &[], &cg.sema);
+        cg.prebuilt_hir = Some(hir);
+        cg.populate_typeid_c_names();
         cg.generate(&unit).unwrap()
     }
 

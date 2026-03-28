@@ -1,64 +1,6 @@
 use super::*;
 
 impl CodeGen {
-    pub(crate) fn register_proc_params(&mut self, h: &ProcHeading) {
-        let mut param_info = Vec::new();
-        for fp in &h.params {
-            let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-            let is_char = matches!(&fp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
-            for name in &fp.names {
-                param_info.push(ParamCodegenInfo {
-                    name: name.clone(),
-                    is_var: fp.is_var,
-                    is_open_array,
-                    is_char,
-                });
-            }
-        }
-        self.proc_params.insert(h.name.clone(), param_info.clone());
-        if let Some(ref ecn) = h.export_c_name {
-            self.export_c_names.insert(h.name.clone(), ecn.clone());
-            self.proc_params.insert(ecn.clone(), param_info);
-        }
-        // Register procedure-typed parameters as their own callables
-        // so calls like handler(req, resp) get correct VAR param info
-        for fp in &h.params {
-            if let TypeNode::Named(qi) = &fp.typ {
-                if let Some(pinfo) = self.proc_type_params.get(&qi.name).cloned() {
-                    for name in &fp.names {
-                        self.proc_params.insert(name.clone(), pinfo.clone());
-                    }
-                }
-            } else if let TypeNode::ProcedureType { params: pt_params, .. } = &fp.typ {
-                // Inline procedure type: PROCEDURE(VAR Request, VAR Response, ADDRESS)
-                let mut pinfo = Vec::new();
-                for (idx, ptp) in pt_params.iter().enumerate() {
-                    let is_open = matches!(ptp.typ, TypeNode::OpenArray { .. });
-                    let is_ch = matches!(&ptp.typ, TypeNode::Named(qi) if qi.name == "CHAR");
-                    for pname in &ptp.names {
-                        pinfo.push(ParamCodegenInfo {
-                            name: pname.clone(),
-                            is_var: ptp.is_var,
-                            is_open_array: is_open,
-                            is_char: is_ch,
-                        });
-                    }
-                    if ptp.names.is_empty() {
-                        pinfo.push(ParamCodegenInfo {
-                            name: format!("_p{}", idx),
-                            is_var: ptp.is_var,
-                            is_open_array: is_open,
-                            is_char: is_ch,
-                        });
-                    }
-                }
-                for name in &fp.names {
-                    self.proc_params.insert(name.clone(), pinfo.clone());
-                }
-            }
-        }
-    }
-
     // ── Declarations ────────────────────────────────────────────────
 
     pub(crate) fn gen_declaration(&mut self, decl: &Declaration) {
@@ -940,62 +882,6 @@ impl CodeGen {
         self.emitln("}");
     }
 
-    pub(crate) fn gen_proc_prototype(&mut self, h: &ProcHeading) {
-        self.emit_indent();
-        let ret_type = if let Some(rt) = &h.return_type {
-            self.type_to_c(rt)
-        } else {
-            "void".to_string()
-        };
-        let c_name = if let Some(ref ecn) = h.export_c_name {
-            ecn.clone()
-        } else if let Some(mangled) = self.nested_proc_names.get(&h.name).cloned() {
-            // Nested proc: use parent-prefixed mangled name
-            mangled
-        } else {
-            self.mangle(&h.name)
-        };
-        self.emit(&format!("{} {}(", ret_type, c_name));
-
-        // Check if this proc receives a closure environment
-        let env_type = self.closure_env_type.get(&h.name).cloned();
-        let has_env = env_type.is_some();
-
-        if has_env {
-            let et = env_type.unwrap();
-            self.emit(&format!("{} *_env", et));
-        }
-
-        if h.params.is_empty() && !has_env {
-            self.emit("void");
-        } else {
-            let mut first = !has_env;
-            for fp in &h.params {
-                let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                for name in &fp.names {
-                    if !first {
-                        self.emit(", ");
-                    }
-                    first = false;
-                    let c_param = self.mangle(name);
-                    if is_open_array {
-                        let ctype = self.type_to_c(&fp.typ);
-                        self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                    } else if Self::is_proc_type(&fp.typ) {
-                        let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
-                        self.emit(&decl);
-                    } else if fp.is_var {
-                        let ctype = self.type_to_c(&fp.typ);
-                        self.emit(&format!("{} *{}", ctype, c_param));
-                    } else {
-                        let ctype = self.type_to_c(&fp.typ);
-                        self.emit(&format!("{} {}", ctype, c_param));
-                    }
-                }
-            }
-        }
-        self.emit(")");
-    }
 
     /// Register procedure parameter metadata from HirProcSig.
     pub(crate) fn register_hir_proc_params(&mut self, sig: &crate::hir::HirProcSig) {
@@ -1101,34 +987,32 @@ impl CodeGen {
             for d in &def.definitions {
                 match d {
                     Definition::Procedure(h) => {
+                        // Build HirProcSig and emit via TypeId
+                        let sig = crate::hir_build::build_proc_decl(
+                            h, &[], &def.name, &self.sema, false, None).sig;
                         self.emit_indent();
                         self.emit("extern ");
-                        let ret_type = if let Some(rt) = &h.return_type {
-                            self.type_to_c(rt)
-                        } else {
-                            "void".to_string()
+                        let ret_type = match sig.return_type {
+                            Some(rt) => self.type_id_to_c(rt),
+                            None => "void".to_string(),
                         };
-                        // Bare C name — no module prefix, no mangle
                         self.emit(&format!("{} {}", ret_type, h.name));
                         self.emit("(");
-                        if h.params.is_empty() {
+                        if sig.params.is_empty() {
                             self.emit("void");
                         } else {
                             let mut first = true;
-                            for fp in &h.params {
-                                let ctype = self.type_to_c(&fp.typ);
-                                let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                                for name in &fp.names {
-                                    if !first { self.emit(", "); }
-                                    first = false;
-                                    let c_param = self.mangle(name);
-                                    if is_open_array {
-                                        self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                                    } else if fp.is_var {
-                                        self.emit(&format!("{} *{}", ctype, c_param));
-                                    } else {
-                                        self.emit(&format!("{} {}", ctype, c_param));
-                                    }
+                            for sp in &sig.params {
+                                if !first { self.emit(", "); }
+                                first = false;
+                                let ctype = self.type_id_to_c(sp.type_id);
+                                let c_param = self.mangle(&sp.name);
+                                if sp.is_open_array {
+                                    self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
+                                } else if sp.is_var {
+                                    self.emit(&format!("{} *{}", ctype, c_param));
+                                } else {
+                                    self.emit(&format!("{} {}", ctype, c_param));
                                 }
                             }
                         }
@@ -1200,19 +1084,6 @@ impl CodeGen {
                     vars.insert(param.name.clone(), c_type);
                 }
             }
-        } else {
-            for fp in &p.heading.params {
-                let c_type = self.type_to_c(&fp.typ);
-                let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
-                for name in &fp.names {
-                    if is_open {
-                        vars.insert(name.clone(), format!("{}*", c_type));
-                        vars.insert(format!("{}_high", name), "uint32_t".to_string());
-                    } else {
-                        vars.insert(name.clone(), c_type.clone());
-                    }
-                }
-            }
         }
         // Local vars from HirProc.locals
         let hir_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
@@ -1226,15 +1097,6 @@ impl CodeGen {
                 if let crate::hir::HirLocalDecl::Var { name, type_id } = local {
                     let c_type = self.type_id_to_c(*type_id);
                     vars.insert(name.clone(), c_type);
-                }
-            }
-        } else {
-            for decl in &p.block.decls {
-                if let Declaration::Var(v) = decl {
-                    let c_type = self.type_to_c(&v.typ);
-                    for name in &v.names {
-                        vars.insert(name.clone(), c_type.clone());
-                    }
                 }
             }
         }

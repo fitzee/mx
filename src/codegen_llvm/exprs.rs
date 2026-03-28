@@ -124,7 +124,11 @@ impl LLVMCodeGen {
             HirExprKind::TypeTransfer(ref arg) => {
                 let val = self.gen_hir_expr(arg);
                 let target_ty = self.tl_type_str(expr.ty);
-                return self.coerce_val(&val, &target_ty);
+                let mut result = self.coerce_val(&val, &target_ty);
+                // Preserve the target TypeId so subsequent conversions
+                // know the signedness (e.g., CARDINAL → LONGCARD uses zext)
+                result.type_id = Some(expr.ty);
+                return result;
             }
 
             HirExprKind::DirectCall { target, args } => {
@@ -455,6 +459,8 @@ impl LLVMCodeGen {
             BinaryOp::Add => {
                 if Self::is_float_type(&common) {
                     self.emitln(&format!("  {} = fadd {} {}, {}", tmp, common, l.name, r.name));
+                } else if self.is_set_tid(Some(lhs_ty)) || self.is_set_tid(Some(rhs_ty)) {
+                    self.emitln(&format!("  {} = or {} {}, {}", tmp, common, l.name, r.name));
                 } else {
                     self.emitln(&format!("  {} = add {} {}, {}", tmp, common, l.name, r.name));
                 }
@@ -463,6 +469,11 @@ impl LLVMCodeGen {
             BinaryOp::Sub => {
                 if Self::is_float_type(&common) {
                     self.emitln(&format!("  {} = fsub {} {}, {}", tmp, common, l.name, r.name));
+                } else if self.is_set_tid(Some(lhs_ty)) || self.is_set_tid(Some(rhs_ty)) {
+                    // Set difference: a - b = a & ~b
+                    let not_tmp = self.next_tmp();
+                    self.emitln(&format!("  {} = xor {} {}, -1", not_tmp, common, r.name));
+                    self.emitln(&format!("  {} = and {} {}, {}", tmp, common, l.name, not_tmp));
                 } else {
                     self.emitln(&format!("  {} = sub {} {}, {}", tmp, common, l.name, r.name));
                 }
@@ -471,9 +482,15 @@ impl LLVMCodeGen {
             BinaryOp::Mul => {
                 if Self::is_float_type(&common) {
                     self.emitln(&format!("  {} = fmul {} {}, {}", tmp, common, l.name, r.name));
+                } else if self.is_set_tid(Some(lhs_ty)) || self.is_set_tid(Some(rhs_ty)) {
+                    self.emitln(&format!("  {} = and {} {}, {}", tmp, common, l.name, r.name));
                 } else {
                     self.emitln(&format!("  {} = mul {} {}, {}", tmp, common, l.name, r.name));
                 }
+                Val::with_tid(tmp, common, result_ty)
+            }
+            BinaryOp::RealDiv if self.is_set_tid(Some(lhs_ty)) || self.is_set_tid(Some(rhs_ty)) => {
+                self.emitln(&format!("  {} = xor {} {}, {}", tmp, common, l.name, r.name));
                 Val::with_tid(tmp, common, result_ty)
             }
             BinaryOp::RealDiv => {
@@ -508,7 +525,7 @@ impl LLVMCodeGen {
                 let cmp_op = if Self::is_float_type(&common) {
                     match op {
                         BinaryOp::Eq => "fcmp oeq",
-                        BinaryOp::Ne => "fcmp one",
+                        BinaryOp::Ne => "fcmp une",
                         BinaryOp::Lt => "fcmp olt",
                         BinaryOp::Le => "fcmp ole",
                         BinaryOp::Gt => "fcmp ogt",

@@ -1,87 +1,6 @@
 use super::*;
 
 impl CodeGen {
-    pub(crate) fn type_to_c(&self, tn: &TypeNode) -> String {
-        match tn {
-            TypeNode::Named(qi) => self.named_type_to_c(qi),
-            TypeNode::Array { elem_type, .. } => self.type_to_c(elem_type),
-            TypeNode::OpenArray { elem_type, .. } => self.type_to_c(elem_type),
-            TypeNode::Record { .. } => "struct /* record */".to_string(),
-            TypeNode::Pointer { base, .. } => format!("{} *", self.type_to_c(base)),
-            TypeNode::Set { .. } => "uint32_t".to_string(),
-            TypeNode::Enumeration { .. } => "int".to_string(),
-            TypeNode::Subrange { .. } => "int32_t".to_string(),
-            TypeNode::ProcedureType {
-                params,
-                return_type,
-                ..
-            } => {
-                let ret = if let Some(rt) = return_type {
-                    self.type_to_c(rt)
-                } else {
-                    "void".to_string()
-                };
-                format!("{} (*)", ret) // simplified — use proc_type_decl for full declarations
-            }
-            TypeNode::Ref { target, .. } => format!("{} *", self.type_to_c(target)),
-            TypeNode::RefAny { .. } => "void *".to_string(),
-            TypeNode::Object { .. } => "void * /* OBJECT */".to_string(),
-        }
-    }
-
-    /// Generate a proper C function pointer declaration with the variable/param name
-    /// embedded in the correct position: `RetType (*name)(param_types)`
-    /// If `is_ptr` is true, generates `RetType (**name)(param_types)` for VAR parameters.
-    pub(crate) fn proc_type_decl(&mut self, tn: &TypeNode, name: &str, is_ptr: bool) -> String {
-        if let TypeNode::ProcedureType { params, return_type, .. } = tn {
-            let ret = if let Some(rt) = return_type {
-                self.type_to_c(rt)
-            } else {
-                "void".to_string()
-            };
-            let star = if is_ptr { "**" } else { "*" };
-            let mut param_strs = Vec::new();
-            if params.is_empty() {
-                param_strs.push("void".to_string());
-            } else {
-                for fp in params {
-                    let pt = self.type_to_c(&fp.typ);
-                    let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
-                    for _ in &fp.names {
-                        if is_open {
-                            param_strs.push(format!("{} *", pt));
-                            param_strs.push("uint32_t".to_string());
-                        } else if fp.is_var {
-                            param_strs.push(format!("{} *", pt));
-                        } else {
-                            param_strs.push(pt.clone());
-                        }
-                    }
-                    // If no names (unnamed params), still emit the type
-                    if fp.names.is_empty() {
-                        if is_open {
-                            param_strs.push(format!("{} *", pt));
-                            param_strs.push("uint32_t".to_string());
-                        } else if fp.is_var {
-                            param_strs.push(format!("{} *", pt));
-                        } else {
-                            param_strs.push(pt.clone());
-                        }
-                    }
-                }
-            }
-            format!("{} ({}{})({})", ret, star, name, param_strs.join(", "))
-        } else {
-            // Not a procedure type — fallback to normal declaration
-            let ctype = self.type_to_c(tn);
-            if is_ptr {
-                format!("{} *{}", ctype, name)
-            } else {
-                format!("{} {}", ctype, name)
-            }
-        }
-    }
-
     pub(crate) fn named_type_to_c(&self, qi: &QualIdent) -> String {
         // If module-qualified (e.g., Stack.Stack), prefix with module name
         if let Some(module) = &qi.module {
@@ -187,113 +106,6 @@ impl CodeGen {
         }
     }
 
-    pub(crate) fn type_array_suffix(&self, tn: &TypeNode) -> String {
-        match tn {
-            TypeNode::Array { index_types, elem_type, .. } => {
-                let mut s = String::new();
-                for idx in index_types {
-                    s.push_str(&self.index_type_to_size(idx));
-                }
-                // If elem_type is also an array, recurse for its suffix
-                s.push_str(&self.type_array_suffix(elem_type));
-                s
-            }
-            _ => String::new(),
-        }
-    }
-
-    pub(crate) fn index_type_to_size(&self, idx: &TypeNode) -> String {
-        match idx {
-            TypeNode::Subrange { low, high, .. } => {
-                let hi = self.const_expr_to_string(high);
-                // Allocate high+1 elements so indices up to high are valid.
-                format!("[{} + 1]", hi)
-            }
-            TypeNode::Named(qi) => {
-                match qi.name.as_str() {
-                    "BOOLEAN" => "[2]".to_string(),
-                    "CHAR" => "[256]".to_string(),
-                    _ => {
-                        // Enum or other named ordinal type — use m2_max_Name + 1
-                        let c_name = self.qualident_to_c(qi);
-                        format!("[m2_max_{} + 1]", c_name)
-                    }
-                }
-            }
-            TypeNode::Enumeration { variants, .. } => {
-                format!("[{}]", variants.len())
-            }
-            _ => "[/* size */]".to_string(),
-        }
-    }
-
-    pub(crate) fn const_expr_to_string(&self, expr: &Expr) -> String {
-        // Try to evaluate to a compile-time integer first
-        if let Some(val) = self.try_eval_const_int(expr) {
-            return format!("{}", val);
-        }
-        match &expr.kind {
-            ExprKind::IntLit(v) => format!("{}", v),
-            ExprKind::CharLit(c) => format!("'{}'", c),
-            ExprKind::Designator(d) => {
-                if let Some(module) = &d.ident.module {
-                    if self.foreign_modules.contains(module.as_str()) {
-                        d.ident.name.clone()
-                    } else {
-                        format!("{}_{}", module, d.ident.name)
-                    }
-                } else {
-                    self.mangle(&d.ident.name)
-                }
-            }
-            ExprKind::BinaryOp { op, left, right } => {
-                let l = self.const_expr_to_string(left);
-                let r = self.const_expr_to_string(right);
-                let op_str = match op {
-                    BinaryOp::Add => "+",
-                    BinaryOp::Sub => "-",
-                    BinaryOp::Mul => "*",
-                    _ => "?",
-                };
-                format!("({} {} {})", l, op_str, r)
-            }
-            _ => "0".to_string(),
-        }
-    }
-
-    pub(crate) fn is_proc_type(tn: &TypeNode) -> bool {
-        match tn {
-            TypeNode::ProcedureType { .. } => true,
-            TypeNode::Named(qi) if qi.module.is_none() && qi.name == "PROC" => true,
-            _ => false,
-        }
-    }
-
-    /// Check if a TypeNode is ARRAY [...] OF CHAR
-    pub(crate) fn is_char_array_type(&self, tn: &TypeNode) -> bool {
-        match tn {
-            TypeNode::Array { elem_type, .. } => {
-                matches!(elem_type.as_ref(), TypeNode::Named(qi) if qi.name == "CHAR")
-            }
-            TypeNode::Named(qi) => self.char_array_types.contains(&qi.name),
-            _ => false,
-        }
-    }
-
-    /// Check if a TypeNode is a pointer type (POINTER TO ...)
-    pub(crate) fn is_pointer_type(&self, tn: &TypeNode) -> bool {
-        match tn {
-            TypeNode::Pointer { .. } => true,
-            TypeNode::Named(qi) => {
-                // Check if the named type resolves to a pointer typedef
-                // by checking if it's NOT in array_types and the C type ends with *
-                let c = self.type_to_c(tn);
-                c.ends_with('*')
-            }
-            _ => false,
-        }
-    }
-
     /// Check if a TypeNode is any array type (for memcpy assignment)
     pub(crate) fn is_array_type(&self, tn: &TypeNode) -> bool {
         match tn {
@@ -388,14 +200,6 @@ impl CodeGen {
             }
         }
         false
-    }
-
-    pub(crate) fn is_set_type(&self, tn: &TypeNode) -> bool {
-        match tn {
-            TypeNode::Named(qi) => qi.name == "BITSET",
-            TypeNode::Set { .. } => true,
-            _ => false,
-        }
     }
 
     /// Check if an expression is a set value (set constructor or known set variable)
@@ -526,20 +330,6 @@ impl CodeGen {
             ExprKind::BinaryOp { left, right, .. } => {
                 self.is_long_expr(left) || self.is_long_expr(right)
             }
-            _ => false,
-        }
-    }
-
-    pub(crate) fn is_complex_type(&self, tn: &TypeNode) -> bool {
-        match tn {
-            TypeNode::Named(qi) => qi.name == "COMPLEX",
-            _ => false,
-        }
-    }
-
-    pub(crate) fn is_longcomplex_type(&self, tn: &TypeNode) -> bool {
-        match tn {
-            TypeNode::Named(qi) => qi.name == "LONGCOMPLEX",
             _ => false,
         }
     }
@@ -864,42 +654,6 @@ impl CodeGen {
     /// Resolve a local name (possibly an alias) to the original imported name.
     pub(crate) fn original_import_name<'a>(&'a self, local_name: &'a str) -> &'a str {
         self.import_alias_map.get(local_name).map(|s| s.as_str()).unwrap_or(local_name)
-    }
-
-    /// Check if a name is a known type and return the C type name for casting.
-    /// Returns None if the name is not a type (i.e., it's a procedure or variable).
-    pub(crate) fn resolve_type_cast_name(&self, name: &str) -> Option<String> {
-        // Check the known_type_names set (populated from def modules and gen_type_decl)
-        if self.known_type_names.contains(name) {
-            // It's a type — return the mangled C name
-            // Check if this is a module-local type in an embedded module
-            // (works both during type decl phase and procedure body phase)
-            let local_prefixed = format!("{}_{}", self.module_name, self.mangle(name));
-            if self.embedded_enum_types.contains(&local_prefixed) {
-                return Some(local_prefixed);
-            }
-            // Check if it's an imported type (module-prefixed in C)
-            if let Some(source_mod) = self.import_map.get(name) {
-                let orig = self.original_import_name(name);
-                let import_prefixed = format!("{}_{}", source_mod, self.mangle(orig));
-                if self.embedded_enum_types.contains(&import_prefixed) {
-                    return Some(import_prefixed);
-                }
-            }
-            return Some(self.mangle(name));
-        }
-        // Also check sema symtab as fallback
-        if let Some(sym) = self.sema.symtab.lookup_any(name) {
-            if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
-                let qi = crate::ast::QualIdent {
-                    module: None,
-                    name: name.to_string(),
-                    loc: crate::errors::SourceLoc::default(),
-                };
-                return Some(self.type_to_c(&crate::ast::TypeNode::Named(qi)));
-            }
-        }
-        None
     }
 
 }

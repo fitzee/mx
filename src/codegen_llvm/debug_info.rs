@@ -430,7 +430,7 @@ mod tests {
         assert!(output.contains("DICompileUnit"));
         assert!(output.contains("DISubprogram"));
         assert!(output.contains("DILocation"));
-        assert!(output.contains("DW_LANG_Modula2"));
+        assert!(output.contains("DW_LANG_C99"));
     }
 
     #[test]

@@ -211,6 +211,9 @@ impl super::CodeGen {
                     format!("m2_mod({}, {})", l, r)
                 }
             }
+            BinaryOp::RealDiv if self.is_hir_set(left) || self.is_hir_set(right) => {
+                format!("({} ^ {})", l, r)
+            }
             BinaryOp::RealDiv => {
                 format!("((double)({}) / (double)({}))", l, r)
             }
@@ -226,11 +229,20 @@ impl super::CodeGen {
             BinaryOp::Ge => format!("{} >= {}", l, r),
             BinaryOp::And => format!("{} && {}", l, r),
             BinaryOp::Or => format!("{} || {}", l, r),
-            // Arithmetic — wrap in parens for precedence
+            // Arithmetic — for set types, +/*/-  mean union/intersection/difference
+            BinaryOp::Add if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} | {})", l, r),
+            BinaryOp::Sub if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} & ~({}))", l, r),
+            BinaryOp::Mul if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} & {})", l, r),
             BinaryOp::Add => format!("({} + {})", l, r),
             BinaryOp::Sub => format!("({} - {})", l, r),
             BinaryOp::Mul => format!("({} * {})", l, r),
         }
+    }
+
+    /// Check if an HIR expression is a set type (BITSET or user-defined SET).
+    fn is_hir_set(&self, expr: &HirExpr) -> bool {
+        if expr.ty == TY_BITSET { return true; }
+        matches!(self.sema.types.get(expr.ty), crate::types::Type::Set { .. })
     }
 
     /// Check if an HIR expression is unsigned (CARDINAL/LONGCARD).

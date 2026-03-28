@@ -434,6 +434,13 @@ impl LLVMCodeGen {
         ty == "float" || ty == "double"
     }
 
+    /// Check if a TypeId is a set type (BITSET or user-defined SET).
+    pub(crate) fn is_set_tid(&self, tid: Option<crate::types::TypeId>) -> bool {
+        let Some(tid) = tid else { return false };
+        if tid == crate::types::TY_BITSET { return true; }
+        matches!(self.sema.types.get(tid), crate::types::Type::Set { .. })
+    }
+
     pub(crate) fn is_int_type(ty: &str) -> bool {
         ty.starts_with('i') || ty == "ptr"
     }
@@ -532,7 +539,12 @@ impl LLVMCodeGen {
             }
             let tmp = self.next_tmp();
             if src_bits < dst_bits {
-                self.emitln(&format!("  {} = sext {} {} to {}", tmp, val.ty, val.name, target_ty));
+                // Use zext for unsigned types (CARDINAL, LONGCARD, BYTE, WORD, BITSET, CHAR, ADDRESS)
+                let is_unsigned = val.type_id
+                    .map(|tid| crate::types::is_unsigned_type(&self.sema.types, tid))
+                    .unwrap_or(false);
+                let ext_op = if is_unsigned { "zext" } else { "sext" };
+                self.emitln(&format!("  {} = {} {} {} to {}", tmp, ext_op, val.ty, val.name, target_ty));
             } else {
                 self.emitln(&format!("  {} = trunc {} {} to {}", tmp, val.ty, val.name, target_ty));
             }
@@ -542,7 +554,11 @@ impl LLVMCodeGen {
         // Int to float
         if val.ty.starts_with('i') && Self::is_float_type(target_ty) {
             let tmp = self.next_tmp();
-            self.emitln(&format!("  {} = sitofp {} {} to {}", tmp, val.ty, val.name, target_ty));
+            let is_unsigned = val.type_id
+                .map(|tid| crate::types::is_unsigned_type(&self.sema.types, tid))
+                .unwrap_or(false);
+            let conv_op = if is_unsigned { "uitofp" } else { "sitofp" };
+            self.emitln(&format!("  {} = {} {} {} to {}", tmp, conv_op, val.ty, val.name, target_ty));
             return Val::new(tmp, target_ty.to_string());
         }
 
