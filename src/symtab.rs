@@ -178,7 +178,11 @@ impl SymbolTable {
     /// Return all symbols defined directly in the given scope (not inherited from parent).
     pub fn symbols_in_scope(&self, scope_id: usize) -> Vec<&Symbol> {
         if scope_id >= self.scopes.len() { return vec![]; }
-        self.scopes[scope_id].symbols.values().collect()
+        let mut syms: Vec<&Symbol> = self.scopes[scope_id].symbols.values().collect();
+        // Sort by TypeId to approximate source declaration order
+        // (lower TypeIds are registered earlier during sequential sema analysis)
+        syms.sort_by_key(|s| s.typ);
+        syms
     }
 
     /// Look up a symbol in a specific scope only (no parent chain walk).
