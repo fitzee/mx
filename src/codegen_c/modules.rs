@@ -346,7 +346,10 @@ impl CodeGen {
 
     /// Generate C code for an imported implementation module, embedded in the main program.
     /// All top-level procedure names are prefixed with `ModuleName_`.
-    pub(crate) fn gen_embedded_implementation(&mut self, imp: &ImplementationModule) {
+    pub(crate) fn gen_embedded_implementation(&mut self, imp_name: &str) {
+        // Create a lightweight shim so existing `imp.name` references work
+        struct ImpShim { name: String }
+        let imp = ImpShim { name: imp_name.to_string() };
         let ctx = self.save_embedded_context();
 
         // Look up the HirEmbeddedModule for this implementation module
@@ -374,12 +377,6 @@ impl CodeGen {
                     }
                 }
             }
-        } else {
-            // Fallback to AST imports
-            if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-                self.build_import_map(&def_mod.imports);
-            }
-            self.build_import_map(&imp.imports);
         }
 
         // Track local procedure and variable names from HIR
@@ -834,8 +831,10 @@ impl CodeGen {
             self.emitln("}");
             self.newline();
             self.embedded_init_modules.push(imp.name.clone());
-        } else if imp.block.body.is_some() {
-            // Empty init function still needed if AST says there's a body
+        } else if self.prebuilt_hir.as_ref()
+            .and_then(|h| h.embedded_init_bodies.iter().find(|(n, _)| n == &imp.name))
+            .is_some() {
+            // Empty init function — HIR says there's an init body but it was already emitted
             if self.multi_tu {
                 self.emitln(&format!("void {}_init(void) {{", imp.name));
             } else {
@@ -1195,7 +1194,7 @@ impl CodeGen {
             }
 
             for imp_mod in &sorted {
-                self.gen_embedded_implementation(imp_mod);
+                self.gen_embedded_implementation(&imp_mod.name);
             }
         }
         Ok(())
