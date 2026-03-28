@@ -226,13 +226,15 @@ impl CodeGen {
     /// When module M re-exports a type from module S (e.g., Promise re-exports Status from Scheduler),
     /// a reference like M.OK needs to resolve to S_Status_OK via S_OK in enum_variants.
     pub(crate) fn resolve_reexported_enum_variant(&self, module: &str, name: &str) -> Option<String> {
-        if let Some(def_mod) = self.def_modules.get(module) {
-            for imp in &def_mod.imports {
-                if let Some(ref from_mod) = imp.from_module {
-                    // Check if source_module has this name as an enum variant
-                    let source_key = format!("{}_{}", from_mod, name);
-                    if let Some(c_name) = self.enum_variants.get(&source_key) {
-                        return Some(c_name.clone());
+        // Check if the module re-exports this name from another module via sema
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(module) {
+            if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, name) {
+                if let Some(ref src_mod) = sym.module {
+                    if src_mod != module {
+                        let source_key = format!("{}_{}", src_mod, name);
+                        if let Some(c_name) = self.enum_variants.get(&source_key) {
+                            return Some(c_name.clone());
+                        }
                     }
                 }
             }

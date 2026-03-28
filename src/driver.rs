@@ -1222,22 +1222,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         CompilationUnit::ImplementationModule(m) => (m.name.clone(), crate::codegen_c::ModuleKind::Implementation),
     };
     codegen.set_module_name(&mod_name);
-    let c_code = if opts.diagnostics_json {
-        match codegen.generate_or_errors(&unit) {
-            Ok(code) => code,
-            Err(errors) => {
-                emit_diagnostics_jsonl(&errors);
-                return Err(CompileError::codegen(
-                    errors.first().map(|e| e.loc.clone()).unwrap_or_else(|| {
-                        crate::errors::SourceLoc::new("<codegen>", 0, 0)
-                    }),
-                    errors.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join("\n"),
-                ));
-            }
-        }
-    } else {
-        codegen.generate_module(mod_kind)?
-    };
+    let c_code = codegen.generate_module(mod_kind)?;
 
     if opts.verbose {
         eprintln!("{}: C code generated ({} bytes)", identity::COMPILER_NAME, c_code.len());

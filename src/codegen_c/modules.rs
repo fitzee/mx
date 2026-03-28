@@ -429,7 +429,7 @@ impl CodeGen {
         // Forward declare all record types as structs (to allow pointer-to-struct typedefs)
 
         // From the definition module:
-        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+        if self.def_module_names.contains(&imp.name) {
             let impl_type_names: HashSet<String> = hir_emb.as_ref()
                 .map(|emb| emb.type_decls.iter().map(|td| td.name.clone()).collect())
                 .unwrap_or_default();
@@ -1185,7 +1185,7 @@ impl CodeGen {
                 let mut def_only_sorted = def_only_modules;
                 def_only_sorted.sort();
                 for mod_name in &def_only_sorted {
-                    if let Some(def_mod) = self.def_modules.get(mod_name).cloned() {
+                    if self.def_module_names.contains(mod_name) {
                         let saved_module_name = self.module_name.clone();
                         let saved_import_map = self.import_map.clone();
                         let saved_import_alias_map = self.import_alias_map.clone();
@@ -1194,10 +1194,10 @@ impl CodeGen {
                         self.emitln(&format!("/* Definition-only module {} */", mod_name));
                         self.generating_for_module = Some(mod_name.clone());
 
-                        // Build import scope so intra-module type references resolve
+                        // Build import scope from sema
                         self.import_map.clear();
                         self.import_alias_map.clear();
-                        self.build_import_map(&def_mod.imports);
+                        // Imports for def-only modules resolved via sema scope (no AST needed)
 
                         // Pre-register type names, forward-declare records, emit types+consts from sema scope
                         let donly_scope = self.sema.symtab.lookup_module_scope(mod_name);

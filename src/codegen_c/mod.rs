@@ -134,8 +134,6 @@ pub struct CodeGen {
     /// Maps module name → list of exported procedure names (from parsed .def files)
     module_exports: HashMap<String, Vec<(String, Vec<ParamCodegenInfo>)>>,
     /// Pending implementation modules to be generated before the main module
-    /// Pending implementation modules for sema analysis in generate_or_errors path
-    pending_modules: Option<Vec<ImplementationModule>>,
     /// Pending module names for embedded generation (topo-sorted before emission)
     pending_module_names: Vec<String>,
     /// Import dependencies per module (for topo sorting): mod_name → [dep_mod_names]
@@ -174,11 +172,9 @@ pub struct CodeGen {
     /// Set of module names that are foreign (C ABI) — no name mangling, extern decls
     foreign_modules: HashSet<String>,
     /// Stored foreign definition modules for generating extern declarations
-    foreign_def_modules: Vec<DefinitionModule>,
     /// Maps M2 proc name → C export name (from EXPORTC pragma)
     export_c_names: HashMap<String, String>,
     /// Stored (non-foreign) definition modules for emitting types during embedded impl gen
-    def_modules: HashMap<String, crate::ast::DefinitionModule>,
     /// Set of non-foreign def module names (for def-only module detection)
     def_module_names: HashSet<String>,
     /// Maps procedure type name -> param info (e.g., "ThenFn" -> params) for proc-var calls
@@ -309,7 +305,6 @@ impl CodeGen {
             longcomplex_vars: HashSet::new(),
             imported_modules: HashSet::new(),
             module_exports: HashMap::new(),
-            pending_modules: None,
             pending_module_names: Vec::new(),
             module_import_deps: HashMap::new(),
             def_exception_names: HashMap::new(),
@@ -329,9 +324,7 @@ impl CodeGen {
             uses_gc: false,
             uses_threads: false,
             foreign_modules: HashSet::new(),
-            foreign_def_modules: Vec::new(),
             export_c_names: HashMap::new(),
-            def_modules: HashMap::new(),
             def_module_names: HashSet::new(),
             proc_type_params: HashMap::new(),
             embedded_init_modules: Vec::new(),
@@ -413,65 +406,6 @@ impl CodeGen {
         }
     }
 
-    /// Add an imported module pair (definition + implementation) for multi-module compilation.
-    /// These will be generated as embedded code when the main module is compiled.
-    pub fn add_imported_module(&mut self, imp: ImplementationModule) {
-        let mod_name = imp.name.clone();
-        let exports = self.build_module_exports_from_sema(&mod_name);
-        self.module_exports.insert(mod_name.clone(), exports);
-        let deps = Self::extract_import_deps(&imp.imports);
-        self.module_import_deps.insert(mod_name.clone(), deps);
-        self.pending_module_names.push(mod_name);
-        if self.pending_modules.is_none() { self.pending_modules = Some(Vec::new()); }
-        self.pending_modules.as_mut().unwrap().push(imp);
-    }
-
-    fn extract_import_deps(imports: &[crate::ast::Import]) -> Vec<String> {
-        let mut deps = Vec::new();
-        for imp in imports {
-            if let Some(ref from_mod) = imp.from_module {
-                deps.push(from_mod.clone());
-            } else {
-                for name in &imp.names {
-                    deps.push(name.name.clone());
-                }
-            }
-        }
-        deps
-    }
-
-    pub fn pre_register_type_names(&mut self, def: &crate::ast::DefinitionModule) {
-        self.sema.pre_register_type_names(def);
-    }
-
-    /// Pre-register an external definition module so its types and procedures
-    /// are available during semantic analysis and code generation.
-    pub fn register_def_module(&mut self, def: &crate::ast::DefinitionModule) {
-        self.sema.register_def_module(def);
-
-        // Register type names from sema scope for type-cast recognition
-        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&def.name) {
-            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
-                if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
-                    self.known_type_names.insert(sym.name.clone());
-                    self.known_type_names.insert(format!("{}_{}", def.name, sym.name));
-                }
-            }
-        }
-
-        // Store non-foreign def modules for type emission during embedded impl gen
-        if def.foreign_lang.is_none() {
-            self.def_modules.insert(def.name.clone(), def.clone());
-        }
-
-        if def.foreign_lang.is_some() {
-            self.foreign_modules.insert(def.name.clone());
-            self.foreign_def_modules.push(def.clone());
-            let exports = self.build_module_exports_from_sema(&def.name);
-            self.module_exports.insert(def.name.clone(), exports);
-        }
-    }
-
     /// Replace sema with a pre-populated one from the driver.
     pub fn set_sema(&mut self, sema: crate::sema::SemanticAnalyzer) {
         self.sema = sema;
@@ -534,31 +468,6 @@ impl CodeGen {
         self.register_def_module_internal(name, is_foreign);
     }
 
-    /// Register .def metadata without running sema (sema already populated by driver).
-    /// Legacy: also stores full AST for generate_or_errors path.
-    pub fn register_def_module_no_sema(&mut self, def: &crate::ast::DefinitionModule) {
-        self.register_def_module_internal(&def.name, def.foreign_lang.is_some());
-        // Extract exception names and import deps from AST
-        let exc_names: Vec<String> = def.definitions.iter()
-            .filter_map(|d| if let crate::ast::Definition::Exception(e) = d { Some(e.name.clone()) } else { None })
-            .collect();
-        if !exc_names.is_empty() {
-            self.def_exception_names.insert(def.name.clone(), exc_names);
-        }
-        let def_deps = Self::extract_import_deps(&def.imports);
-        self.module_import_deps.entry(def.name.clone())
-            .and_modify(|existing| {
-                for d in &def_deps { if !existing.contains(d) { existing.push(d.clone()); } }
-            })
-            .or_insert(def_deps);
-        if def.foreign_lang.is_none() {
-            self.def_modules.insert(def.name.clone(), def.clone());
-        }
-        if def.foreign_lang.is_some() {
-            self.foreign_def_modules.push(def.clone());
-        }
-    }
-
     fn register_def_module_internal(&mut self, name: &str, is_foreign: bool) {
         // Register type names from sema scope
         if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
@@ -612,13 +521,6 @@ impl CodeGen {
         self.pending_module_names.push(name.to_string());
     }
 
-    /// Legacy: Add an implementation module (stores full AST for generate_or_errors path).
-    pub fn add_imported_module_no_sema(&mut self, imp: ImplementationModule) {
-        self.add_imported_module_by_name(&imp.name);
-        if self.pending_modules.is_none() { self.pending_modules = Some(Vec::new()); }
-        self.pending_modules.as_mut().unwrap().push(imp);
-    }
-
     pub fn is_foreign_module(&self, name: &str) -> bool {
         self.foreign_modules.contains(name)
     }
@@ -647,52 +549,12 @@ impl CodeGen {
     }
 
 
-    /// Like generate(), but returns sema errors as a Vec for structured diagnostics
-    /// Run sema on all imported implementation modules.
-    /// Creates procedure scopes + param/local symbols needed for
-    /// scope-aware HIR designator resolution.
-    fn analyze_all_impl_modules(&mut self) {
-        let modules: Vec<_> = self.pending_modules.as_ref()
-            .map(|v| v.iter().cloned().collect())
-            .unwrap_or_default();
-        for imp in &modules {
-            self.sema.analyze_impl_module(imp);
-        }
-        self.sema.fixup_record_field_types();
-    }
-
     pub fn set_module_name(&mut self, name: &str) { self.module_name = name.to_string(); }
 
     /// Generate C code — AST-free entry point. Module name must be pre-set.
     pub fn generate_module(&mut self, kind: ModuleKind) -> CompileResult<String> {
         self.post_sema_generate_internal(kind)?;
         Ok(self.output.clone())
-    }
-
-    /// Legacy: generate from CompilationUnit (extracts name internally).
-    pub fn generate_or_errors(&mut self, unit: &CompilationUnit) -> Result<String, Vec<CompileError>> {
-        self.sema.analyze(unit)?;
-        self.analyze_all_impl_modules();
-        let (name, kind) = Self::extract_module_info(unit);
-        self.module_name = name;
-        self.post_sema_generate_internal(kind).map_err(|e| vec![e])?;
-        Ok(self.output.clone())
-    }
-
-    /// Legacy: generate from CompilationUnit (sema already done).
-    pub fn generate(&mut self, unit: &CompilationUnit) -> CompileResult<String> {
-        let (name, kind) = Self::extract_module_info(unit);
-        self.module_name = name;
-        self.post_sema_generate_internal(kind)?;
-        Ok(self.output.clone())
-    }
-
-    fn extract_module_info(unit: &CompilationUnit) -> (String, ModuleKind) {
-        match unit {
-            CompilationUnit::ProgramModule(m) => (m.name.clone(), ModuleKind::Program),
-            CompilationUnit::DefinitionModule(m) => (m.name.clone(), ModuleKind::Definition),
-            CompilationUnit::ImplementationModule(m) => (m.name.clone(), ModuleKind::Implementation),
-        }
     }
 
     fn post_sema_generate_internal(&mut self, kind: ModuleKind) -> CompileResult<()> {
@@ -777,8 +639,14 @@ mod tests {
         cg.sema.analyze(&unit).unwrap();
         let hir = crate::hir_build::build_module(&unit, &[], &cg.sema);
         cg.prebuilt_hir = Some(hir);
+        let (name, kind) = match &unit {
+            CompilationUnit::ProgramModule(m) => (m.name.clone(), ModuleKind::Program),
+            CompilationUnit::DefinitionModule(m) => (m.name.clone(), ModuleKind::Definition),
+            CompilationUnit::ImplementationModule(m) => (m.name.clone(), ModuleKind::Implementation),
+        };
+        cg.module_name = name;
         cg.populate_typeid_c_names();
-        cg.generate(&unit).unwrap()
+        cg.generate_module(kind).unwrap()
     }
 
     #[test]
