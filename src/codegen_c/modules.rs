@@ -900,7 +900,7 @@ impl CodeGen {
     /// Also considers imports from corresponding .def files so that type dependencies
     /// (e.g. `FROM Gfx IMPORT Renderer;` in Font.def) are properly ordered.
     /// Returns an error if a dependency cycle is detected.
-    pub(crate) fn topo_sort_modules(modules: Vec<ImplementationModule>, def_modules: &HashMap<String, crate::ast::DefinitionModule>) -> CompileResult<Vec<ImplementationModule>> {
+    pub(crate) fn topo_sort_modules(modules: Vec<ImplementationModule>, def_modules: &HashMap<String, crate::ast::DefinitionModule>) -> CompileResult<Vec<String>> {
         let names: HashSet<String> = modules.iter().map(|m| m.name.clone()).collect();
         let mut deps: HashMap<String, Vec<String>> = HashMap::new();
         for m in &modules {
@@ -919,7 +919,7 @@ impl CodeGen {
                     }
                 }
             }
-            // Also collect deps from the corresponding definition module imports
+            // Also collect deps from the corresponding definition module
             if let Some(def_mod) = def_modules.get(&m.name) {
                 for imp in &def_mod.imports {
                     if let Some(ref from_mod) = imp.from_module {
@@ -980,10 +980,7 @@ impl CodeGen {
                     )
                 })?;
         }
-        let pos: HashMap<String, usize> = order.iter().enumerate().map(|(i, n)| (n.clone(), i)).collect();
-        let mut result = modules;
-        result.sort_by_key(|m| pos.get(&m.name).copied().unwrap_or(usize::MAX));
-        Ok(result)
+        Ok(order)
     }
 
     /// Build import map from HIR imports (no AST dependency).
@@ -1103,7 +1100,7 @@ impl CodeGen {
         if let Some(pending) = self.pending_modules.take() {
             let sorted = Self::topo_sort_modules(pending, &self.def_modules)?;
             let embedded_names: std::collections::HashSet<String> =
-                sorted.iter().map(|m| m.name.clone()).collect();
+                sorted.iter().cloned().collect();
 
             // Emit types and constants for definition-only modules (no .mod counterpart)
             // BEFORE embedded implementations, since embedded modules may reference these types.
@@ -1193,8 +1190,8 @@ impl CodeGen {
                 }
             }
 
-            for imp_mod in &sorted {
-                self.gen_embedded_implementation(&imp_mod.name);
+            for imp_mod_name in &sorted {
+                self.gen_embedded_implementation(imp_mod_name);
             }
         }
         Ok(())
