@@ -395,6 +395,25 @@ impl super::CodeGen {
         }
     }
 
+    /// Resolve a TypeId to its C field type + array suffix for struct field emission.
+    /// Named array types are resolved to their element type + dimension suffix
+    /// (e.g., BlobRef → "char" + "[65]") instead of using the typedef name.
+    /// This matches the AST emit_record_fields behavior.
+    pub(crate) fn field_type_and_suffix(&self, tid: TypeId) -> (String, String) {
+        let resolved = self.resolve_hir_alias(tid);
+        match self.sema.types.get(resolved) {
+            crate::types::Type::Array { elem_type, high, .. } => {
+                let inner_type = self.type_id_to_c(*elem_type);
+                let inner_suffix = self.type_id_array_suffix(*elem_type);
+                (inner_type, format!("[{} + 1]{}", high, inner_suffix))
+            }
+            _ => {
+                let c = self.type_id_to_c(tid);
+                (c, String::new())
+            }
+        }
+    }
+
     /// Compute the C array dimension suffix from a TypeId (e.g., "[256]" or "[32][64]").
     pub(crate) fn type_id_array_suffix(&self, tid: TypeId) -> String {
         let resolved = self.resolve_hir_alias(tid);

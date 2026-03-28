@@ -516,17 +516,21 @@ impl CodeGen {
                 self.emitln(&format!("struct {} {{", c_type_name));
                 self.indent += 1;
                 for f in fields {
-                    let ctype = self.type_id_to_c(f.typ);
-                    let arr_suffix = self.type_id_array_suffix(f.typ);
+                    let field_resolved = self.resolve_hir_alias(f.typ);
+                    // For struct fields, resolve arrays to element type + suffix
+                    // (matching emit_record_fields AST behavior: char field[65], not TypedefName field)
+                    let (ctype, arr_suffix) = self.field_type_and_suffix(field_resolved);
                     if ctype == "char" && !arr_suffix.is_empty() {
                         self.char_array_fields.insert((name.to_string(), f.name.clone()));
                     }
-                    if !arr_suffix.is_empty() || matches!(self.sema.types.get(self.resolve_hir_alias(f.typ)), crate::types::Type::Array { .. }) {
+                    if !arr_suffix.is_empty() || matches!(self.sema.types.get(field_resolved), crate::types::Type::Array { .. }) {
                         self.array_fields.insert((name.to_string(), f.name.clone()));
                     }
-                    if matches!(self.sema.types.get(self.resolve_hir_alias(f.typ)), crate::types::Type::Pointer { .. }) {
+                    if matches!(self.sema.types.get(field_resolved), crate::types::Type::Pointer { .. }) {
                         self.pointer_fields.insert(f.name.clone());
                     }
+                    // Multi-name pointer fields need separate declarations (C quirk)
+                    let is_ptr = ctype.contains('*');
                     self.emit_indent();
                     self.emit(&format!("{} {}{};\n", ctype, f.name, arr_suffix));
                 }
@@ -609,8 +613,8 @@ impl CodeGen {
                     self.emitln(&format!("struct {} {{", tag));
                     self.indent += 1;
                     for f in &fields {
-                        let ctype = self.type_id_to_c(f.typ);
-                        let arr_suffix = self.type_id_array_suffix(f.typ);
+                        let field_resolved = self.resolve_hir_alias(f.typ);
+                        let (ctype, arr_suffix) = self.field_type_and_suffix(field_resolved);
                         self.emit_indent();
                         self.emit(&format!("{} {}{};\n", ctype, f.name, arr_suffix));
                     }

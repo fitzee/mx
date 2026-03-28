@@ -441,10 +441,21 @@ impl CodeGen {
             }
         }
 
-        // Type, const, and exception declarations from impl block
-        // Still AST-driven — gen_const_decl needs try_eval_const_int + const_int_values
-        // registration for array bounds, and gen_type_decl needs full AST context.
-        self.emit_type_const_exception_decls(&imp.block.decls);
+        // Type, const, and exception declarations from impl block via HIR
+        if let Some(ref emb) = hir_emb {
+            for td in &emb.type_decls {
+                self.gen_type_decl_from_id(&td.name, td.type_id);
+            }
+            for c in &emb.const_decls {
+                self.gen_hir_const_decl(c);
+            }
+            for e in &emb.exception_decls {
+                self.exception_names.insert(e.name.clone());
+                self.emitln(&format!("#define {} {}", e.mangled, e.exc_id));
+            }
+        } else {
+            self.emit_type_const_exception_decls(&imp.block.decls);
+        }
         self.generating_for_module = None;
 
         // Emit M2+ type descriptors for types declared in this embedded module
