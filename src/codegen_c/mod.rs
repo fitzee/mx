@@ -171,6 +171,8 @@ pub struct CodeGen {
     export_c_names: HashMap<String, String>,
     /// Stored (non-foreign) definition modules for emitting types during embedded impl gen
     def_modules: HashMap<String, crate::ast::DefinitionModule>,
+    /// Set of non-foreign def module names (for def-only module detection)
+    def_module_names: HashSet<String>,
     /// Maps procedure type name -> param info (e.g., "ThenFn" -> params) for proc-var calls
     proc_type_params: HashMap<String, Vec<ParamCodegenInfo>>,
     /// Embedded module names that have init bodies (need calling from main)
@@ -322,6 +324,7 @@ impl CodeGen {
             foreign_def_modules: Vec::new(),
             export_c_names: HashMap::new(),
             def_modules: HashMap::new(),
+            def_module_names: HashSet::new(),
             proc_type_params: HashMap::new(),
             embedded_init_modules: Vec::new(),
             embedded_local_procs: HashSet::new(),
@@ -518,22 +521,16 @@ impl CodeGen {
         }
     }
 
+    /// Register .def metadata by name (no AST needed, sema already populated by driver).
+    pub fn register_def_by_name(&mut self, name: &str, is_foreign: bool) {
+        self.register_def_module_internal(name, is_foreign);
+    }
+
     /// Register .def metadata without running sema (sema already populated by driver).
+    /// Legacy: also stores full AST for generate_or_errors path.
     pub fn register_def_module_no_sema(&mut self, def: &crate::ast::DefinitionModule) {
-        // Register type names from sema scope (replaces AST Definition::Type iteration)
-        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&def.name) {
-            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
-                if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
-                    self.known_type_names.insert(sym.name.clone());
-                    let prefixed = format!("{}_{}", def.name, sym.name);
-                    self.known_type_names.insert(prefixed.clone());
-                    if sym.typ >= 20 {
-                        self.typeid_c_names.insert(sym.typ, prefixed);
-                    }
-                }
-            }
-        }
-        // Extract M2+ exception names and import deps for later use
+        self.register_def_module_internal(&def.name, def.foreign_lang.is_some());
+        // Extract exception names and import deps from AST
         let exc_names: Vec<String> = def.definitions.iter()
             .filter_map(|d| if let crate::ast::Definition::Exception(e) = d { Some(e.name.clone()) } else { None })
             .collect();
@@ -543,30 +540,73 @@ impl CodeGen {
         let def_deps = Self::extract_import_deps(&def.imports);
         self.module_import_deps.entry(def.name.clone())
             .and_modify(|existing| {
-                for d in &def_deps {
-                    if !existing.contains(d) { existing.push(d.clone()); }
-                }
+                for d in &def_deps { if !existing.contains(d) { existing.push(d.clone()); } }
             })
             .or_insert(def_deps);
         if def.foreign_lang.is_none() {
             self.def_modules.insert(def.name.clone(), def.clone());
         }
         if def.foreign_lang.is_some() {
-            self.foreign_modules.insert(def.name.clone());
             self.foreign_def_modules.push(def.clone());
-            let exports = self.build_module_exports_from_sema(&def.name);
-            self.module_exports.insert(def.name.clone(), exports);
         }
     }
 
-    /// Add an implementation module without running sema registration.
+    fn register_def_module_internal(&mut self, name: &str, is_foreign: bool) {
+        // Register type names from sema scope
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
+            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
+                if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
+                    self.known_type_names.insert(sym.name.clone());
+                    let prefixed = format!("{}_{}", name, sym.name);
+                    self.known_type_names.insert(prefixed.clone());
+                    if sym.typ >= 20 {
+                        self.typeid_c_names.insert(sym.typ, prefixed);
+                    }
+                }
+            }
+        }
+        if !is_foreign {
+            self.def_module_names.insert(name.to_string());
+        }
+        if is_foreign {
+            self.foreign_modules.insert(name.to_string());
+            let exports = self.build_module_exports_from_sema(name);
+            self.module_exports.insert(name.to_string(), exports);
+        }
+    }
+
+    /// Add an imported implementation module by name (no AST needed).
+    pub fn add_imported_module_by_name(&mut self, name: &str) {
+        let exports = self.build_module_exports_from_sema(name);
+        self.module_exports.insert(name.to_string(), exports);
+        // Import deps come from sema scope (already registered)
+        let mut deps = Vec::new();
+        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
+            for sym in self.sema.symtab.symbols_in_scope(scope_id) {
+                if let crate::symtab::SymbolKind::Module { .. } = &sym.kind {
+                    deps.push(sym.name.clone());
+                }
+            }
+        }
+        // Also extract from HIR embedded module imports if available
+        if let Some(ref hir) = self.prebuilt_hir {
+            if let Some(emb) = hir.embedded_modules.iter().find(|e| e.name == name) {
+                for hi in &emb.imports {
+                    if !hi.is_qualified {
+                        if !deps.contains(&hi.module) {
+                            deps.push(hi.module.clone());
+                        }
+                    }
+                }
+            }
+        }
+        self.module_import_deps.insert(name.to_string(), deps);
+        self.pending_module_names.push(name.to_string());
+    }
+
+    /// Legacy: Add an implementation module (stores full AST for generate_or_errors path).
     pub fn add_imported_module_no_sema(&mut self, imp: ImplementationModule) {
-        let mod_name = imp.name.clone();
-        let exports = self.build_module_exports_from_sema(&mod_name);
-        self.module_exports.insert(mod_name.clone(), exports);
-        let deps = Self::extract_import_deps(&imp.imports);
-        self.module_import_deps.insert(mod_name.clone(), deps);
-        self.pending_module_names.push(mod_name);
+        self.add_imported_module_by_name(&imp.name);
         if self.pending_modules.is_none() { self.pending_modules = Some(Vec::new()); }
         self.pending_modules.as_mut().unwrap().push(imp);
     }

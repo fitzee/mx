@@ -466,7 +466,7 @@ impl CodeGen {
         }
 
         // Emit type and const declarations from the def module via sema scope
-        if self.def_modules.contains_key(&imp.name) {
+        if self.def_module_names.contains(&imp.name) {
             let def_scope = self.sema.symtab.lookup_module_scope(&imp.name);
             let def_syms: Vec<(String, crate::symtab::SymbolKind, crate::types::TypeId, bool)> =
                 def_scope.map(|sid| {
@@ -1173,7 +1173,7 @@ impl CodeGen {
             // BEFORE embedded implementations, since embedded modules may reference these types.
             // These are registered def modules with no matching implementation module,
             // e.g. pure type-definition modules like "PdcTypes.def".
-            let def_only_modules: Vec<String> = self.def_modules.keys()
+            let def_only_modules: Vec<String> = self.def_module_names.iter()
                 .filter(|name| {
                     !embedded_names.contains(name.as_str())
                         && !self.foreign_modules.contains(name.as_str())

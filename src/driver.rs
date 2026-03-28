@@ -976,10 +976,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     codegen.set_sema(sema.clone());
     codegen.prebuilt_hir = Some(hir_module.clone());
     for def_mod in &all_sorted_defs {
-        codegen.register_def_module_no_sema(def_mod);
+        codegen.register_def_by_name(&def_mod.name, def_mod.foreign_lang.is_some());
     }
     for imp_mod in &all_impl_mods {
-        codegen.add_imported_module_no_sema(imp_mod.clone());
+        codegen.add_imported_module_by_name(&imp_mod.name);
     }
     codegen.populate_typeid_c_names();
 
