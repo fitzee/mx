@@ -2747,9 +2747,8 @@ impl<'a> HirBuilder<'a> {
     }
 }
 
-/// Convert a symtab ConstValue to an HIR ConstVal.
 /// Map a ConstVal to its C type string.
-fn const_val_c_type(val: &ConstVal) -> String {
+pub fn const_val_c_type(val: &ConstVal) -> String {
     match val {
         ConstVal::Integer(_) | ConstVal::EnumVariant(_) => "int32_t".to_string(),
         ConstVal::Real(_) => "float".to_string(),
@@ -2762,7 +2761,8 @@ fn const_val_c_type(val: &ConstVal) -> String {
     }
 }
 
-fn const_value_to_hir(cv: &ConstValue) -> ConstVal {
+/// Convert a symtab ConstValue to an HIR ConstVal.
+pub fn const_value_to_hir(cv: &ConstValue) -> ConstVal {
     match cv {
         ConstValue::Integer(v) => ConstVal::Integer(*v),
         ConstValue::Real(v) => ConstVal::Real(*v),

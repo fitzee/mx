@@ -427,15 +427,43 @@ impl CodeGen {
                     .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
                     .collect()
             };
+            let def_scope = self.sema.symtab.lookup_module_scope(&def_mod.name);
             for d in &def_mod.definitions {
                 match d {
                     Definition::Type(t) => {
                         if !impl_type_names.contains(&t.name) {
-                            self.gen_type_decl(t);
+                            let tid = def_scope
+                                .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &t.name))
+                                .map(|s| s.typ)
+                                .unwrap_or(crate::types::TY_VOID);
+                            if tid != crate::types::TY_VOID {
+                                self.gen_type_decl_from_id(&t.name, tid);
+                            }
                         }
                     }
-                    Definition::Const(c) => self.gen_const_decl(c),
-                    Definition::Exception(e) => self.gen_exception_decl(e),
+                    Definition::Const(c) => {
+                        let sym = def_scope
+                            .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &c.name));
+                        if let Some(s) = sym {
+                            if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
+                                let val = crate::hir_build::const_value_to_hir(cv);
+                                let hc = crate::hir::HirConstDecl {
+                                    name: c.name.clone(),
+                                    mangled: format!("{}_{}", imp.name, c.name),
+                                    value: val.clone(),
+                                    type_id: s.typ,
+                                    exported: s.exported,
+                                    c_type: crate::hir_build::const_val_c_type(&val),
+                                };
+                                self.gen_hir_const_decl(&hc);
+                            }
+                        }
+                    }
+                    Definition::Exception(e) => {
+                        self.exception_names.insert(e.name.clone());
+                        let mangled = format!("M2_EXC_{}", self.mangle(&e.name));
+                        self.emitln(&format!("#define {} __COUNTER__", mangled));
+                    }
                     _ => {}
                 }
             }
