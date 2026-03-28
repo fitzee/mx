@@ -526,7 +526,7 @@ impl CodeGen {
     }
 
     /// Build module exports (proc name → ParamCodegenInfo) from sema symtab.
-    /// Replaces 4 copies of AST Declaration::Procedure / TypeNode iteration.
+    /// Build module exports (proc name → ParamCodegenInfo) from sema symtab.
     fn build_module_exports_from_sema(&self, mod_name: &str) -> Vec<(String, Vec<ParamCodegenInfo>)> {
         let mut exports = Vec::new();
         if let Some(scope_id) = self.sema.symtab.lookup_module_scope(mod_name) {
@@ -624,7 +624,7 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    fn parse(input: &str) -> CompilationUnit {
+    fn parse(input: &str) -> crate::ast::CompilationUnit {
         let mut lexer = Lexer::new(input, "test.mod");
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
@@ -640,9 +640,9 @@ mod tests {
         let hir = crate::hir_build::build_module(&unit, &[], &cg.sema);
         cg.prebuilt_hir = Some(hir);
         let (name, kind) = match &unit {
-            CompilationUnit::ProgramModule(m) => (m.name.clone(), ModuleKind::Program),
-            CompilationUnit::DefinitionModule(m) => (m.name.clone(), ModuleKind::Definition),
-            CompilationUnit::ImplementationModule(m) => (m.name.clone(), ModuleKind::Implementation),
+            crate::ast::CompilationUnit::ProgramModule(m) => (m.name.clone(), ModuleKind::Program),
+            crate::ast::CompilationUnit::DefinitionModule(m) => (m.name.clone(), ModuleKind::Definition),
+            crate::ast::CompilationUnit::ImplementationModule(m) => (m.name.clone(), ModuleKind::Implementation),
         };
         cg.module_name = name;
         cg.populate_typeid_c_names();

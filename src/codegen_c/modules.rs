@@ -927,20 +927,6 @@ impl CodeGen {
         Ok(order)
     }
 
-    fn extract_import_deps_from_ast_imports(imports: &[crate::ast::Import]) -> Vec<String> {
-        let mut deps = Vec::new();
-        for imp in imports {
-            if let Some(ref from_mod) = imp.from_module {
-                deps.push(from_mod.clone());
-            } else {
-                for name in &imp.names {
-                    deps.push(name.name.clone());
-                }
-            }
-        }
-        deps
-    }
-
     fn topo_visit(
         name: &str,
         deps: &HashMap<String, Vec<String>>,
@@ -960,93 +946,6 @@ impl CodeGen {
         visited.insert(name.to_string());
         order.push(name.to_string());
         Ok(())
-    }
-
-    /// Topologically sort implementation modules so dependencies come before dependents.
-    /// Also considers imports from corresponding .def files so that type dependencies
-    /// (e.g. `FROM Gfx IMPORT Renderer;` in Font.def) are properly ordered.
-    /// Returns an error if a dependency cycle is detected.
-    pub(crate) fn topo_sort_modules(modules: Vec<ImplementationModule>, def_modules: &HashMap<String, crate::ast::DefinitionModule>) -> CompileResult<Vec<String>> {
-        let names: HashSet<String> = modules.iter().map(|m| m.name.clone()).collect();
-        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
-        for m in &modules {
-            let mut my_deps = Vec::new();
-            // Collect deps from implementation module imports
-            for imp in &m.imports {
-                if let Some(ref from_mod) = imp.from_module {
-                    if names.contains(from_mod) {
-                        my_deps.push(from_mod.clone());
-                    }
-                } else {
-                    for name in &imp.names {
-                        if names.contains(&name.name) {
-                            my_deps.push(name.name.clone());
-                        }
-                    }
-                }
-            }
-            // Also collect deps from the corresponding definition module
-            if let Some(def_mod) = def_modules.get(&m.name) {
-                for imp in &def_mod.imports {
-                    if let Some(ref from_mod) = imp.from_module {
-                        if names.contains(from_mod) && !my_deps.contains(from_mod) {
-                            my_deps.push(from_mod.clone());
-                        }
-                    } else {
-                        for name in &imp.names {
-                            if names.contains(&name.name) && !my_deps.contains(&name.name) {
-                                my_deps.push(name.name.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            deps.insert(m.name.clone(), my_deps);
-        }
-        let mut visited = HashSet::new();
-        let mut visiting = HashSet::new();
-        fn visit(
-            name: &str,
-            deps: &HashMap<String, Vec<String>>,
-            visited: &mut HashSet<String>,
-            visiting: &mut HashSet<String>,
-            order: &mut Vec<String>,
-        ) -> Result<(), String> {
-            if visited.contains(name) {
-                return Ok(());
-            }
-            if visiting.contains(name) {
-                return Err(name.to_string());
-            }
-            visiting.insert(name.to_string());
-            if let Some(d) = deps.get(name) {
-                for dep in d {
-                    visit(dep, deps, visited, visiting, order).map_err(|cycle_node| {
-                        if cycle_node == name {
-                            // We've come full circle; build the cycle description
-                            format!("{} -> {}", name, dep)
-                        } else {
-                            format!("{} -> {}", name, cycle_node)
-                        }
-                    })?;
-                }
-            }
-            visiting.remove(name);
-            visited.insert(name.to_string());
-            order.push(name.to_string());
-            Ok(())
-        }
-        let mut order = Vec::new();
-        for m in &modules {
-            visit(&m.name, &deps, &mut visited, &mut visiting, &mut order)
-                .map_err(|cycle_desc| {
-                    CompileError::codegen(
-                        crate::errors::SourceLoc::new("<codegen>", 0, 0),
-                        format!("module dependency cycle detected: {}", cycle_desc),
-                    )
-                })?;
-        }
-        Ok(order)
     }
 
     /// Build import map from HIR imports (no AST dependency).
@@ -1092,58 +991,6 @@ impl CodeGen {
                     }
                 }
             }
-        }
-    }
-
-    pub(crate) fn build_import_map(&mut self, imports: &[Import]) {
-        // Collect enum variant names to add to import_map after the main loop.
-        // When importing an enum type, its variant names are implicitly in scope.
-        let mut extra_variants: Vec<(String, String)> = Vec::new();
-        for imp in imports {
-            if let Some(from_mod) = &imp.from_module {
-                // FROM Module IMPORT name1, name2;
-                // Also register the module name so Module.Proc() syntax works
-                self.imported_modules.insert(from_mod.clone());
-                for import_name in &imp.names {
-                    let original = &import_name.name;
-                    let local = import_name.local_name().to_string();
-                    self.import_map.insert(local.clone(), from_mod.clone());
-                    // Track alias→original mapping if aliased
-                    if import_name.alias.is_some() {
-                        self.import_alias_map.insert(local.clone(), original.clone());
-                    }
-                    // Register stdlib proc params for codegen (is_char, is_var, etc.)
-                    if stdlib::is_stdlib_module(from_mod) && !stdlib::is_native_stdlib(from_mod) {
-                        if let Some(params) = stdlib::get_stdlib_proc_params(from_mod, original) {
-                            let info: Vec<ParamCodegenInfo> = params.into_iter().map(|(pname, is_var, is_char, is_open_array)| {
-                                ParamCodegenInfo { name: pname, is_var, is_char, is_open_array }
-                            }).collect();
-                            let prefixed = format!("{}_{}", from_mod, original);
-                            self.proc_params.insert(prefixed, info.clone());
-                            self.proc_params.insert(local.clone(), info);
-                        }
-                    }
-                    // If this imported name is an enum type, also import its variant names
-                    if let Some(scope_id) = self.sema.symtab.lookup_module_scope(from_mod) {
-                        if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, original) {
-                            let resolved = self.resolve_hir_alias(sym.typ);
-                            if let crate::types::Type::Enumeration { variants, .. } = self.sema.types.get(resolved) {
-                                for v in variants {
-                                    extra_variants.push((v.clone(), from_mod.clone()));
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                // IMPORT Module1, Module2;  (whole-module / qualified import)
-                for import_name in &imp.names {
-                    self.imported_modules.insert(import_name.name.clone());
-                }
-            }
-        }
-        for (variant_name, module_name) in extra_variants {
-            self.import_map.entry(variant_name).or_insert(module_name);
         }
     }
 
