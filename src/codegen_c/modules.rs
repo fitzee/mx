@@ -155,28 +155,58 @@ impl CodeGen {
             }
         }
 
+        let def_scope = self.sema.symtab.lookup_module_scope(&m.name);
         for def in &m.definitions {
             match def {
-                Definition::Const(c) => self.gen_const_decl(c),
-                Definition::Type(t) => self.gen_type_decl(t),
-                Definition::Var(v) => {
-                    self.emit_indent();
-                    self.emit("extern ");
-                    let ctype = self.type_to_c(&v.typ);
-                    for (i, name) in v.names.iter().enumerate() {
-                        if i > 0 {
-                            self.emit(", ");
+                Definition::Const(c) => {
+                    let sym = def_scope
+                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &c.name));
+                    if let Some(s) = sym {
+                        if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
+                            let val = crate::hir_build::const_value_to_hir(cv);
+                            let hc = crate::hir::HirConstDecl {
+                                name: c.name.clone(),
+                                mangled: self.mangle(&c.name),
+                                value: val.clone(),
+                                type_id: s.typ,
+                                exported: s.exported,
+                                c_type: crate::hir_build::const_val_c_type(&val),
+                            };
+                            self.gen_hir_const_decl(&hc);
                         }
-                        self.emit(&format!("{} {}", ctype, self.mangle(name)));
                     }
-                    self.emit(";\n");
+                }
+                Definition::Type(t) => {
+                    let tid = def_scope
+                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &t.name))
+                        .map(|s| s.typ)
+                        .unwrap_or(crate::types::TY_VOID);
+                    if tid != crate::types::TY_VOID {
+                        self.gen_type_decl_from_id(&t.name, tid);
+                    }
+                }
+                Definition::Var(v) => {
+                    // Extern var declarations — use TypeId for type
+                    let sym = def_scope
+                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &v.names[0]));
+                    if let Some(s) = sym {
+                        let ctype = self.type_id_to_c(s.typ);
+                        let arr_suffix = self.type_id_array_suffix(s.typ);
+                        self.emit_indent();
+                        self.emit("extern ");
+                        for (i, name) in v.names.iter().enumerate() {
+                            if i > 0 { self.emit(", "); }
+                            self.emit(&format!("{} {}{}", ctype, self.mangle(name), arr_suffix));
+                        }
+                        self.emit(";\n");
+                    }
                 }
                 Definition::Procedure(h) => {
+                    // Still AST — no HirProcSig for def-module procs
                     self.gen_proc_prototype(h);
                     self.emit(";\n");
                 }
                 Definition::Exception(e) => {
-                    // Exception declaration: generate unique integer constant
                     self.exception_names.insert(e.name.clone());
                     self.emitln(&format!("#define M2_EXC_{} __COUNTER__", self.mangle(&e.name)));
                 }
