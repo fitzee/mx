@@ -48,11 +48,6 @@ impl CodeGen {
         hb
     }
 
-    fn hir_resolve_designator(&self, d: &Designator) -> Option<hir::Place> {
-        let mut hb = self.make_hir_builder();
-        hb.resolve_designator(d)
-    }
-
     /// Convert an HIR expression to a C expression string (for index exprs etc.)
     fn hir_expr_to_c_string(&mut self, expr: &hir::HirExpr) -> String {
         use crate::hir::HirExprKind::*;
@@ -227,137 +222,6 @@ impl CodeGen {
         result
     }
 
-    // ── Designator generation ───────────────────────────────────────
-
-    pub(crate) fn gen_designator(&mut self, desig: &Designator) {
-        // Build designator string into a separate buffer so we can wrap with (*...)
-        let desig_str = self.designator_to_string(desig);
-        self.emit(&desig_str);
-    }
-
-    pub(crate) fn designator_to_string(&mut self, desig: &Designator) -> String {
-        // Try HIR resolution first.
-        if let Some(ref place) = self.hir_resolve_designator(desig) {
-            match &place.base {
-                hir::PlaceBase::Local(_) | hir::PlaceBase::Global(_) => {
-                    return self.emit_place_c(place);
-                }
-                hir::PlaceBase::Constant(cv) => {
-                    // Enum variants: look up the C name from enum_variants map
-                    if let hir::ConstVal::EnumVariant(_) = cv {
-                        let name = &desig.ident.name;
-                        // Try module-qualified, then bare, then current-module-prefixed
-                        if let Some(ref module) = desig.ident.module {
-                            let key = format!("{}_{}", module, name);
-                            if let Some(c_name) = self.enum_variants.get(&key) {
-                                return c_name.clone();
-                            }
-                        }
-                        if let Some(c_name) = self.enum_variants.get(name) {
-                            return c_name.clone();
-                        }
-                        let mod_key = format!("{}_{}", self.module_name, name);
-                        if let Some(c_name) = self.enum_variants.get(&mod_key) {
-                            return c_name.clone();
-                        }
-                        // Check import map for enum variant from another module
-                        if let Some(module) = self.import_map.get(name).cloned() {
-                            let qual_key = format!("{}_{}", module, self.original_import_name(name));
-                            if let Some(c_name) = self.enum_variants.get(&qual_key) {
-                                return c_name.clone();
-                            }
-                            if let Some(c_name) = self.resolve_reexported_enum_variant(&module, name) {
-                                return c_name;
-                            }
-                        }
-                    }
-                    // Other constants: use emit_place_c for the value
-                    return self.emit_place_c(place);
-                }
-                hir::PlaceBase::FuncRef(sid) => {
-                    // Use resolve_proc_name for proper stdlib mapping, nested
-                    // proc names, EXPORTC aliases, etc.
-                    return self.resolve_proc_name(desig);
-                }
-            }
-        }
-
-        panic!("C designator: HIR returned None for '{}' (module={:?}) in {}, proc_stack={:?}",
-            desig.ident.name, desig.ident.module, self.module_name, self.parent_proc_stack);
-    }
-
-
-    pub(crate) fn resolve_proc_name(&self, desig: &Designator) -> String {
-        let name = &desig.ident.name;
-        if let Some(module) = &desig.ident.module {
-            if self.foreign_modules.contains(module.as_str()) {
-                return name.to_string();
-            }
-            if !stdlib::is_native_stdlib(module) {
-                if let Some(c_name) = stdlib::map_stdlib_call(module, name) {
-                    return c_name;
-                }
-            }
-            return format!("{}_{}", module, name);
-        }
-        // Check if base name is a whole-module import with a Field selector (e.g., MathUtils.Square)
-        if self.imported_modules.contains(name) {
-            if let Some(Selector::Field(proc_name, _)) = desig.selectors.first() {
-                if self.foreign_modules.contains(name.as_str()) {
-                    return proc_name.to_string();
-                }
-                if !stdlib::is_native_stdlib(name) {
-                    if let Some(c_name) = stdlib::map_stdlib_call(name, proc_name) {
-                        return c_name;
-                    }
-                }
-                return format!("{}_{}", name, proc_name);
-            }
-        }
-        // Check if it's imported via FROM Module IMPORT
-        if let Some(module) = self.import_map.get(name) {
-            let orig = self.original_import_name(name).to_string();
-            if self.foreign_modules.contains(module.as_str()) {
-                return orig;
-            }
-            if !stdlib::is_native_stdlib(module) {
-                if let Some(c_name) = stdlib::map_stdlib_call(module, &orig) {
-                    return c_name;
-                }
-            }
-            // Non-stdlib module or native stdlib: use module-prefixed name.
-            // For native stdlib, normalize the import name to the definition's
-            // case (e.g., import "Entier" → def has "entier" → "MathLib_entier").
-            if !stdlib::is_stdlib_module(module) || stdlib::is_native_stdlib(module) {
-                let canonical = if stdlib::is_native_stdlib(module) {
-                    self.resolve_native_stdlib_name(module, &orig)
-                } else {
-                    orig.clone()
-                };
-                return format!("{}_{}", module, canonical);
-            }
-        }
-        // Check if this is a nested proc with a mangled name
-        if let Some(mangled) = self.nested_proc_names.get(name) {
-            return mangled.clone();
-        }
-        // Check if this name has an EXPORTC alias
-        if let Some(ecn) = self.export_c_names.get(name) {
-            return ecn.clone();
-        }
-        // Inside an embedded implementation, local proc calls need module prefix
-        // Also check embedded_local_vars for procedure-typed variables used as calls
-        if self.embedded_local_procs.contains(name)
-            || self.embedded_local_vars.contains(name)
-        {
-            return format!("{}_{}", self.module_name, name);
-        }
-        self.mangle(name)
-    }
-
-    /// If the designator starts with an imported module name followed by a field selector,
-    /// return (module_name, proc_name) and the remaining selectors start at index 1.
-    /// Otherwise return None.
     /// Resolve an enum variant through a module's re-exports.
     /// When module M re-exports a type from module S (e.g., Promise re-exports Status from Scheduler),
     /// a reference like M.OK needs to resolve to S_Status_OK via S_OK in enum_variants.
@@ -371,18 +235,6 @@ impl CodeGen {
                         return Some(c_name.clone());
                     }
                 }
-            }
-        }
-        None
-    }
-
-    pub(crate) fn resolve_module_qualified<'a>(&self, desig: &'a Designator) -> Option<(&'a str, &'a str)> {
-        if desig.ident.module.is_some() {
-            return None; // already qualified
-        }
-        if self.imported_modules.contains(&desig.ident.name) {
-            if let Some(Selector::Field(proc_name, _)) = desig.selectors.first() {
-                return Some((&desig.ident.name, proc_name));
             }
         }
         None
