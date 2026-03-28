@@ -968,6 +968,52 @@ impl CodeGen {
         Ok(result)
     }
 
+    /// Build import map from HIR imports (no AST dependency).
+    pub(crate) fn build_import_map_from_hir(&mut self) {
+        if let Some(ref hir) = self.prebuilt_hir {
+            let hir_imports = hir.imports.clone();
+            for imp in &hir_imports {
+                if !imp.is_qualified {
+                    // FROM Module IMPORT name1, name2;
+                    self.imported_modules.insert(imp.module.clone());
+                    for name in &imp.names {
+                        self.import_map.insert(name.local_name.clone(), imp.module.clone());
+                        if name.name != name.local_name {
+                            self.import_alias_map.insert(name.local_name.clone(), name.name.clone());
+                        }
+                        // Register stdlib proc params
+                        if stdlib::is_stdlib_module(&imp.module) && !stdlib::is_native_stdlib(&imp.module) {
+                            if let Some(params) = stdlib::get_stdlib_proc_params(&imp.module, &name.name) {
+                                let info: Vec<ParamCodegenInfo> = params.into_iter().map(|(pname, is_var, is_char, is_open_array)| {
+                                    ParamCodegenInfo { name: pname, is_var, is_char, is_open_array }
+                                }).collect();
+                                let prefixed = format!("{}_{}", imp.module, name.name);
+                                self.proc_params.insert(prefixed, info.clone());
+                                self.proc_params.insert(name.local_name.clone(), info);
+                            }
+                        }
+                        // Enum variant import
+                        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&imp.module) {
+                            if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, &name.name) {
+                                let resolved = self.resolve_hir_alias(sym.typ);
+                                if let crate::types::Type::Enumeration { variants, .. } = self.sema.types.get(resolved) {
+                                    for v in variants {
+                                        self.import_map.entry(v.clone()).or_insert(imp.module.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // IMPORT Module1, Module2;
+                    for name in &imp.names {
+                        self.imported_modules.insert(name.name.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn build_import_map(&mut self, imports: &[Import]) {
         // Collect enum variant names to add to import_map after the main loop.
         // When importing an enum type, its variant names are implicitly in scope.

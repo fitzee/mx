@@ -607,19 +607,23 @@ impl CodeGen {
         }
 
         // Extract module name and imports, dispatch to gen functions.
+        // Extract module name from AST, build imports from HIR
+        let module_name = match unit {
+            CompilationUnit::ProgramModule(m) => m.name.clone(),
+            CompilationUnit::DefinitionModule(m) => m.name.clone(),
+            CompilationUnit::ImplementationModule(m) => m.name.clone(),
+        };
+        self.module_name = module_name;
         match unit {
-            CompilationUnit::ProgramModule(m) => {
-                self.module_name = m.name.clone();
-                self.build_import_map(&m.imports);
+            CompilationUnit::ProgramModule(_) => {
+                self.build_import_map_from_hir();
                 self.gen_program_module()?
             }
             CompilationUnit::DefinitionModule(m) => {
-                self.module_name = m.name.clone();
                 self.gen_definition_module(m)
             }
-            CompilationUnit::ImplementationModule(m) => {
-                self.module_name = m.name.clone();
-                self.build_import_map(&m.imports);
+            CompilationUnit::ImplementationModule(_) => {
+                self.build_import_map_from_hir();
                 self.gen_implementation_module()?
             }
         }
