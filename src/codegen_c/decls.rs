@@ -1473,21 +1473,21 @@ impl CodeGen {
         // Local declarations from HirProcDecl.locals (TypeId-based)
         let current_module = self.module_name.clone();
         let proc_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
-            // Search main module procs
-            hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
-                .map(|pd| pd.locals.clone())
+            // Search HirProc (legacy, populated by build_proc with correct scope)
+            hir.procedures.iter()
+                .find(|hp| hp.name.source_name == p.heading.name
+                    && hp.name.module.as_deref() == Some(current_module.as_str()))
+                .map(|hp| hp.locals.clone())
                 .or_else(|| {
-                    // Search embedded module procs
-                    hir.embedded_modules.iter()
-                        .find(|e| e.name == current_module)
-                        .and_then(|e| e.procedures.iter()
-                            .find(|pd| pd.sig.name == p.heading.name)
-                            .map(|pd| pd.locals.clone()))
+                    hir.procedures.iter()
+                        .flat_map(|hp| hp.nested_procs.iter())
+                        .find(|np| np.name.source_name == p.heading.name
+                            && np.name.module.as_deref() == Some(current_module.as_str()))
+                        .map(|np| np.locals.clone())
                 })
         });
-        if let Some(locals) = proc_locals {
-            for local in &locals {
+        if let Some(ref locals) = proc_locals {
+            for local in locals {
                 match local {
                     crate::hir::HirLocalDecl::Var { name, type_id } => {
                         let resolved = self.resolve_hir_alias(*type_id);
@@ -1517,7 +1517,7 @@ impl CodeGen {
                 }
             }
         } else {
-            // Fallback: AST
+            // Proc not in hir.procedures (e.g., deeply nested or native stdlib)
             for decl in &other_decls {
                 self.gen_declaration(decl);
             }

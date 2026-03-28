@@ -462,6 +462,58 @@ fn build_proc(
     hb.set_import_alias_map(import_aliases.clone());
     hb.enter_procedure_named(&p.heading.name);
 
+    // Populate local declarations using the proc's scope (correctly set by enter_procedure_named)
+    let proc_locals = {
+        let mut locals = Vec::new();
+        for d in &p.block.decls {
+            match d {
+                Declaration::Var(v) => {
+                    let sym = hb.current_scope
+                        .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &v.names[0]))
+                        .filter(|s| matches!(s.kind, SymbolKind::Variable | SymbolKind::Field));
+                    if let Some(s) = sym {
+                        for name in &v.names {
+                            locals.push(HirLocalDecl::Var { name: name.clone(), type_id: s.typ });
+                        }
+                    }
+                }
+                Declaration::Type(t) => {
+                    let sym = hb.current_scope
+                        .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &t.name));
+                    if let Some(s) = sym {
+                        locals.push(HirLocalDecl::Type { name: t.name.clone(), type_id: s.typ });
+                    }
+                }
+                Declaration::Const(c) => {
+                    let sym = hb.current_scope
+                        .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &c.name));
+                    if let Some(s) = sym {
+                        if let SymbolKind::Constant(cv) = &s.kind {
+                            let val = const_value_to_hir(cv);
+                            locals.push(HirLocalDecl::Const(HirConstDecl {
+                                name: c.name.clone(),
+                                mangled: c.name.clone(),
+                                value: val.clone(),
+                                type_id: s.typ,
+                                exported: false,
+                                c_type: const_val_c_type(&val),
+                            }));
+                        }
+                    }
+                }
+                Declaration::Exception(e) => {
+                    locals.push(HirLocalDecl::Exception {
+                        name: e.name.clone(),
+                        mangled: format!("M2_EXC_{}", e.name),
+                        exc_id: 0,
+                    });
+                }
+                _ => {}
+            }
+        }
+        locals
+    };
+
     // Register open array _high companions
     for fp in &p.heading.params {
         if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
@@ -559,7 +611,7 @@ fn build_proc(
         params,
         return_type: None, // backends use sema
         captures: Vec::new(),
-        locals: Vec::new(),
+        locals: proc_locals,
         body,
         nested_procs: nested,
         is_exported: false,
@@ -643,34 +695,54 @@ fn build_proc_decl(
             let module_scope = sema.symtab.lookup_module_scope(module_name);
             let proc_scope = module_scope.and_then(|msid| {
                 let count = sema.symtab.scope_count();
+                // Direct child of module scope
                 for id in 0..count {
                     if sema.symtab.scope_name(id) == Some(&h.name)
                         && sema.symtab.scope_parent(id) == Some(msid) {
                         return Some(id);
                     }
                 }
+                // Grandchild (module → impl scope → proc scope)
+                for id in 0..count {
+                    if let Some(parent) = sema.symtab.scope_parent(id) {
+                        if sema.symtab.scope_name(id) == Some(&h.name)
+                            && sema.symtab.scope_parent(parent) == Some(msid) {
+                            return Some(id);
+                        }
+                    }
+                }
                 // Fallback: any scope with this name
                 sema.symtab.lookup_module_scope(&h.name)
             });
+            // Look up variables only (not procedures/builtins with same name)
+            let lookup_var = |name: &str| -> Option<&crate::symtab::Symbol> {
+                let result = proc_scope
+                    .and_then(|sid| sema.symtab.lookup_in_scope(sid, name))
+                    .or_else(|| sema.symtab.lookup_in_scope_direct(0, name));
+                // Only return if it's a variable, not a builtin procedure
+                result.filter(|s| matches!(s.kind, SymbolKind::Variable | SymbolKind::Field))
+            };
             let lookup = |name: &str| -> Option<&crate::symtab::Symbol> {
+                // For types/consts, accept any symbol kind
                 proc_scope
-                    .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, name))
-                    .or_else(|| module_scope
-                        .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, name)))
+                    .and_then(|sid| sema.symtab.lookup_in_scope(sid, name))
                     .or_else(|| sema.symtab.lookup_in_scope_direct(0, name))
-                    .or_else(|| sema.symtab.lookup_innermost(name))
             };
             let mut locals = Vec::new();
             for d in block_decls {
                 match d {
                     ast::Declaration::Var(v) => {
-                        let tid = lookup(&v.names[0]).map(|s| s.typ).unwrap_or(TY_INTEGER);
-                        for name in &v.names {
-                            locals.push(HirLocalDecl::Var {
-                                name: name.clone(),
-                                type_id: tid,
-                            });
+                        if let Some(sym) = lookup_var(&v.names[0]) {
+                            let tid = sym.typ;
+                            for name in &v.names {
+                                locals.push(HirLocalDecl::Var {
+                                    name: name.clone(),
+                                    type_id: tid,
+                                });
+                            }
                         }
+                        // If lookup_var fails, the var is not in locals —
+                        // gen_proc_decl will fall back to gen_var_decl (AST)
                     }
                     ast::Declaration::Type(t) => {
                         let tid = lookup(&t.name).map(|s| s.typ).unwrap_or(TY_VOID);
@@ -2849,8 +2921,8 @@ impl<'a> HirBuilder<'a> {
             let _ = name;
         }
 
-        // Lower locals
-        let locals = self.lower_var_decls(&p.block.decls);
+        // Locals (legacy path doesn't populate HirLocalDecl — C backend uses build_proc)
+        let locals: Vec<HirLocalDecl> = Vec::new();
 
         // Lower nested procs
         let nested_procs = self.lower_proc_decls(&p.block.decls);

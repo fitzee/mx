@@ -578,7 +578,7 @@ pub struct HirProc {
     pub params: Vec<HirParam>,
     pub return_type: Option<TypeId>,
     pub captures: Vec<CapturedVar>,
-    pub locals: Vec<HirVar>,
+    pub locals: Vec<HirLocalDecl>,
     pub body: Option<Vec<HirStmt>>,
     pub nested_procs: Vec<HirProc>,
     pub is_exported: bool,

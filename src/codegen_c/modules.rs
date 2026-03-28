@@ -751,11 +751,17 @@ impl CodeGen {
                 self.named_array_value_params.push(na_params);
                 self.parent_proc_stack.push(p.heading.name.clone());
 
-                // Local declarations — emit const/type/var from HirProcDecl.locals,
-                // proc/module via gen_declaration
-                if let Some(ref emb) = hir_emb {
-                    if let Some(pd) = emb.procedures.iter().find(|pd| pd.sig.name == p.heading.name) {
-                        for local in &pd.locals {
+                // Local declarations from HirProc.locals (populated by build_proc with correct scope)
+                {
+                    let mod_name = self.module_name.clone();
+                    let proc_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
+                        hir.procedures.iter()
+                            .find(|hp| hp.name.source_name == p.heading.name
+                                && hp.name.module.as_deref() == Some(mod_name.as_str()))
+                            .map(|hp| hp.locals.clone())
+                    });
+                    if let Some(ref locals) = proc_locals {
+                        for local in locals {
                             match local {
                                 crate::hir::HirLocalDecl::Var { name, type_id } => {
                                     let resolved = self.resolve_hir_alias(*type_id);
@@ -767,8 +773,9 @@ impl CodeGen {
                                         self.emit(&format!("{};\n", d));
                                     } else {
                                         let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
+                                        let c_name = self.mangle(name);
                                         self.emit_indent();
-                                        self.emit(&format!("{} {}{};\n", ctype, name, arr_suffix));
+                                        self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
                                     }
                                 }
                                 crate::hir::HirLocalDecl::Type { name, type_id } => {
@@ -781,6 +788,17 @@ impl CodeGen {
                                     self.exception_names.insert(name.clone());
                                     self.emitln(&format!("#define {} {}", mangled, exc_id));
                                 }
+                            }
+                        }
+                    } else {
+                        // No HirProc (native stdlib or forward-only): emit via AST
+                        for d in &p.block.decls {
+                            match d {
+                                Declaration::Var(_) | Declaration::Const(_)
+                                | Declaration::Type(_) | Declaration::Exception(_) => {
+                                    self.gen_declaration(d);
+                                }
+                                _ => {}
                             }
                         }
                     }
