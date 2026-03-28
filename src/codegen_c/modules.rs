@@ -453,8 +453,6 @@ impl CodeGen {
                     self.emitln(&format!("typedef struct {} {};", cn, cn));
                 }
             }
-        } else {
-            self.emit_record_forward_decls(&imp.block.decls);
         }
 
         // Emit type and const declarations from the corresponding definition module,
@@ -535,8 +533,6 @@ impl CodeGen {
                 self.exception_names.insert(e.name.clone());
                 self.emitln(&format!("#define {} {}", e.mangled, e.exc_id));
             }
-        } else {
-            self.emit_type_const_exception_decls(&imp.block.decls);
         }
         self.generating_for_module = None;
 
@@ -595,16 +591,7 @@ impl CodeGen {
                 }
                 self.emit(");\n");
             }
-        } else {
-            for decl in &imp.block.decls {
-                if let Declaration::Procedure(p) = decl {
-                    self.register_proc_params(&p.heading);
-                    self.gen_proc_prototype(&p.heading);
-                    self.emit(";\n");
-                }
-            }
         }
-
         // In multi-TU mode, emit extern declarations for exported vars and init function.
         // This allows other TUs (including main) to reference these symbols.
         if self.multi_tu {
@@ -665,12 +652,6 @@ impl CodeGen {
         if let Some(ref emb) = hir_emb {
             for g in &emb.global_decls {
                 self.gen_hir_global_decl(g);
-            }
-        } else {
-            for decl in &imp.block.decls {
-                if let Declaration::Var(v) = decl {
-                    self.gen_var_decl(v);
-                }
             }
         }
 
@@ -1192,28 +1173,6 @@ impl CodeGen {
         Ok(())
     }
 
-    /// Emit forward struct declarations for all record types in a declaration list.
-    /// Uses type_decl_c_name, which automatically handles module prefixing for
-    /// embedded modules (via generating_for_module).
-    pub(crate) fn emit_record_forward_decls(&mut self, decls: &[Declaration]) {
-        for decl in decls {
-            if let Declaration::Type(t) = decl {
-                let cn = self.type_decl_c_name(&t.name);
-                match &t.typ {
-                    Some(TypeNode::Record { .. }) => {
-                        self.emitln(&format!("typedef struct {} {};", cn, cn));
-                    }
-                    Some(TypeNode::Pointer { base, .. }) if matches!(&**base, TypeNode::Record { .. }) => {
-                        let tag = format!("{}_r", cn);
-                        self.emitln(&format!("typedef struct {} {};", tag, tag));
-                        self.emitln(&format!("typedef {} *{};", tag, cn));
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
     /// Emit forward declarations for procedures from prebuilt HirModule.
     pub(crate) fn emit_hir_forward_decls(&mut self) {
         let procs = if let Some(ref hir) = self.prebuilt_hir {
@@ -1280,19 +1239,6 @@ impl CodeGen {
         };
         for g in &globals {
             self.gen_hir_global_decl(g);
-        }
-    }
-
-    /// Emit type, const, and exception declarations from a declaration list.
-    /// Used by embedded implementation gen which also handles exceptions inline.
-    pub(crate) fn emit_type_const_exception_decls(&mut self, decls: &[Declaration]) {
-        for decl in decls {
-            match decl {
-                Declaration::Const(c) => self.gen_const_decl(c),
-                Declaration::Type(t) => self.gen_type_decl(t),
-                Declaration::Exception(e) => self.gen_exception_decl(e),
-                _ => {}
-            }
         }
     }
 
