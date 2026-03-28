@@ -860,9 +860,9 @@ impl CodeGen {
     /// Emit extern declarations for all foreign (C ABI) definition modules.
     pub(crate) fn gen_foreign_extern_decls(&mut self) {
         const STDLIB_C_HELPERS: &[&str] = &["CStr", "CIO", "CMem", "CMath", "CRand"];
-        let foreign_names: Vec<String> = self.foreign_def_modules.iter()
-            .filter(|d| !STDLIB_C_HELPERS.contains(&d.name.as_str()))
-            .map(|d| d.name.clone())
+        let foreign_names: Vec<String> = self.foreign_modules.iter()
+            .filter(|n| !STDLIB_C_HELPERS.contains(&n.as_str()))
+            .cloned()
             .collect();
         for mod_name in &foreign_names {
             self.emitln(&format!("/* Foreign C bindings: {} */", mod_name));

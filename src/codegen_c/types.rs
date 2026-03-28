@@ -13,12 +13,12 @@ impl CodeGen {
             if self.embedded_enum_types.contains(&prefixed) {
                 return prefixed;
             }
-            // Check if this module re-exports the type from another module
-            if let Some(def_mod) = self.def_modules.get(module.as_str()) {
-                for imp in &def_mod.imports {
-                    if let Some(ref from_mod) = imp.from_module {
-                        if imp.names.iter().any(|n| n.name == qi.name) {
-                            let source_prefixed = format!("{}_{}", from_mod, self.mangle(&qi.name));
+            // Check if this module re-exports the type from another module via sema
+            if let Some(scope_id) = self.sema.symtab.lookup_module_scope(module) {
+                if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, &qi.name) {
+                    if let Some(ref src_mod) = sym.module {
+                        if src_mod != module {
+                            let source_prefixed = format!("{}_{}", src_mod, self.mangle(&qi.name));
                             if self.embedded_enum_types.contains(&source_prefixed) {
                                 return source_prefixed;
                             }

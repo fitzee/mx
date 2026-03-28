@@ -236,7 +236,7 @@ impl CodeGen {
         } else {
             std::collections::HashSet::new()
         };
-        if let Some(def_mod) = self.def_modules.get(&mod_name).cloned() {
+        if self.def_module_names.contains(&mod_name) {
             // Forward struct declarations from the definition module via sema types
             let def_scope = self.sema.symtab.lookup_module_scope(&mod_name);
             let def_types: Vec<(String, crate::types::TypeId)> = def_scope.map(|scope_id| {
