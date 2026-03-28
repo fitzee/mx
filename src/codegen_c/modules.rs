@@ -1083,10 +1083,23 @@ impl CodeGen {
                         self.emitln(&format!("/* Definition-only module {} */", mod_name));
                         self.generating_for_module = Some(mod_name.clone());
 
-                        // Build import scope from sema
+                        // Build import scope from stored module imports
                         self.import_map.clear();
                         self.import_alias_map.clear();
-                        // Imports for def-only modules resolved via sema scope (no AST needed)
+                        if let Some(imports) = self.module_imports.get(mod_name).cloned() {
+                            for hi in &imports {
+                                if !hi.is_qualified && !hi.module.is_empty() {
+                                    self.imported_modules.insert(hi.module.clone());
+                                    for name in &hi.names {
+                                        self.import_map.insert(name.local_name.clone(), hi.module.clone());
+                                    }
+                                } else {
+                                    for name in &hi.names {
+                                        self.imported_modules.insert(name.name.clone());
+                                    }
+                                }
+                            }
+                        }
 
                         // Pre-register type names, forward-declare records, emit types+consts from sema scope
                         let donly_scope = self.sema.symtab.lookup_module_scope(mod_name);
