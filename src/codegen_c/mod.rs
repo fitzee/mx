@@ -54,6 +54,7 @@ pub(crate) struct EmbeddedModuleContext {
     pub(crate) named_array_value_params: Vec<HashSet<String>>,
     pub(crate) proc_params: HashMap<String, Vec<ParamCodegenInfo>>,
     pub(crate) var_tracking: VarTrackingScope,
+    pub(crate) typeid_c_names: HashMap<TypeId, String>,
 }
 
 pub struct CodeGen {
@@ -173,6 +174,8 @@ pub struct CodeGen {
     embedded_local_vars: HashSet<String>,
     /// All known type names (bare + module-prefixed) for type cast recognition
     known_type_names: HashSet<String>,
+    /// TypeId → C typedef name mapping (populated from HirModule type_decls)
+    pub(crate) typeid_c_names: HashMap<TypeId, String>,
     /// Type names that are aliases for unsigned types (CARDINAL, LONGCARD)
     unsigned_type_aliases: HashSet<String>,
     /// Maps record field names → proc param info for fields with procedure types.
@@ -314,6 +317,7 @@ impl CodeGen {
             embedded_local_procs: HashSet::new(),
             embedded_local_vars: HashSet::new(),
             known_type_names: HashSet::new(),
+            typeid_c_names: HashMap::new(),
             unsigned_type_aliases: HashSet::new(),
             field_proc_params: HashMap::new(),
             type_id_counter: 0,
@@ -475,12 +479,71 @@ impl CodeGen {
         self.sema = sema;
     }
 
+    /// Populate the TypeId → C type name mapping from prebuilt HirModule.
+    /// Must be called after prebuilt_hir is set.
+    pub fn populate_typeid_c_names(&mut self) {
+        let mut entries = Vec::new();
+        if let Some(ref hir) = self.prebuilt_hir {
+            // Main module types
+            for td in &hir.type_decls {
+                // Skip builtins (0..19) and TY_VOID — don't override canonical names
+                if td.type_id >= 20 {
+                    entries.push((td.type_id, td.mangled.clone()));
+                }
+            }
+            // Embedded module types — scoped lookup per module
+            for emb in &hir.embedded_modules {
+                let scope_id = self.sema.symtab.lookup_module_scope(&emb.name);
+                for td in &emb.type_decls {
+                    // Only register non-structural types (records, enums, arrays, aliases)
+                    // Skip pointers/sets/subranges — they resolve structurally and can
+                    // conflict across modules when typedef'd with different names.
+                    // Skip structural types that can conflict across modules
+                    let resolved = {
+                        let mut id = td.type_id;
+                        for _ in 0..50 {
+                            match self.sema.types.get(id) {
+                                crate::types::Type::Alias { target, .. } => id = *target,
+                                _ => break,
+                            }
+                        }
+                        id
+                    };
+                    let is_structural = matches!(self.sema.types.get(resolved),
+                        crate::types::Type::Pointer { .. }
+                        | crate::types::Type::Set { .. }
+                        | crate::types::Type::Subrange { .. });
+                    if is_structural { continue; }
+
+                    // Use scoped lookup for correct TypeId
+                    let type_id = scope_id
+                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &td.name))
+                        .map(|s| s.typ)
+                        .unwrap_or(td.type_id);
+                    if type_id != crate::types::TY_VOID {
+                        entries.push((type_id, td.mangled.clone()));
+                    }
+                }
+            }
+        }
+        for (tid, name) in entries {
+            self.typeid_c_names.insert(tid, name);
+        }
+    }
+
     /// Register .def metadata without running sema (sema already populated by driver).
     pub fn register_def_module_no_sema(&mut self, def: &crate::ast::DefinitionModule) {
         for d in &def.definitions {
             if let Definition::Type(td) = d {
                 self.known_type_names.insert(td.name.clone());
-                self.known_type_names.insert(format!("{}_{}", def.name, td.name));
+                let prefixed = format!("{}_{}", def.name, td.name);
+                self.known_type_names.insert(prefixed.clone());
+                // Register TypeId → C name from def module scope
+                if let Some(scope_id) = self.sema.symtab.lookup_module_scope(&def.name) {
+                    if let Some(sym) = self.sema.symtab.lookup_in_scope(scope_id, &td.name) {
+                        self.typeid_c_names.insert(sym.typ, prefixed);
+                    }
+                }
             }
         }
         if def.foreign_lang.is_none() {

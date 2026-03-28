@@ -342,29 +342,210 @@ pub struct HirTypeCaseBranch {
 /// Top-level HIR module — the complete lowered representation of a
 /// compilation unit. Both backends consume `&HirModule` and never
 /// need to touch the AST directly.
+// ── Module container ─────────────────────────────────────────────────
+
 #[derive(Debug, Clone)]
 pub struct HirModule {
     pub name: String,
     pub source_file: String,
-    /// Interned string pool. Backends emit these as global constants.
+    /// Interned string pool.
     pub string_pool: Vec<String>,
+
+    // ── Structural declarations (emitted in source order) ───────
+    /// Import metadata for extern/include generation.
+    pub imports: Vec<HirImport>,
+    /// Type declarations in source order.
+    pub type_decls: Vec<HirTypeDecl>,
     /// Module-level constants.
-    pub constants: Vec<HirConst>,
-    /// Module-level type declarations (name → TypeId).
-    pub types: Vec<HirTypeDecl>,
-    /// Module-level variables.
-    pub globals: Vec<HirVar>,
-    /// Procedures (including nested, already lifted).
+    pub const_decls: Vec<HirConstDecl>,
+    /// Module-level global variables.
+    pub global_decls: Vec<HirGlobalDecl>,
+    /// Exception declarations (M2+).
+    pub exception_decls: Vec<HirExceptionDecl>,
+    /// RTTI type descriptors for REF/OBJECT (M2+).
+    pub type_descs: Vec<HirTypeDesc>,
+
+    // ── Procedures ────────────────────────────────────────────────
+    /// All procedures (legacy format, being migrated to HirProcDecl).
     pub procedures: Vec<HirProc>,
-    /// Module initialization body (the main block's statements).
+    /// Procedure declarations with full signatures (new format).
+    pub proc_decls: Vec<HirProcDecl>,
+
+    // ── Init bodies ─────────────────────────────────────────────
+    /// Main module BEGIN...END body.
     pub init_body: Option<Vec<HirStmt>>,
-    /// Embedded module init bodies (module_name → lowered statements).
+    /// Embedded module init bodies.
     pub embedded_init_bodies: Vec<(String, Vec<HirStmt>)>,
-    /// External declarations from imported modules.
+    /// ISO module-level EXCEPT handler (rare).
+    pub except_handler: Option<Vec<HirStmt>>,
+    /// ISO module-level FINALLY handler (rare).
+    pub finally_handler: Option<Vec<HirStmt>>,
+
+    // ── Embedded modules ────────────────────────────────────────
+    /// Per-embedded-module structural declarations.
+    pub embedded_modules: Vec<HirEmbeddedModule>,
+
+    // ── Legacy fields (deprecated, being removed) ───────────────
+    #[deprecated(note = "use const_decls")]
+    pub constants: Vec<HirConst>,
+    #[deprecated(note = "use type_decls")]
+    pub types: Vec<HirTypeDecl>,
+    #[deprecated(note = "use global_decls")]
+    pub globals: Vec<HirVar>,
     pub externals: Vec<HirExternal>,
 }
 
-/// A module-level constant.
+// ── Import metadata ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct HirImport {
+    pub module: String,
+    pub names: Vec<HirImportName>,
+    /// true = IMPORT Module; false = FROM Module IMPORT ...
+    pub is_qualified: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct HirImportName {
+    /// Original exported name (e.g., "WriteString").
+    pub name: String,
+    /// Local alias (e.g., "WS" from "WriteString AS WS"). Same as name if no AS.
+    pub local_name: String,
+}
+
+// ── Structural declarations ─────────────────────────────────────────
+
+/// Type declaration — backends query sema TypeRegistry for structure.
+#[derive(Debug, Clone)]
+pub struct HirTypeDecl {
+    pub name: String,
+    pub mangled: String,
+    /// Canonical sema TypeId.
+    pub type_id: TypeId,
+    pub exported: bool,
+}
+
+impl HirTypeDecl {
+    /// Legacy accessor.
+    pub fn ty(&self) -> TypeId { self.type_id }
+}
+
+/// Constant declaration — value is self-contained.
+#[derive(Debug, Clone)]
+pub struct HirConstDecl {
+    pub name: String,
+    pub mangled: String,
+    pub value: ConstVal,
+    pub type_id: TypeId,
+    pub exported: bool,
+    /// C type string (precomputed).
+    pub c_type: String,
+}
+
+/// Global variable declaration.
+#[derive(Debug, Clone)]
+pub struct HirGlobalDecl {
+    pub name: String,
+    pub mangled: String,
+    pub type_id: TypeId,
+    pub exported: bool,
+    /// C type string (precomputed, e.g., "int32_t").
+    pub c_type: String,
+    /// C array suffix (precomputed, e.g., "[256]").
+    pub c_array_suffix: String,
+    /// True if this is a procedure-typed variable.
+    pub is_proc_type: bool,
+}
+
+/// Exception declaration (M2+).
+#[derive(Debug, Clone)]
+pub struct HirExceptionDecl {
+    pub name: String,
+    pub mangled: String,
+    pub exc_id: i64,
+}
+
+/// RTTI type descriptor for REF/OBJECT (M2+).
+#[derive(Debug, Clone)]
+pub struct HirTypeDesc {
+    pub type_name: String,
+    pub mangled_td: String,
+    pub parent: Option<String>,
+    pub rtti_id: u32,
+}
+
+// ── Procedure declarations ──────────────────────────────────────────
+
+/// Complete procedure declaration: signature + body + locals.
+#[derive(Debug, Clone)]
+pub struct HirProcDecl {
+    pub sig: HirProcSig,
+    pub body: Option<Vec<HirStmt>>,
+    pub locals: Vec<HirLocalDecl>,
+    pub nested_procs: Vec<HirProcDecl>,
+    pub closure_captures: Vec<CapturedVar>,
+    pub except_handler: Option<Vec<HirStmt>>,
+    pub loc: crate::errors::SourceLoc,
+}
+
+/// Procedure signature — everything needed for prototype emission.
+#[derive(Debug, Clone)]
+pub struct HirProcSig {
+    pub name: String,
+    pub mangled: String,
+    pub module: String,
+    pub params: Vec<HirParamDecl>,
+    pub return_type: Option<TypeId>,
+    pub exported: bool,
+    pub is_foreign: bool,
+    pub export_c_name: Option<String>,
+    pub is_nested: bool,
+    pub parent_proc: Option<String>,
+    pub has_closure_env: bool,
+}
+
+/// Parameter declaration for procedure prototypes.
+#[derive(Debug, Clone)]
+pub struct HirParamDecl {
+    pub name: String,
+    pub type_id: TypeId,
+    pub is_var: bool,
+    pub is_open_array: bool,
+    pub is_proc_type: bool,
+    pub is_char: bool,
+    /// True → emit _high companion in C prototype.
+    pub needs_high: bool,
+}
+
+/// Local variable declaration inside a procedure.
+#[derive(Debug, Clone)]
+pub struct HirLocalDecl {
+    pub name: String,
+    pub type_id: TypeId,
+    pub c_type: String,
+    pub c_array_suffix: String,
+    pub is_proc_type: bool,
+}
+
+// ── Embedded module ─────────────────────────────────────────────────
+
+/// Structural declarations for one embedded implementation module.
+#[derive(Debug, Clone)]
+pub struct HirEmbeddedModule {
+    pub name: String,
+    pub is_foreign: bool,
+    pub imports: Vec<HirImport>,
+    pub type_decls: Vec<HirTypeDecl>,
+    pub const_decls: Vec<HirConstDecl>,
+    pub global_decls: Vec<HirGlobalDecl>,
+    pub exception_decls: Vec<HirExceptionDecl>,
+    pub procedures: Vec<HirProcDecl>,
+    pub init_body: Option<Vec<HirStmt>>,
+}
+
+// ── Legacy types (backward compat during migration) ─────────────────
+
+/// Legacy constant type — use HirConstDecl instead.
 #[derive(Debug, Clone)]
 pub struct HirConst {
     pub name: SymbolId,
@@ -372,15 +553,7 @@ pub struct HirConst {
     pub ty: TypeId,
 }
 
-/// A module-level type declaration.
-#[derive(Debug, Clone)]
-pub struct HirTypeDecl {
-    pub name: String,
-    pub ty: TypeId,
-    pub exported: bool,
-}
-
-/// A module-level variable.
+/// Legacy variable type — use HirGlobalDecl instead.
 #[derive(Debug, Clone)]
 pub struct HirVar {
     pub name: SymbolId,
@@ -388,7 +561,7 @@ pub struct HirVar {
     pub exported: bool,
 }
 
-/// A procedure in the HIR.
+/// Legacy procedure type — use HirProcDecl instead.
 #[derive(Debug, Clone)]
 pub struct HirProc {
     pub name: SymbolId,
@@ -401,7 +574,7 @@ pub struct HirProc {
     pub is_exported: bool,
 }
 
-/// A procedure parameter.
+/// Legacy parameter type — use HirParamDecl instead.
 #[derive(Debug, Clone)]
 pub struct HirParam {
     pub name: String,

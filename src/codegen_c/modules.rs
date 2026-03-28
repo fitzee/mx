@@ -13,25 +13,35 @@ impl CodeGen {
         self.emitln(&format!("/* Module {} */", m.name));
         self.newline();
 
-        self.emit_record_forward_decls(&m.block.decls);
-        self.emit_type_and_const_decls(&m.block.decls);
+        // Structural declarations from prebuilt HIR
+        self.emit_hir_record_forward_decls();
+        self.emit_hir_type_decls();
+        self.emit_hir_const_decls();
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
             self.emit_type_descs();
         }
 
-        // Forward declarations for procedures
-        self.gen_forward_decls(&m.block.decls);
-        self.newline();
-
-        // Pass 1: Emit all Var declarations first (procedures may reference them)
+        // Forward declarations for procedures from HIR
+        self.emit_hir_forward_decls();
+        // Also forward-declare procs from nested local modules (still AST-driven)
         for decl in &m.block.decls {
-            if let Declaration::Var(v) = decl {
-                self.gen_var_decl(v);
+            if let Declaration::Module(local_mod) = decl {
+                for d in &local_mod.block.decls {
+                    if let Declaration::Procedure(p) = d {
+                        self.register_proc_params(&p.heading);
+                        self.gen_proc_prototype(&p.heading);
+                        self.emit(";\n");
+                    }
+                }
             }
         }
-        // Also emit vars from nested modules
+        self.newline();
+
+        // Pass 1: Emit global variable declarations from HIR
+        self.emit_hir_global_decls();
+        // Also emit vars from nested local modules (still AST-driven)
         for decl in &m.block.decls {
             if let Declaration::Module(local_mod) = decl {
                 for d in &local_mod.block.decls {
@@ -49,25 +59,23 @@ impl CodeGen {
             }
         }
 
-        // ISO Modula-2: generate FINALLY handler if present
-        if let Some(finally_stmts) = &m.block.finally {
+        // ISO Modula-2: generate FINALLY handler from prebuilt HIR
+        let finally_body = self.prebuilt_hir.as_ref().and_then(|h| h.finally_handler.clone());
+        if let Some(stmts) = finally_body {
             self.emitln("static void m2_finally_handler(void) {");
             self.indent += 1;
-            let mut hb = self.make_hir_builder();
-            let hir_stmts = hb.lower_stmts(finally_stmts);
-            for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
+            for stmt in &stmts { self.emit_hir_stmt(stmt); }
             self.indent -= 1;
             self.emitln("}");
             self.newline();
         }
 
-        // ISO Modula-2: generate EXCEPT handler if present
-        if let Some(except_stmts) = &m.block.except {
+        // ISO Modula-2: generate EXCEPT handler from prebuilt HIR
+        let except_body = self.prebuilt_hir.as_ref().and_then(|h| h.except_handler.clone());
+        if let Some(stmts) = except_body {
             self.emitln("static void m2_except_handler(void) {");
             self.indent += 1;
-            let mut hb = self.make_hir_builder();
-            let hir_stmts = hb.lower_stmts(except_stmts);
-            for stmt in &hir_stmts { self.emit_hir_stmt(stmt); }
+            for stmt in &stmts { self.emit_hir_stmt(stmt); }
             self.indent -= 1;
             self.emitln("}");
             self.newline();
@@ -228,23 +236,21 @@ impl CodeGen {
             }
         }
 
-        self.emit_record_forward_decls(&m.block.decls);
-        self.emit_type_and_const_decls(&m.block.decls);
+        // Structural declarations from prebuilt HIR
+        self.emit_hir_record_forward_decls();
+        self.emit_hir_type_decls();
+        self.emit_hir_const_decls();
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
             self.emit_type_descs();
         }
 
-        self.gen_forward_decls(&m.block.decls);
+        self.emit_hir_forward_decls();
         self.newline();
 
-        // Pass 1: Emit Var declarations first
-        for decl in &m.block.decls {
-            if let Declaration::Var(v) = decl {
-                self.gen_var_decl(v);
-            }
-        }
+        // Pass 1: Emit global variable declarations from HIR
+        self.emit_hir_global_decls();
         // Pass 2: Emit Procedures and Modules (skip Var/Const/Type)
         for decl in &m.block.decls {
             match decl {
@@ -281,38 +287,53 @@ impl CodeGen {
     pub(crate) fn gen_embedded_implementation(&mut self, imp: &ImplementationModule) {
         let ctx = self.save_embedded_context();
 
+        // Look up the HirEmbeddedModule for this implementation module
+        let hir_emb = self.prebuilt_hir.as_ref().and_then(|hir| {
+            hir.embedded_modules.iter().find(|e| e.name == imp.name).cloned()
+        });
+
         self.module_name = imp.name.clone();
-        // Each module has its own import scope — start clean to avoid
-        // stale entries from previously-processed embedded modules leaking
-        // enum variant mappings (e.g., "Invalid" → wrong source module).
         self.import_map.clear();
         self.import_alias_map.clear();
-        // Build import map from the def module's imports first (e.g., FROM Gfx IMPORT Renderer),
-        // then overlay with the implementation module's imports.
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
             self.build_import_map(&def_mod.imports);
         }
         self.build_import_map(&imp.imports);
 
-        // Track local procedure and variable names so intra-module refs get module-prefixed
+        // Track local procedure and variable names from HIR
         self.embedded_local_procs.clear();
         self.embedded_local_vars.clear();
-        for decl in &imp.block.decls {
-            match decl {
-                Declaration::Procedure(p) => {
-                    if p.heading.export_c_name.is_none() {
-                        self.embedded_local_procs.insert(p.heading.name.clone());
+        if let Some(ref emb) = hir_emb {
+            for pd in &emb.procedures {
+                if pd.sig.export_c_name.is_none() {
+                    self.embedded_local_procs.insert(pd.sig.name.clone());
+                }
+            }
+            for g in &emb.global_decls {
+                self.embedded_local_vars.insert(g.name.clone());
+            }
+            for c in &emb.const_decls {
+                self.embedded_local_vars.insert(c.name.clone());
+            }
+        } else {
+            // Fallback to AST if no HIR available
+            for decl in &imp.block.decls {
+                match decl {
+                    Declaration::Procedure(p) => {
+                        if p.heading.export_c_name.is_none() {
+                            self.embedded_local_procs.insert(p.heading.name.clone());
+                        }
                     }
-                }
-                Declaration::Var(v) => {
-                    for name in &v.names {
-                        self.embedded_local_vars.insert(name.clone());
+                    Declaration::Var(v) => {
+                        for name in &v.names {
+                            self.embedded_local_vars.insert(name.clone());
+                        }
                     }
+                    Declaration::Const(c) => {
+                        self.embedded_local_vars.insert(c.name.clone());
+                    }
+                    _ => {}
                 }
-                Declaration::Const(c) => {
-                    self.embedded_local_vars.insert(c.name.clone());
-                }
-                _ => {}
             }
         }
 
@@ -337,21 +358,24 @@ impl CodeGen {
                 }
             }
         }
-        for decl in &imp.block.decls {
-            if let Declaration::Type(t) = decl {
-                let prefixed = format!("{}_{}", imp.name, self.mangle(&t.name));
+        if let Some(ref emb) = hir_emb {
+            for td in &emb.type_decls {
+                let prefixed = format!("{}_{}", imp.name, self.mangle(&td.name));
                 self.embedded_enum_types.insert(prefixed);
             }
         }
 
         // Forward declare all record types as structs (to allow pointer-to-struct typedefs)
-        // Must come before any struct definitions so that type references resolve.
 
         // From the definition module:
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            let impl_type_names: HashSet<String> = imp.block.decls.iter()
-                .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-                .collect();
+            let impl_type_names: HashSet<String> = if let Some(ref emb) = hir_emb {
+                emb.type_decls.iter().map(|td| td.name.clone()).collect()
+            } else {
+                imp.block.decls.iter()
+                    .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
+                    .collect()
+            };
             for d in &def_mod.definitions {
                 if let Definition::Type(t) = d {
                     if !impl_type_names.contains(&t.name) {
@@ -363,8 +387,21 @@ impl CodeGen {
                 }
             }
         }
-        // From the implementation block:
-        self.emit_record_forward_decls(&imp.block.decls);
+        // From the implementation block — record forward decls via TypeId
+        // Only emit for direct Record types. Pointer-to-Record with inline
+        // record body is handled by gen_type_decl; pointer-to-named-record
+        // uses the named record's own forward decl.
+        if let Some(ref emb) = hir_emb {
+            for td in &emb.type_decls {
+                let resolved = self.resolve_hir_alias(td.type_id);
+                if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
+                    let cn = self.type_decl_c_name(&td.name);
+                    self.emitln(&format!("typedef struct {} {};", cn, cn));
+                }
+            }
+        } else {
+            self.emit_record_forward_decls(&imp.block.decls);
+        }
 
         // Emit type and const declarations from the corresponding definition module,
         // but skip types that are redefined in the implementation module.
@@ -383,9 +420,13 @@ impl CodeGen {
                     _ => {}
                 }
             }
-            let impl_type_names: HashSet<String> = imp.block.decls.iter()
-                .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
-                .collect();
+            let impl_type_names: HashSet<String> = if let Some(ref emb) = hir_emb {
+                emb.type_decls.iter().map(|td| td.name.clone()).collect()
+            } else {
+                imp.block.decls.iter()
+                    .filter_map(|d| if let Declaration::Type(t) = d { Some(t.name.clone()) } else { None })
+                    .collect()
+            };
             for d in &def_mod.definitions {
                 match d {
                     Definition::Type(t) => {
@@ -400,7 +441,9 @@ impl CodeGen {
             }
         }
 
-        // Type, const, and exception declarations
+        // Type, const, and exception declarations from impl block
+        // Still AST-driven — gen_const_decl needs try_eval_const_int + const_int_values
+        // registration for array bounds, and gen_type_decl needs full AST context.
         self.emit_type_const_exception_decls(&imp.block.decls);
         self.generating_for_module = None;
 
@@ -409,54 +452,63 @@ impl CodeGen {
             self.emit_type_descs();
         }
 
-        // Forward declarations for procedures (with module prefix)
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                self.register_proc_params(&p.heading);
-                // Register param info under module-prefixed name too
-                let prefixed_name = format!("{}_{}", imp.name, p.heading.name);
-                if let Some(info) = self.proc_params.get(&p.heading.name).cloned() {
+        // Forward declarations for procedures (with module prefix) from HIR
+        if let Some(ref emb) = hir_emb {
+            for pd in &emb.procedures {
+                self.register_hir_proc_params(&pd.sig);
+                let prefixed_name = format!("{}_{}", imp.name, pd.sig.name);
+                if let Some(info) = self.proc_params.get(&pd.sig.name).cloned() {
                     self.proc_params.insert(prefixed_name, info);
                 }
-                self.emit_indent();
-                let ret_type = if let Some(rt) = &p.heading.return_type {
-                    self.type_to_c(rt)
-                } else {
-                    "void".to_string()
+                // Emit embedded module prototype via TypeId resolver
+                let ret_type = match pd.sig.return_type {
+                    Some(rt) => self.type_id_to_c(rt),
+                    None => "void".to_string(),
                 };
-                if let Some(ref ecn) = p.heading.export_c_name {
-                    self.emit(&format!("{} {}", ret_type, ecn));
-                } else if self.multi_tu {
-                    self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
+                let static_prefix = if pd.sig.export_c_name.is_some() || self.multi_tu { "" } else { "static " };
+                let c_name = if let Some(ref ecn) = pd.sig.export_c_name {
+                    ecn.clone()
                 } else {
-                    self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
-                }
-                self.emit("(");
-                if p.heading.params.is_empty() {
+                    format!("{}_{}", imp.name, pd.sig.name)
+                };
+                self.emit_indent();
+                self.emit(&format!("{}{} {}(", static_prefix, ret_type, c_name));
+                if pd.sig.params.is_empty() {
                     self.emit("void");
                 } else {
                     let mut first = true;
-                    for fp in &p.heading.params {
-                        let ctype = self.type_to_c(&fp.typ);
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        for name in &fp.names {
-                            if !first { self.emit(", "); }
-                            first = false;
-                            let c_param = self.mangle(name);
-                            if is_open_array {
-                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                            } else if Self::is_proc_type(&fp.typ) {
-                                let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
-                                self.emit(&decl);
-                            } else if fp.is_var {
-                                self.emit(&format!("{} *{}", ctype, c_param));
+                    for p in &pd.sig.params {
+                        if !first { self.emit(", "); }
+                        first = false;
+                        let c_param = self.mangle(&p.name);
+                        let resolved_tid = self.resolve_hir_alias(p.type_id);
+                        let is_proc = p.is_proc_type
+                            || matches!(self.sema.types.get(resolved_tid), crate::types::Type::ProcedureType { .. });
+                        if p.is_open_array {
+                            let c_type = self.type_id_to_c(p.type_id);
+                            self.emit(&format!("{} *{}, uint32_t {}_high", c_type, c_param, c_param));
+                        } else if is_proc {
+                            let decl = self.proc_type_decl_from_id(p.type_id, &c_param, p.is_var);
+                            self.emit(&decl);
+                        } else {
+                            let c_type = self.type_id_to_c(p.type_id);
+                            if p.is_var {
+                                self.emit(&format!("{} *{}", c_type, c_param));
                             } else {
-                                self.emit(&format!("{} {}", ctype, c_param));
+                                self.emit(&format!("{} {}", c_type, c_param));
                             }
                         }
                     }
                 }
                 self.emit(");\n");
+            }
+        } else {
+            for decl in &imp.block.decls {
+                if let Declaration::Procedure(p) = decl {
+                    self.register_proc_params(&p.heading);
+                    self.gen_proc_prototype(&p.heading);
+                    self.emit(";\n");
+                }
             }
         }
 
@@ -496,55 +548,99 @@ impl CodeGen {
             }
         }
 
-        // Variable declarations from implementation module
-        for decl in &imp.block.decls {
-            if let Declaration::Var(v) = decl {
-                self.gen_var_decl(v);
+        // Variable declarations from implementation module via HIR
+        if let Some(ref emb) = hir_emb {
+            for g in &emb.global_decls {
+                self.gen_hir_global_decl(g);
+            }
+        } else {
+            for decl in &imp.block.decls {
+                if let Declaration::Var(v) = decl {
+                    self.gen_var_decl(v);
+                }
             }
         }
 
-        // Procedure bodies (with module prefix)
+        // Procedure bodies (with module prefix) — prototype via TypeId to match forward decl
         for decl in &imp.block.decls {
             if let Declaration::Procedure(p) = decl {
-                // Generate procedure with module-prefixed name
-                let ret_type = if let Some(rt) = &p.heading.return_type {
-                    self.type_to_c(rt)
-                } else {
-                    "void".to_string()
-                };
-                if let Some(ref ecn) = p.heading.export_c_name {
-                    self.emit(&format!("{} {}", ret_type, ecn));
-                } else if self.multi_tu {
-                    self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
-                } else {
-                    self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
-                }
-                self.emit("(");
-                // Set up var params for the body
-                let mut param_vars = HashMap::new();
-                let mut oa_params = HashSet::new();
-                if p.heading.params.is_empty() {
-                    self.emit("void");
-                } else {
-                    let mut first = true;
-                    for fp in &p.heading.params {
-                        let ctype = self.type_to_c(&fp.typ);
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        for name in &fp.names {
+                let emb_sig = hir_emb.as_ref().and_then(|e| {
+                    e.procedures.iter()
+                        .find(|pd| pd.sig.name == p.heading.name)
+                        .map(|pd| pd.sig.clone())
+                });
+                if let Some(ref sig) = emb_sig {
+                    let static_prefix = if sig.export_c_name.is_some() || self.multi_tu { "" } else { "static " };
+                    let ret_type = match sig.return_type {
+                        Some(rt) => self.type_id_to_c(rt),
+                        None => "void".to_string(),
+                    };
+                    let c_name = if let Some(ref ecn) = sig.export_c_name {
+                        ecn.clone()
+                    } else {
+                        format!("{}_{}", imp.name, sig.name)
+                    };
+                    self.emit(&format!("{}{} {}(", static_prefix, ret_type, c_name));
+                    if sig.params.is_empty() {
+                        self.emit("void");
+                    } else {
+                        let mut first = true;
+                        for sp in &sig.params {
                             if !first { self.emit(", "); }
                             first = false;
-                            let c_param = self.mangle(name);
-                            if is_open_array {
-                                self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
-                                oa_params.insert(c_param.clone());
-                            } else if Self::is_proc_type(&fp.typ) {
-                                let decl = self.proc_type_decl(&fp.typ, &c_param, fp.is_var);
+                            let c_param = self.mangle(&sp.name);
+                            let resolved_tid = self.resolve_hir_alias(sp.type_id);
+                            let is_proc = sp.is_proc_type
+                                || matches!(self.sema.types.get(resolved_tid), crate::types::Type::ProcedureType { .. });
+                            if sp.is_open_array {
+                                let c_type = self.type_id_to_c(sp.type_id);
+                                self.emit(&format!("{} *{}, uint32_t {}_high", c_type, c_param, c_param));
+                            } else if is_proc {
+                                let decl = self.proc_type_decl_from_id(sp.type_id, &c_param, sp.is_var);
                                 self.emit(&decl);
-                            } else if fp.is_var {
-                                self.emit(&format!("{} *{}", ctype, c_param));
-                                param_vars.insert(name.clone(), true);
                             } else {
-                                self.emit(&format!("{} {}", ctype, c_param));
+                                let c_type = self.type_id_to_c(sp.type_id);
+                                if sp.is_var {
+                                    self.emit(&format!("{} *{}", c_type, c_param));
+                                } else {
+                                    self.emit(&format!("{} {}", c_type, c_param));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to AST prototype
+                    let ret_type = if let Some(rt) = &p.heading.return_type {
+                        self.type_to_c(rt)
+                    } else {
+                        "void".to_string()
+                    };
+                    if let Some(ref ecn) = p.heading.export_c_name {
+                        self.emit(&format!("{} {}", ret_type, ecn));
+                    } else if self.multi_tu {
+                        self.emit(&format!("{} {}_{}", ret_type, imp.name, p.heading.name));
+                    } else {
+                        self.emit(&format!("static {} {}_{}", ret_type, imp.name, p.heading.name));
+                    }
+                    self.emit("(");
+                    if p.heading.params.is_empty() {
+                        self.emit("void");
+                    } else {
+                        let mut first = true;
+                        for fp in &p.heading.params {
+                            let ctype = self.type_to_c(&fp.typ);
+                            let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                            for name in &fp.names {
+                                if !first { self.emit(", "); }
+                                first = false;
+                                let c_param = self.mangle(name);
+                                if is_open {
+                                    self.emit(&format!("{} *{}, uint32_t {}_high", ctype, c_param, c_param));
+                                } else if fp.is_var {
+                                    self.emit(&format!("{} *{}", ctype, c_param));
+                                } else {
+                                    self.emit(&format!("{} {}", ctype, c_param));
+                                }
                             }
                         }
                     }
@@ -552,6 +648,17 @@ impl CodeGen {
                 self.emit(") {\n");
                 self.indent += 1;
 
+                // Track VAR and open array params for body codegen (from AST)
+                let mut param_vars = HashMap::new();
+                let mut oa_params = HashSet::new();
+                for fp in &p.heading.params {
+                    let is_open = matches!(fp.typ, TypeNode::OpenArray { .. });
+                    for name in &fp.names {
+                        let c_param = self.mangle(name);
+                        if is_open { oa_params.insert(c_param); }
+                        else if fp.is_var { param_vars.insert(name.clone(), true); }
+                    }
+                }
                 self.var_params.push(param_vars);
                 self.open_array_params.push(oa_params);
                 let saved_var_tracking = self.save_var_tracking();
@@ -615,25 +722,37 @@ impl CodeGen {
             }
         }
 
-        // Module initialization body — use prebuilt HIR if available
-        if let Some(stmts) = &imp.block.body {
+        // Module initialization body from HIR
+        let init_body = if let Some(ref emb) = hir_emb {
+            emb.init_body.clone()
+        } else {
+            self.prebuilt_hir.as_ref().and_then(|hir| {
+                hir.embedded_init_bodies.iter()
+                    .find(|(name, _)| name == &imp.name)
+                    .map(|(_, body)| body.clone())
+            })
+        };
+        if let Some(body) = init_body {
             if self.multi_tu {
                 self.emitln(&format!("void {}_init(void) {{", imp.name));
             } else {
                 self.emitln(&format!("static void {}_init(void) {{", imp.name));
             }
             self.indent += 1;
-            let prebuilt = self.prebuilt_hir.as_ref().and_then(|hir| {
-                hir.embedded_init_bodies.iter()
-                    .find(|(name, _)| name == &imp.name)
-                    .map(|(_, body)| body.clone())
-            });
-            if let Some(body) = prebuilt {
-                for stmt in &body {
-                    self.emit_hir_stmt(stmt);
-                }
+            for stmt in &body {
+                self.emit_hir_stmt(stmt);
             }
             self.indent -= 1;
+            self.emitln("}");
+            self.newline();
+            self.embedded_init_modules.push(imp.name.clone());
+        } else if imp.block.body.is_some() {
+            // Empty init function still needed if AST says there's a body
+            if self.multi_tu {
+                self.emitln(&format!("void {}_init(void) {{", imp.name));
+            } else {
+                self.emitln(&format!("static void {}_init(void) {{", imp.name));
+            }
             self.emitln("}");
             self.newline();
             self.embedded_init_modules.push(imp.name.clone());
@@ -657,11 +776,12 @@ impl CodeGen {
             named_array_value_params: self.named_array_value_params.clone(),
             proc_params: self.proc_params.clone(),
             var_tracking: self.save_var_tracking(),
+            typeid_c_names: self.typeid_c_names.clone(),
         }
     }
 
     /// Restore state after embedded implementation generation.
-    /// Preserves module-prefixed proc_params that were registered during generation.
+    /// Preserves module-prefixed proc_params and typeid_c_names registered during generation.
     pub(crate) fn restore_embedded_context(&mut self, ctx: EmbeddedModuleContext, embedded_module_name: &str) {
         // Extract module-prefixed proc params before restoring (these must survive)
         let prefix = format!("{}_", embedded_module_name);
@@ -669,6 +789,8 @@ impl CodeGen {
             .filter(|(k, _)| k.starts_with(&prefix))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+        // Preserve all typeid_c_names registered during this module's generation
+        let new_typeid_names = self.typeid_c_names.clone();
 
         self.module_name = ctx.module_name;
         self.import_map = ctx.import_map;
@@ -683,6 +805,8 @@ impl CodeGen {
 
         // Merge back the module-prefixed proc param info
         self.proc_params.extend(module_proc_params);
+        // Merge back typeid_c_names (accumulative — types from all processed modules)
+        self.typeid_c_names = new_typeid_names;
     }
 
     /// Topologically sort implementation modules so dependencies come before dependents.
@@ -946,85 +1070,72 @@ impl CodeGen {
         }
     }
 
-    /// Emit type and const declarations from a declaration list.
-    /// Types are emitted first (in source order), then constants are topologically
-    /// sorted so that forward references between constants are resolved.
-    pub(crate) fn emit_type_and_const_decls(&mut self, decls: &[Declaration]) {
-        // Pre-pass: collect integer constant values so array bounds can be inlined
-        for decl in decls {
-            if let Declaration::Const(c) = decl {
-                if let Some(val) = self.try_eval_const_int(&c.expr) {
-                    self.const_int_values.insert(c.name.clone(), val);
-                }
-            }
-        }
-        // Pass 1: emit all Type declarations in source order
-        for decl in decls {
-            if let Declaration::Type(t) = decl {
-                self.gen_type_decl(t);
-            }
-        }
-        // Pass 2: collect and topologically sort Const declarations
-        let consts: Vec<&ConstDecl> = decls.iter().filter_map(|d| {
-            if let Declaration::Const(c) = d { Some(c) } else { None }
-        }).collect();
-        if consts.is_empty() {
+    /// Emit forward declarations for procedures from prebuilt HirModule.
+    pub(crate) fn emit_hir_forward_decls(&mut self) {
+        let procs = if let Some(ref hir) = self.prebuilt_hir {
+            hir.proc_decls.clone()
+        } else {
             return;
+        };
+        for pd in &procs {
+            self.register_hir_proc_params(&pd.sig);
+            self.gen_hir_proc_prototype(&pd.sig);
+            self.emit(";\n");
         }
-        let const_names: HashSet<String> = consts.iter().map(|c| c.name.clone()).collect();
-        // Build adjacency: for each const, which other consts does it reference?
-        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+    }
+
+    /// Emit record forward declarations from prebuilt HirModule.
+    pub(crate) fn emit_hir_record_forward_decls(&mut self) {
+        let types = if let Some(ref hir) = self.prebuilt_hir {
+            hir.type_decls.clone()
+        } else {
+            return;
+        };
+        for td in &types {
+            let resolved = self.resolve_hir_alias(td.type_id);
+            // Only forward-declare direct Record types. Pointer-to-Record with
+            // inline record body gets its _r tag from gen_type_decl.
+            if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
+                let cn = self.type_decl_c_name(&td.name);
+                self.emitln(&format!("typedef struct {} {};", cn, cn));
+            }
+        }
+    }
+
+    /// Emit const declarations from prebuilt HirModule.
+    /// Since ConstVal is fully evaluated, no topological sort is needed.
+    pub(crate) fn emit_hir_const_decls(&mut self) {
+        let consts = if let Some(ref hir) = self.prebuilt_hir {
+            hir.const_decls.clone()
+        } else {
+            return;
+        };
         for c in &consts {
-            let mut refs = HashSet::new();
-            Self::collect_expr_ident_refs(&c.expr, &mut refs);
-            let my_deps: Vec<String> = refs.into_iter().filter(|r| const_names.contains(r) && r != &c.name).collect();
-            deps.insert(c.name.clone(), my_deps);
+            self.gen_hir_const_decl(c);
         }
-        // Kahn's algorithm for topological sort
-        // deps maps node → [nodes it depends on]. Build reverse graph: dependee → [dependents]
-        let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
-        let mut in_degree: HashMap<String, usize> = consts.iter().map(|c| (c.name.clone(), 0)).collect();
-        for (node, dep_list) in &deps {
-            *in_degree.entry(node.clone()).or_insert(0) += dep_list.len();
-            for dep in dep_list {
-                reverse.entry(dep.clone()).or_default().push(node.clone());
-            }
+    }
+
+    /// Emit type declarations from prebuilt HirModule using TypeId resolution.
+    pub(crate) fn emit_hir_type_decls(&mut self) {
+        let types = if let Some(ref hir) = self.prebuilt_hir {
+            hir.type_decls.clone()
+        } else {
+            return;
+        };
+        for td in &types {
+            self.gen_type_decl_from_id(&td.name, td.type_id);
         }
-        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-        // Seed with zero-in-degree nodes (in source order for stability)
-        for c in &consts {
-            if *in_degree.get(&c.name).unwrap_or(&0) == 0 {
-                queue.push_back(c.name.clone());
-            }
-        }
-        let mut sorted_names: Vec<String> = Vec::new();
-        while let Some(name) = queue.pop_front() {
-            sorted_names.push(name.clone());
-            if let Some(dependents) = reverse.get(&name) {
-                for dependent in dependents {
-                    if let Some(deg) = in_degree.get_mut(dependent) {
-                        *deg = deg.saturating_sub(1);
-                        if *deg == 0 {
-                            queue.push_back(dependent.clone());
-                        }
-                    }
-                }
-            }
-        }
-        // If there are cycles, append remaining in source order
-        if sorted_names.len() < consts.len() {
-            for c in &consts {
-                if !sorted_names.contains(&c.name) {
-                    sorted_names.push(c.name.clone());
-                }
-            }
-        }
-        // Build name->const map and emit in sorted order
-        let const_map: HashMap<String, &ConstDecl> = consts.into_iter().map(|c| (c.name.clone(), c)).collect();
-        for name in &sorted_names {
-            if let Some(c) = const_map.get(name) {
-                self.gen_const_decl(c);
-            }
+    }
+
+    /// Emit global variable declarations from prebuilt HirModule.
+    pub(crate) fn emit_hir_global_decls(&mut self) {
+        let globals = if let Some(ref hir) = self.prebuilt_hir {
+            hir.global_decls.clone()
+        } else {
+            return;
+        };
+        for g in &globals {
+            self.gen_hir_global_decl(g);
         }
     }
 

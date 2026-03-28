@@ -952,9 +952,15 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     // Build complete HirModule from AST + sema (read-only).
     let hir_module = crate::hir_build::build_module(&unit, &all_impl_mods, &sema);
     if opts.verbose {
-        eprintln!("{}: HIR: {} procedures, {} init stmts",
+        eprintln!("{}: HIR: {} procs ({} sigs), {} types, {} consts, {} globals, {} exceptions, {} embedded, {} init stmts",
             identity::COMPILER_NAME,
             hir_module.procedures.len(),
+            hir_module.proc_decls.len(),
+            hir_module.type_decls.len(),
+            hir_module.const_decls.len(),
+            hir_module.global_decls.len(),
+            hir_module.exception_decls.len(),
+            hir_module.embedded_modules.len(),
             hir_module.init_body.as_ref().map_or(0, |b| b.len()));
     }
 
@@ -975,6 +981,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     for imp_mod in &all_impl_mods {
         codegen.add_imported_module_no_sema(imp_mod.clone());
     }
+    codegen.populate_typeid_c_names();
 
     // ── LLVM IR backend ──────────────────────────────────────────────
     if opts.emit_llvm {

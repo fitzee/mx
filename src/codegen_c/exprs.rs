@@ -600,53 +600,6 @@ impl CodeGen {
         }
     }
 
-    /// Check if a TypeNode is a ProcedureType (including the PROC builtin)
-    /// Walk an expression tree and collect all bare identifier references.
-    pub(crate) fn collect_expr_ident_refs(expr: &Expr, out: &mut HashSet<String>) {
-        match &expr.kind {
-            ExprKind::IntLit(_) | ExprKind::RealLit(_) | ExprKind::StringLit(_) | ExprKind::CharLit(_) => {}
-            ExprKind::Designator(d) => {
-                if d.ident.module.is_none() {
-                    out.insert(d.ident.name.clone());
-                }
-                for sel in &d.selectors {
-                    if let Selector::Index(indices, _) = sel {
-                        for idx in indices {
-                            Self::collect_expr_ident_refs(idx, out);
-                        }
-                    }
-                }
-            }
-            ExprKind::UnaryOp { operand, .. } => {
-                Self::collect_expr_ident_refs(operand, out);
-            }
-            ExprKind::BinaryOp { left, right, .. } => {
-                Self::collect_expr_ident_refs(left, out);
-                Self::collect_expr_ident_refs(right, out);
-            }
-            ExprKind::FuncCall { desig, args } => {
-                if desig.ident.module.is_none() {
-                    out.insert(desig.ident.name.clone());
-                }
-                for arg in args {
-                    Self::collect_expr_ident_refs(arg, out);
-                }
-            }
-            ExprKind::SetConstructor { elements, .. } => {
-                for elem in elements {
-                    match elem {
-                        SetElement::Single(e) => Self::collect_expr_ident_refs(e, out),
-                        SetElement::Range(lo, hi) => {
-                            Self::collect_expr_ident_refs(lo, out);
-                            Self::collect_expr_ident_refs(hi, out);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     pub(crate) fn infer_c_type(&self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::IntLit(_) => "int32_t".to_string(),

@@ -1,29 +1,6 @@
 use super::*;
 
 impl CodeGen {
-    pub(crate) fn gen_forward_decls(&mut self, decls: &[Declaration]) {
-        for decl in decls {
-            match decl {
-                Declaration::Procedure(p) => {
-                    self.register_proc_params(&p.heading);
-                    self.gen_proc_prototype(&p.heading);
-                    self.emit(";\n");
-                }
-                Declaration::Module(m) => {
-                    // Also forward-declare procedures from nested modules
-                    for d in &m.block.decls {
-                        if let Declaration::Procedure(p) = d {
-                            self.register_proc_params(&p.heading);
-                            self.gen_proc_prototype(&p.heading);
-                            self.emit(";\n");
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
     pub(crate) fn register_proc_params(&mut self, h: &ProcHeading) {
         let mut param_info = Vec::new();
         for fp in &h.params {
@@ -143,6 +120,47 @@ impl CodeGen {
         self.emit(";\n");
     }
 
+    /// Emit a constant declaration from prebuilt HIR.
+    /// Since HirConstDecl.value is already fully evaluated, no topo-sort needed.
+    pub(crate) fn gen_hir_const_decl(&mut self, c: &crate::hir::HirConstDecl) {
+        use crate::hir::ConstVal;
+        // Register integer values for array bound inlining
+        if let ConstVal::Integer(v) = &c.value {
+            self.const_int_values.insert(c.name.clone(), *v);
+            if let Some(ref mod_name) = self.generating_for_module {
+                self.const_int_values.insert(format!("{}_{}", mod_name, c.name), *v);
+            }
+        }
+        if let ConstVal::EnumVariant(v) = &c.value {
+            self.const_int_values.insert(c.name.clone(), *v);
+            if let Some(ref mod_name) = self.generating_for_module {
+                self.const_int_values.insert(format!("{}_{}", mod_name, c.name), *v);
+            }
+        }
+        let val_str = match &c.value {
+            ConstVal::Integer(v) => format!("{}", v),
+            ConstVal::Real(v) => {
+                let s = format!("{}", v);
+                if s.contains('.') || s.contains('e') || s.contains('E') { s } else { format!("{}.0", s) }
+            }
+            ConstVal::Boolean(b) => if *b { "1".to_string() } else { "0".to_string() },
+            ConstVal::Char(ch) => format!("'{}'", escape_c_char(*ch)),
+            ConstVal::String(s) => {
+                if s.is_empty() {
+                    "'\\0'".to_string()
+                } else if s.len() == 1 {
+                    format!("'{}'", escape_c_char(s.chars().next().unwrap()))
+                } else {
+                    format!("\"{}\"", escape_c_string(s))
+                }
+            }
+            ConstVal::Set(bits) => format!("0x{:X}ULL", bits),
+            ConstVal::Nil => "((void*)0)".to_string(),
+            ConstVal::EnumVariant(v) => format!("{}", v),
+        };
+        self.emitln(&format!("static const {} {} = {};", c.c_type, c.mangled, val_str));
+    }
+
     /// Return the C typedef name for a type declaration.
     /// Inside an embedded module, returns Module_TypeName to avoid collisions.
     pub(crate) fn type_decl_c_name(&self, bare_name: &str) -> String {
@@ -161,6 +179,27 @@ impl CodeGen {
         }
         // Compute the C name: module-prefixed for embedded modules to avoid collisions
         let c_type_name = self.type_decl_c_name(&t.name);
+        // Register TypeId → C name for non-structural types (records, enums, arrays, aliases).
+        // Skip pointer/set/subrange — these resolve structurally and would cause
+        // cross-module name conflicts when the same structural type (e.g., POINTER TO CHAR)
+        // is typedef'd with different names in different modules.
+        let should_register = match &t.typ {
+            Some(TypeNode::Record { .. }) | Some(TypeNode::Enumeration { .. })
+            | Some(TypeNode::Array { .. }) | Some(TypeNode::Named { .. })
+            | Some(TypeNode::ProcedureType { .. }) | Some(TypeNode::Object { .. }) => true,
+            _ => false,
+        };
+        if should_register {
+            let type_sym = if let Some(ref mod_name) = self.generating_for_module {
+                self.sema.symtab.lookup_module_scope(mod_name)
+                    .and_then(|scope| self.sema.symtab.lookup_in_scope(scope, &t.name))
+            } else {
+                self.sema.symtab.lookup_any(&t.name)
+            };
+            if let Some(sym) = type_sym {
+                self.typeid_c_names.insert(sym.typ, c_type_name.clone());
+            }
+        }
         if let Some(tn) = &t.typ {
             // Register ALL embedded module types (not just enums) for name resolution
             if self.generating_for_module.is_some() {
@@ -434,6 +473,290 @@ impl CodeGen {
                 c_type_name
             ));
         }
+    }
+
+    /// Emit a type declaration from TypeId (no AST bridge needed).
+    /// Handles: Record, Enum, Pointer, Array, ProcedureType, Set, Subrange, Alias, Opaque.
+    pub(crate) fn gen_type_decl_from_id(&mut self, name: &str, type_id: TypeId) {
+        self.known_type_names.insert(name.to_string());
+        if let Some(ref mod_name) = self.generating_for_module {
+            self.known_type_names.insert(format!("{}_{}", mod_name, name));
+        }
+        let c_type_name = self.type_decl_c_name(name);
+        if self.generating_for_module.is_some() {
+            self.embedded_enum_types.insert(c_type_name.clone());
+        }
+        let resolved = self.resolve_hir_alias(type_id);
+        // Register TypeId → C name, but never override builtin TypeIds (0..19)
+        if type_id >= 20 {
+            self.typeid_c_names.insert(type_id, c_type_name.clone());
+        }
+        if resolved != type_id && resolved >= 20 {
+            self.typeid_c_names.insert(resolved, c_type_name.clone());
+        }
+        let ty = self.sema.types.get(resolved).clone();
+        match &ty {
+            crate::types::Type::Record { fields, variants } => {
+                // Collect field metadata for WITH resolution
+                let mut field_names = Vec::new();
+                for f in fields {
+                    field_names.push(f.name.clone());
+                    if !f.type_name.is_empty() {
+                        self.record_field_types.insert(
+                            (name.to_string(), f.name.clone()),
+                            f.type_name.clone(),
+                        );
+                        if let Some(pinfo) = self.proc_type_params.get(&f.type_name).cloned() {
+                            self.field_proc_params.insert(f.name.clone(), pinfo);
+                        }
+                    }
+                }
+                self.record_fields.insert(name.to_string(), field_names);
+                // Emit struct body
+                self.emitln(&format!("struct {} {{", c_type_name));
+                self.indent += 1;
+                for f in fields {
+                    let ctype = self.type_id_to_c(f.typ);
+                    let arr_suffix = self.type_id_array_suffix(f.typ);
+                    if ctype == "char" && !arr_suffix.is_empty() {
+                        self.char_array_fields.insert((name.to_string(), f.name.clone()));
+                    }
+                    if !arr_suffix.is_empty() || matches!(self.sema.types.get(self.resolve_hir_alias(f.typ)), crate::types::Type::Array { .. }) {
+                        self.array_fields.insert((name.to_string(), f.name.clone()));
+                    }
+                    if matches!(self.sema.types.get(self.resolve_hir_alias(f.typ)), crate::types::Type::Pointer { .. }) {
+                        self.pointer_fields.insert(f.name.clone());
+                    }
+                    self.emit_indent();
+                    self.emit(&format!("{} {}{};\n", ctype, f.name, arr_suffix));
+                }
+                if let Some(vi) = variants {
+                    // Variant record — emit tag + union
+                    if let Some(ref tag_name) = vi.tag_name {
+                        self.emit_indent();
+                        let tag_c = self.type_id_to_c(vi.tag_type);
+                        self.emit(&format!("{} {};\n", tag_c, tag_name));
+                    }
+                    self.emitln("union {");
+                    self.indent += 1;
+                    for (i, vc) in vi.variants.iter().enumerate() {
+                        self.emitln("struct {");
+                        self.indent += 1;
+                        for vf in &vc.fields {
+                            let vft = self.type_id_to_c(vf.typ);
+                            let vfs = self.type_id_array_suffix(vf.typ);
+                            self.emit_indent();
+                            self.emit(&format!("{} {}{};\n", vft, vf.name, vfs));
+                            self.variant_field_map.insert(
+                                (name.to_string(), vf.name.clone()), i);
+                            if let Some(fields) = self.record_fields.get_mut(name) {
+                                fields.push(vf.name.clone());
+                            }
+                        }
+                        self.indent -= 1;
+                        self.emitln(&format!("}} _v{};", i));
+                    }
+                    self.indent -= 1;
+                    self.emitln("} _variant;");
+                }
+                self.indent -= 1;
+                self.emitln("};");
+            }
+            crate::types::Type::Enumeration { ref variants, .. } => {
+                self.emit_indent();
+                self.emit("typedef enum { ");
+                let type_name = &c_type_name;
+                for (i, v) in variants.iter().enumerate() {
+                    if i > 0 { self.emit(", "); }
+                    let c_name = format!("{}_{}", type_name, v);
+                    self.emit(&c_name);
+                    if let Some(ref mod_name) = self.generating_for_module {
+                        self.enum_variants.insert(format!("{}_{}", mod_name, v), c_name.clone());
+                    }
+                    if self.generating_for_module.is_none() {
+                        self.enum_variants.insert(v.clone(), c_name);
+                    }
+                }
+                self.emit(&format!(" }} {};\n", type_name));
+                let n = variants.len();
+                self.emitln(&format!("#define m2_min_{} 0", type_name));
+                if n > 0 {
+                    self.emitln(&format!("#define m2_max_{} {}", type_name, n - 1));
+                }
+            }
+            crate::types::Type::Pointer { base } => {
+                let base_id = *base;
+                let base_resolved = self.resolve_hir_alias(base_id);
+                let base_ty = self.sema.types.get(base_resolved).clone();
+                if let crate::types::Type::Record { ref fields, .. } = base_ty {
+                    let fields = fields.clone();
+                    let tag = format!("{}_r", c_type_name);
+                    self.emitln(&format!("typedef struct {} *{};", tag, c_type_name));
+                    self.pointer_base_types.insert(c_type_name.clone(), tag.clone());
+                    self.pointer_base_types.insert(name.to_string(), tag.clone());
+                    let mut field_names = Vec::new();
+                    for f in &fields {
+                        field_names.push(f.name.clone());
+                        if !f.type_name.is_empty() {
+                            self.record_field_types.insert(
+                                (name.to_string(), f.name.clone()), f.type_name.clone());
+                            self.record_field_types.insert(
+                                (tag.clone(), f.name.clone()), f.type_name.clone());
+                        }
+                    }
+                    self.record_fields.insert(name.to_string(), field_names.clone());
+                    self.record_fields.insert(tag.clone(), field_names);
+                    self.emitln(&format!("struct {} {{", tag));
+                    self.indent += 1;
+                    for f in &fields {
+                        let ctype = self.type_id_to_c(f.typ);
+                        let arr_suffix = self.type_id_array_suffix(f.typ);
+                        self.emit_indent();
+                        self.emit(&format!("{} {}{};\n", ctype, f.name, arr_suffix));
+                    }
+                    self.indent -= 1;
+                    self.emitln("};");
+                } else {
+                    let base_c = self.type_id_to_c(base_id);
+                    self.emit_indent();
+                    self.emit(&format!("typedef {} *{};\n", base_c, c_type_name));
+                }
+            }
+            crate::types::Type::Array { elem_type, high, .. } => {
+                let elem_tid = *elem_type;
+                let arr_high = *high;
+                if elem_tid == TY_CHAR {
+                    self.char_array_types.insert(name.to_string());
+                    self.char_array_types.insert(c_type_name.clone());
+                }
+                self.array_types.insert(name.to_string());
+                self.array_types.insert(c_type_name.clone());
+                self.array_type_high.insert(name.to_string(), format!("{}", arr_high));
+                self.array_type_high.insert(c_type_name.clone(), format!("{}", arr_high));
+                // Use elem type directly (not resolved array TypeId which maps to itself)
+                let ctype = self.type_id_to_c(elem_tid);
+                let suffix = format!("[{} + 1]", arr_high);
+                self.emit_indent();
+                self.emit(&format!("typedef {} {}{};\n", ctype, c_type_name, suffix));
+            }
+            crate::types::Type::ProcedureType { params, return_type } => {
+                // Register param info
+                let pinfo: Vec<ParamCodegenInfo> = params.iter().enumerate().map(|(i, p)| {
+                    ParamCodegenInfo {
+                        name: format!("_p{}", i),
+                        is_var: p.is_var,
+                        is_open_array: matches!(self.sema.types.get(p.typ), crate::types::Type::OpenArray { .. }),
+                        is_char: p.typ == TY_CHAR,
+                    }
+                }).collect();
+                self.proc_type_params.insert(name.to_string(), pinfo);
+                // Emit typedef
+                self.emit_indent();
+                let ret = match return_type { Some(rt) => self.type_id_to_c(*rt), None => "void".to_string() };
+                self.emit(&format!("typedef {} (*{})(", ret, c_type_name));
+                if params.is_empty() {
+                    self.emit("void");
+                } else {
+                    let mut first = true;
+                    for p in params {
+                        if !first { self.emit(", "); }
+                        first = false;
+                        let pt = self.type_id_to_c(p.typ);
+                        let is_open = matches!(self.sema.types.get(p.typ), crate::types::Type::OpenArray { .. });
+                        if is_open {
+                            self.emit(&format!("{} *, uint32_t", pt));
+                        } else if p.is_var {
+                            self.emit(&format!("{} *", pt));
+                        } else {
+                            self.emit(&pt);
+                        }
+                    }
+                }
+                self.emit(");\n");
+            }
+            crate::types::Type::Set { base } => {
+                let base_id = *base;
+                let base_ty = self.sema.types.get(base_id).clone();
+                if let crate::types::Type::Enumeration { ref variants, .. } = base_ty {
+                    let variants = variants.clone();
+                    let enum_name = format!("{}_enum", c_type_name);
+                    self.emit_indent();
+                    self.emit("typedef enum { ");
+                    for (i, v) in variants.iter().enumerate() {
+                        if i > 0 { self.emit(", "); }
+                        let c_name = format!("{}_{}", c_type_name, v);
+                        self.emit(&c_name);
+                        if let Some(ref mod_name) = self.generating_for_module {
+                            self.enum_variants.insert(format!("{}_{}", mod_name, v), c_name.clone());
+                        }
+                        if self.generating_for_module.is_none() {
+                            self.enum_variants.insert(v.clone(), c_name);
+                        }
+                    }
+                    self.emit(&format!(" }} {};\n", enum_name));
+                    self.emitln(&format!("typedef uint32_t {};", c_type_name));
+                    let n = variants.len();
+                    self.emitln(&format!("#define m2_min_{} 0", c_type_name));
+                    if n > 0 {
+                        self.emitln(&format!("#define m2_max_{} {}", c_type_name, n - 1));
+                    }
+                } else {
+                    self.emit_indent();
+                    self.emit(&format!("typedef uint32_t {};\n", c_type_name));
+                }
+            }
+            crate::types::Type::Subrange { low, high, .. } => {
+                self.emit_indent();
+                self.emit(&format!("typedef int32_t {};\n", c_type_name));
+                self.emitln(&format!("#define m2_min_{} {}", c_type_name, low));
+                self.emitln(&format!("#define m2_max_{} {}", c_type_name, high));
+            }
+            crate::types::Type::Opaque { .. } => {
+                self.emit_indent();
+                self.emit(&format!("typedef void *{};\n", c_type_name));
+            }
+            crate::types::Type::Alias { target, name: alias_name, .. } => {
+                // Track unsigned aliases
+                if *target == TY_CARDINAL || *target == TY_LONGCARD
+                    || self.unsigned_type_aliases.contains(alias_name) {
+                    self.unsigned_type_aliases.insert(name.to_string());
+                    self.unsigned_type_aliases.insert(c_type_name.clone());
+                }
+                let ctype = self.type_id_to_c(*target);
+                self.emit_indent();
+                self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
+            }
+            _ => {
+                // Fallback: emit structural C type directly (bypass typeid_c_names
+                // to avoid circular typedef when a named type aliases a builtin)
+                let ctype = match self.sema.types.get(resolved) {
+                    crate::types::Type::Integer => "int32_t",
+                    crate::types::Type::Cardinal => "uint32_t",
+                    crate::types::Type::Real => "float",
+                    crate::types::Type::LongReal => "double",
+                    crate::types::Type::Boolean => "int",
+                    crate::types::Type::Char => "char",
+                    crate::types::Type::Bitset => "uint32_t",
+                    crate::types::Type::Address => "void *",
+                    crate::types::Type::LongInt => "int64_t",
+                    crate::types::Type::LongCard => "uint64_t",
+                    crate::types::Type::Word => "uint32_t",
+                    crate::types::Type::Byte => "uint8_t",
+                    crate::types::Type::Complex => "float _Complex",
+                    crate::types::Type::LongComplex => "double _Complex",
+                    _ => "int32_t",
+                };
+                // Track unsigned aliases
+                if matches!(self.sema.types.get(resolved),
+                    crate::types::Type::Cardinal | crate::types::Type::LongCard) {
+                    self.unsigned_type_aliases.insert(name.to_string());
+                    self.unsigned_type_aliases.insert(c_type_name.clone());
+                }
+                self.emit_indent();
+                self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
+            }
+        }
+        self.newline();
     }
 
     /// Collect field metadata (names, types) for a record's fields and register in tracking maps.
@@ -817,6 +1140,87 @@ impl CodeGen {
         }
     }
 
+    /// Emit a global variable declaration from prebuilt HIR using TypeId resolution.
+    pub(crate) fn gen_hir_global_decl(&mut self, g: &crate::hir::HirGlobalDecl) {
+        let tid = g.type_id;
+        let resolved = self.resolve_hir_alias(tid);
+
+        // Metadata registration from TypeId
+        if let Some(c_name) = self.typeid_c_names.get(&tid).or_else(|| self.typeid_c_names.get(&resolved)).cloned() {
+            self.var_types.insert(g.name.clone(), c_name.clone());
+            if self.char_array_types.contains(&c_name) { self.char_array_vars.insert(g.name.clone()); }
+            if self.array_types.contains(&c_name) { self.array_vars.insert(g.name.clone()); }
+            if let Some(pinfo) = self.proc_type_params.get(&c_name).cloned() {
+                self.proc_params.insert(g.name.clone(), pinfo);
+            }
+            if self.unsigned_type_aliases.contains(&c_name) {
+                self.cardinal_vars.insert(g.name.clone());
+                self.longcard_vars.insert(g.name.clone());
+            }
+        } else if let crate::types::Type::Alias { name, .. } = self.sema.types.get(tid) {
+            self.var_types.insert(g.name.clone(), name.clone());
+            if self.char_array_types.contains(name) { self.char_array_vars.insert(g.name.clone()); }
+            if self.array_types.contains(name) { self.array_vars.insert(g.name.clone()); }
+        }
+        if let crate::types::Type::Array { elem_type, .. } = self.sema.types.get(resolved) {
+            let elem_c = self.type_id_to_c(*elem_type);
+            self.array_var_elem_types.insert(g.name.clone(), elem_c);
+            self.array_vars.insert(g.name.clone());
+            if *elem_type == TY_CHAR { self.char_array_vars.insert(g.name.clone()); }
+        }
+        match self.sema.types.get(resolved) {
+            crate::types::Type::Set { .. } | crate::types::Type::Bitset => { self.set_vars.insert(g.name.clone()); }
+            crate::types::Type::Complex => { self.complex_vars.insert(g.name.clone()); }
+            crate::types::Type::LongComplex => { self.longcomplex_vars.insert(g.name.clone()); }
+            crate::types::Type::ProcedureType { params, .. } => {
+                let pinfo: Vec<ParamCodegenInfo> = params.iter().enumerate().map(|(i, p)| {
+                    ParamCodegenInfo {
+                        name: format!("_p{}", i),
+                        is_var: p.is_var,
+                        is_open_array: matches!(self.sema.types.get(p.typ), crate::types::Type::OpenArray { .. }),
+                        is_char: p.typ == TY_CHAR,
+                    }
+                }).collect();
+                self.proc_params.insert(g.name.clone(), pinfo);
+            }
+            _ => {}
+        }
+        if resolved == TY_CARDINAL || resolved == TY_LONGCARD { self.cardinal_vars.insert(g.name.clone()); }
+        if resolved == TY_LONGINT { self.longint_vars.insert(g.name.clone()); }
+        if resolved == TY_LONGCARD { self.longcard_vars.insert(g.name.clone()); }
+
+        // C emission via TypeId resolver
+        let c_name = self.mangle_decl_name(&g.name);
+        let is_proc = matches!(self.sema.types.get(resolved), crate::types::Type::ProcedureType { .. });
+        let is_ptr_to_arr = if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
+            matches!(self.sema.types.get(self.resolve_hir_alias(*base)), crate::types::Type::Array { .. })
+        } else { false };
+
+        if is_proc {
+            self.emit_indent();
+            let decl = self.proc_type_decl_from_id(resolved, &c_name, false);
+            self.emit(&format!("{};\n", decl));
+        } else if is_ptr_to_arr {
+            if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
+                let elem_c = self.type_id_to_c(*base);
+                let arr_suffix = self.type_id_array_suffix(*base);
+                self.emit_indent();
+                self.emit(&format!("{} (*{}){};\n", elem_c, c_name, arr_suffix));
+            }
+        } else {
+            let ctype = self.type_id_to_c(tid);
+            // Only add array suffix for inline (unnamed) array types.
+            // Named array types (in typeid_c_names) have the suffix in their typedef.
+            let array_suffix = if self.typeid_c_names.contains_key(&tid) {
+                String::new()
+            } else {
+                self.type_id_array_suffix(resolved)
+            };
+            self.emit_indent();
+            self.emit(&format!("{} {}{};\n", ctype, c_name, array_suffix));
+        }
+    }
+
     pub(crate) fn gen_proc_decl(&mut self, p: &ProcDecl) {
         self.register_proc_params(&p.heading);
 
@@ -953,7 +1357,23 @@ impl CodeGen {
         // ── Generate this procedure ─────────────────────────────────────
         self.newline();
         self.emit_line_directive(&p.loc);
-        self.gen_proc_prototype(&p.heading);
+        // Use HirProcSig (TypeId-based) for prototype to match forward decls
+        let current_module = self.module_name.clone();
+        let hir_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == current_module)
+                .map(|pd| pd.sig.clone())
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == current_module)
+                    .and_then(|e| e.procedures.iter()
+                        .find(|pd| pd.sig.name == p.heading.name)
+                        .map(|pd| pd.sig.clone())))
+        });
+        if let Some(ref sig) = hir_sig {
+            self.gen_hir_proc_prototype(sig);
+        } else {
+            self.gen_proc_prototype(&p.heading);
+        }
         self.emit(" {\n");
         self.indent += 1;
 
@@ -1157,6 +1577,99 @@ impl CodeGen {
                     } else {
                         let ctype = self.type_to_c(&fp.typ);
                         self.emit(&format!("{} {}", ctype, c_param));
+                    }
+                }
+            }
+        }
+        self.emit(")");
+    }
+
+    /// Register procedure parameter metadata from HirProcSig.
+    pub(crate) fn register_hir_proc_params(&mut self, sig: &crate::hir::HirProcSig) {
+        let mut param_info = Vec::new();
+        for p in &sig.params {
+            param_info.push(ParamCodegenInfo {
+                name: p.name.clone(),
+                is_var: p.is_var,
+                is_open_array: p.is_open_array,
+                is_char: p.is_char,
+            });
+        }
+        self.proc_params.insert(sig.name.clone(), param_info.clone());
+        if let Some(ref ecn) = sig.export_c_name {
+            self.export_c_names.insert(sig.name.clone(), ecn.clone());
+            self.proc_params.insert(ecn.clone(), param_info);
+        }
+        // Register procedure-typed parameters as their own callables (via TypeId)
+        for p in &sig.params {
+            let resolved = self.resolve_hir_alias(p.type_id);
+            // Check if param type is a named alias to a procedure type
+            if let crate::types::Type::Alias { name, .. } = self.sema.types.get(p.type_id) {
+                if let Some(pinfo) = self.proc_type_params.get(name).cloned() {
+                    self.proc_params.insert(p.name.clone(), pinfo);
+                    continue;
+                }
+            }
+            // Check if param type is directly a procedure type
+            if let crate::types::Type::ProcedureType { params: pt_params, .. } = self.sema.types.get(resolved) {
+                let pinfo: Vec<ParamCodegenInfo> = pt_params.iter().enumerate().map(|(idx, pt)| {
+                    ParamCodegenInfo {
+                        name: format!("_p{}", idx),
+                        is_var: pt.is_var,
+                        is_open_array: matches!(self.sema.types.get(pt.typ), crate::types::Type::OpenArray { .. }),
+                        is_char: pt.typ == TY_CHAR,
+                    }
+                }).collect();
+                self.proc_params.insert(p.name.clone(), pinfo);
+            }
+        }
+    }
+
+    /// Emit a procedure prototype from HirProcSig using pure TypeId resolution.
+    pub(crate) fn gen_hir_proc_prototype(&mut self, sig: &crate::hir::HirProcSig) {
+        self.emit_indent();
+        let c_name = if let Some(ref ecn) = sig.export_c_name {
+            ecn.clone()
+        } else if let Some(mangled) = self.nested_proc_names.get(&sig.name).cloned() {
+            mangled
+        } else {
+            self.mangle(&sig.name)
+        };
+        let ret_type = match sig.return_type {
+            Some(rt) => self.type_id_to_c(rt),
+            None => "void".to_string(),
+        };
+        self.emit(&format!("{} {}(", ret_type, c_name));
+
+        let env_type = self.closure_env_type.get(&sig.name).cloned();
+        let has_env = env_type.is_some();
+        if has_env {
+            self.emit(&format!("{} *_env", env_type.unwrap()));
+        }
+
+        if sig.params.is_empty() && !has_env {
+            self.emit("void");
+        } else {
+            let mut first = !has_env;
+            for p in &sig.params {
+                if !first { self.emit(", "); }
+                first = false;
+                let c_param = self.mangle(&p.name);
+                let resolved_tid = self.resolve_hir_alias(p.type_id);
+                let is_proc = p.is_proc_type
+                    || matches!(self.sema.types.get(resolved_tid), crate::types::Type::ProcedureType { .. });
+                if p.is_open_array {
+                    let c_type = self.type_id_to_c(p.type_id);
+                    self.emit(&format!("{} *{}, uint32_t {}_high", c_type, c_param, c_param));
+                } else if is_proc {
+                    let decl = self.proc_type_decl_from_id(p.type_id, &c_param, p.is_var);
+                    self.emit(&decl);
+                } else {
+                    let c_type = self.type_id_to_c(p.type_id);
+                    if p.is_var {
+                        self.emit(&format!("{} *{}", c_type, c_param));
+                    } else {
+                        self.emit(&format!("{} {}", c_type, c_param));
                     }
                 }
             }
