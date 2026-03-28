@@ -473,11 +473,33 @@ impl CodeGen {
         if let Some(scope_id) = self.sema.symtab.lookup_module_scope(name) {
             for sym in self.sema.symtab.symbols_in_scope(scope_id) {
                 if matches!(sym.kind, crate::symtab::SymbolKind::Type) {
+                    // Only register types defined in this module (not imported)
+                    let is_own = sym.module.as_ref().map_or(true, |m| m == name);
+                    if !is_own { continue; }
                     self.known_type_names.insert(sym.name.clone());
                     let prefixed = format!("{}_{}", name, sym.name);
                     self.known_type_names.insert(prefixed.clone());
+                    // Only register non-structural types in typeid_c_names
+                    // (Pointer, Set, Subrange resolve structurally and would
+                    // collide across modules that define identical types)
                     if sym.typ >= 20 {
-                        self.typeid_c_names.insert(sym.typ, prefixed);
+                        let resolved = {
+                            let mut id = sym.typ;
+                            for _ in 0..50 {
+                                match self.sema.types.get(id) {
+                                    crate::types::Type::Alias { target, .. } => id = *target,
+                                    _ => break,
+                                }
+                            }
+                            id
+                        };
+                        let is_structural = matches!(self.sema.types.get(resolved),
+                            crate::types::Type::Pointer { .. }
+                            | crate::types::Type::Set { .. }
+                            | crate::types::Type::Subrange { .. });
+                        if !is_structural {
+                            self.typeid_c_names.insert(sym.typ, prefixed);
+                        }
                     }
                 }
             }

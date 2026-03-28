@@ -288,11 +288,9 @@ pub fn build_module(
     // Lower embedded implementation module procedures
     for imp in impl_mods {
         let (imp_modules, imp_aliases) = extract_imports(&imp.imports);
-        // Merge main module imports with embedded module imports
-        let mut merged_modules = imported_modules.clone();
-        merged_modules.extend(imp_modules);
-        let mut merged_aliases = import_aliases.clone();
-        merged_aliases.extend(imp_aliases);
+        // Use only the embedded module's own imports (not main module imports)
+        let mut merged_modules = imp_modules;
+        let mut merged_aliases = imp_aliases;
         // Also include imports from the corresponding definition module (via sema scope)
         if let Some(scope_id) = sema.symtab.lookup_module_scope(&imp.name) {
             for sym in sema.symtab.symbols_in_scope(scope_id) {
@@ -558,27 +556,6 @@ fn build_proc(
     hb.set_import_alias_map(import_aliases.clone());
     hb.enter_procedure_named(&p.heading.name);
 
-    if p.heading.name == "ParseOneKey" && module_name == "Jwks" {
-        let scope_count = sema.symtab.scope_count();
-        let sym_count = hb.current_scope.map(|s| sema.symtab.symbols_in_scope(s).len()).unwrap_or(0);
-        let jwks_scope = sema.symtab.lookup_module_scope("Jwks");
-        // Check if tok is in scope 56 (current) by name
-        let has_tok = hb.current_scope.and_then(|s| sema.symtab.lookup_in_scope_direct(s, "tok")).is_some();
-        let has_tok_chain = hb.current_scope.and_then(|s| sema.symtab.lookup_in_scope(s, "tok")).is_some();
-        eprintln!("DEBUG ParseOneKey: scope={:?} syms={} jwks_mod={:?} has_tok_direct={} has_tok_chain={}",
-            hb.current_scope, sym_count, jwks_scope, has_tok, has_tok_chain);
-        // What IS scope 56?
-        if let Some(sid) = hb.current_scope {
-            eprintln!("  scope {} name={:?} parent={:?}", sid, sema.symtab.scope_name(sid), sema.symtab.scope_parent(sid));
-        }
-        // Find ALL ParseOneKey scopes
-        for id in 0..scope_count {
-            if sema.symtab.scope_name(id).map_or(false, |n| n == "ParseOneKey") {
-                let n = sema.symtab.symbols_in_scope(id).len();
-                eprintln!("  scope[{}] ParseOneKey: parent={:?} syms={}", id, sema.symtab.scope_parent(id), n);
-            }
-        }
-    }
 
     // Populate local declarations using the proc's scope (correctly set by enter_procedure_named)
     let proc_locals = {
