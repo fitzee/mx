@@ -1212,14 +1212,8 @@ impl CodeGen {
                 self.emit(&format!("{} (*{}){};\n", elem_c, c_name, arr_suffix));
             }
         } else {
-            let ctype = self.type_id_to_c(tid);
-            // Only add array suffix for inline (unnamed) array types.
-            // Named array types (in typeid_c_names) have the suffix in their typedef.
-            let array_suffix = if self.typeid_c_names.contains_key(&tid) {
-                String::new()
-            } else {
-                self.type_id_array_suffix(resolved)
-            };
+            // Resolve to element type + suffix for correct C multi-dimensional arrays
+            let (ctype, array_suffix) = self.field_type_and_suffix(resolved);
             self.emit_indent();
             self.emit(&format!("{} {}{};\n", ctype, c_name, array_suffix));
         }

@@ -609,10 +609,14 @@ impl CodeGen {
         // This allows other TUs (including main) to reference these symbols.
         if self.multi_tu {
             if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+                let def_scope = self.sema.symtab.lookup_module_scope(&def_mod.name);
                 for d in &def_mod.definitions {
                     if let Definition::Var(v) = d {
-                        let ctype = self.type_to_c(&v.typ);
-                        let array_suffix = self.type_array_suffix(&v.typ);
+                        let tid = def_scope
+                            .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &v.names[0]))
+                            .map(|s| s.typ).unwrap_or(TY_INTEGER);
+                        let ctype = self.type_id_to_c(tid);
+                        let array_suffix = self.type_id_array_suffix(tid);
                         for name in &v.names {
                             let c_name = format!("{}_{}", imp.name, name);
                             self.emitln(&format!("extern {} {}{};", ctype, c_name, array_suffix));
@@ -632,11 +636,27 @@ impl CodeGen {
             self.emit(&format!("/* MX_MODULE_DEFS {} */\n", imp.name));
         }
 
-        // Variable declarations from definition module (exported VARs)
+        // Variable declarations from definition module (exported VARs) via TypeId
         if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
+            let def_scope = self.sema.symtab.lookup_module_scope(&def_mod.name);
             for d in &def_mod.definitions {
                 if let Definition::Var(v) = d {
-                    self.gen_var_decl(v);
+                    let tid = def_scope
+                        .and_then(|sid| self.sema.symtab.lookup_in_scope(sid, &v.names[0]))
+                        .map(|s| s.typ)
+                        .unwrap_or(TY_INTEGER);
+                    for name in &v.names {
+                        let g = crate::hir::HirGlobalDecl {
+                            name: name.clone(),
+                            mangled: format!("{}_{}", imp.name, name),
+                            type_id: tid,
+                            exported: true,
+                            c_type: String::new(),
+                            c_array_suffix: String::new(),
+                            is_proc_type: false,
+                        };
+                        self.gen_hir_global_decl(&g);
+                    }
                 }
             }
         }

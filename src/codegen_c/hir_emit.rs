@@ -403,8 +403,8 @@ impl super::CodeGen {
         let resolved = self.resolve_hir_alias(tid);
         match self.sema.types.get(resolved) {
             crate::types::Type::Array { elem_type, high, .. } => {
-                let inner_type = self.type_id_to_c(*elem_type);
-                let inner_suffix = self.type_id_array_suffix(*elem_type);
+                // Recurse: if elem is also an array (or alias to array), flatten
+                let (inner_type, inner_suffix) = self.field_type_and_suffix(*elem_type);
                 (inner_type, format!("[{} + 1]{}", high, inner_suffix))
             }
             _ => {
