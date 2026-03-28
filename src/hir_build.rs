@@ -207,7 +207,72 @@ pub fn build_module(
                     exc_id,
                 });
             }
-            _ => {} // Module — handled separately
+            Declaration::Module(local_mod) => {
+                // Hoist local module declarations into parent HirModule.
+                // Procedures get hoisted (C can't nest function defs).
+                // Types, consts, vars are emitted inline.
+                for d in &local_mod.block.decls {
+                    match d {
+                        Declaration::Procedure(p) => {
+                            let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
+                            procedures.push(hir_proc);
+                            new_proc_decls.push(build_proc_decl(&p.heading, &p.block.decls, &module_name, sema, false, None));
+                            for nd in &p.block.decls {
+                                if let Declaration::Procedure(np) = nd {
+                                    new_proc_decls.push(build_proc_decl(&np.heading, &np.block.decls, &module_name, sema, true, Some(&p.heading.name)));
+                                }
+                            }
+                        }
+                        Declaration::Type(t) => {
+                            let sym = sema.symtab.lookup_any(&t.name);
+                            let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                            let exported = sym.map(|s| s.exported).unwrap_or(false);
+                            let td = HirTypeDecl {
+                                name: t.name.clone(),
+                                mangled: format!("{}_{}", module_name, t.name),
+                                type_id,
+                                exported,
+                            };
+                            new_type_decls.push(td);
+                        }
+                        Declaration::Const(c) => {
+                            let sym = sema.symtab.lookup_any(&c.name);
+                            let val = sym.and_then(|s| match &s.kind {
+                                SymbolKind::Constant(cv) => Some(const_value_to_hir(cv)),
+                                _ => None,
+                            }).unwrap_or(ConstVal::Integer(0));
+                            let type_id = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
+                            new_const_decls.push(HirConstDecl {
+                                name: c.name.clone(),
+                                mangled: format!("{}_{}", module_name, c.name),
+                                value: val.clone(),
+                                type_id,
+                                exported: sym.map(|s| s.exported).unwrap_or(false),
+                                c_type: const_val_c_type(&val),
+                            });
+                        }
+                        Declaration::Var(v) => {
+                            let type_id = sema.symtab.lookup_any(&v.names[0])
+                                .map(|s| s.typ).unwrap_or(TY_INTEGER);
+                            for name in &v.names {
+                                let exported = sema.symtab.lookup_any(name)
+                                    .map(|s| s.exported).unwrap_or(false);
+                                new_global_decls.push(HirGlobalDecl {
+                                    name: name.clone(),
+                                    mangled: format!("{}_{}", module_name, name),
+                                    type_id,
+                                    exported,
+                                    c_type: String::new(),
+                                    c_array_suffix: String::new(),
+                                    is_proc_type: false,
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

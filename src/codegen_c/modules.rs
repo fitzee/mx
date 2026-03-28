@@ -23,57 +23,12 @@ impl CodeGen {
             self.emit_type_descs();
         }
 
-        // Forward declarations for procedures from HIR
+        // Forward declarations for procedures from HIR (includes local module procs)
         self.emit_hir_forward_decls();
-        // Also forward-declare procs from nested local modules
-        for decl in &m.block.decls {
-            if let Declaration::Module(local_mod) = decl {
-                for d in &local_mod.block.decls {
-                    if let Declaration::Procedure(p) = d {
-                        let mod_name = self.module_name.clone();
-                        let sig = self.prebuilt_hir.as_ref().and_then(|hir| {
-                            hir.proc_decls.iter()
-                                .find(|pd| pd.sig.name == p.heading.name && pd.sig.module == mod_name)
-                                .map(|pd| pd.sig.clone())
-                        });
-                        if let Some(ref s) = sig {
-                            self.register_hir_proc_params(s);
-                            self.gen_hir_proc_prototype(s);
-                            self.emit(";\n");
-                        } else {
-                            let fallback_sig = crate::hir_build::build_proc_decl(
-                                &p.heading, &p.block.decls, &self.module_name, &self.sema, false, None).sig;
-                            self.register_hir_proc_params(&fallback_sig);
-                            self.gen_hir_proc_prototype(&fallback_sig);
-                            self.emit(";\n");
-                        }
-                    }
-                }
-            }
-        }
         self.newline();
 
-        // Pass 1: Emit global variable declarations from HIR
+        // Emit global variable declarations from HIR (includes local module vars)
         self.emit_hir_global_decls();
-        // Also emit vars from nested local modules (still AST-driven)
-        for decl in &m.block.decls {
-            if let Declaration::Module(local_mod) = decl {
-                for d in &local_mod.block.decls {
-                    if let Declaration::Var(v) = d {
-                        // TypeId-based var emission for nested module vars
-                        let sym = self.sema.symtab.lookup_innermost(&v.names[0]);
-                        let tid = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
-                        let resolved = self.resolve_hir_alias(tid);
-                        let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
-                        for name in &v.names {
-                            let c_name = self.mangle_decl_name(name);
-                            self.emit_indent();
-                            self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
-                        }
-                    }
-                }
-            }
-        }
         // Pass 2: Emit Procedures and Modules (skip Var/Const/Type)
         for decl in &m.block.decls {
             match decl {
