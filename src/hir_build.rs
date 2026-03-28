@@ -94,11 +94,11 @@ pub fn build_module(
             Declaration::Procedure(p) => {
                 let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
                 procedures.push(hir_proc);
-                new_proc_decls.push(build_proc_decl(&p.heading, &module_name, sema, false, None));
+                new_proc_decls.push(build_proc_decl(&p.heading, &p.block.decls, &module_name, sema, false, None));
                 // Also add nested proc decls
                 for nd in &p.block.decls {
                     if let Declaration::Procedure(np) = nd {
-                        new_proc_decls.push(build_proc_decl(&np.heading, &module_name, sema, true, Some(&p.heading.name)));
+                        new_proc_decls.push(build_proc_decl(&np.heading, &np.block.decls, &module_name, sema, true, Some(&p.heading.name)));
                     }
                 }
             }
@@ -333,7 +333,7 @@ pub fn build_module(
                     }
                 }
                 Declaration::Procedure(p) => {
-                    emp_proc_decls.push(build_proc_decl(&p.heading, &imp.name, sema, false, None));
+                    emp_proc_decls.push(build_proc_decl(&p.heading, &p.block.decls, &imp.name, sema, false, None));
                 }
                 _ => {}
             }
@@ -519,9 +519,10 @@ fn build_proc(
     }
 }
 
-/// Build a HirProcDecl (sig only, no body) from an AST ProcHeading.
+/// Build a HirProcDecl (sig + locals) from an AST ProcHeading + block declarations.
 fn build_proc_decl(
     h: &ast::ProcHeading,
+    block_decls: &[ast::Declaration],
     module_name: &str,
     sema: &SemanticAnalyzer,
     is_nested: bool,
@@ -590,7 +591,33 @@ fn build_proc_decl(
             has_closure_env: false,
         },
         body: None,
-        locals: Vec::new(),
+        locals: {
+            // Populate local declarations with TypeIds from the proc's scope
+            let proc_scope = sema.symtab.lookup_module_scope(&h.name);
+            let mut locals = Vec::new();
+            for d in block_decls {
+                if let ast::Declaration::Var(v) = d {
+                    // Look up in proc scope first, then module scope
+                    let var_tid = proc_scope
+                        .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &v.names[0]))
+                        .or_else(|| sema.symtab.lookup_module_scope(module_name)
+                            .and_then(|sid| sema.symtab.lookup_in_scope_direct(sid, &v.names[0])))
+                        .or_else(|| sema.symtab.lookup_innermost(&v.names[0]))
+                        .map(|s| s.typ)
+                        .unwrap_or(TY_INTEGER);
+                    for name in &v.names {
+                        locals.push(HirLocalDecl {
+                            name: name.clone(),
+                            type_id: var_tid,
+                            c_type: String::new(),
+                            c_array_suffix: String::new(),
+                            is_proc_type: false,
+                        });
+                    }
+                }
+            }
+            locals
+        },
         nested_procs: Vec::new(),
         closure_captures: Vec::new(),
         except_handler: None,
