@@ -126,7 +126,12 @@ pub struct CodeGen {
     /// Maps module name → list of exported procedure names (from parsed .def files)
     module_exports: HashMap<String, Vec<(String, Vec<ParamCodegenInfo>)>>,
     /// Pending implementation modules to be generated before the main module
+    /// Pending implementation modules for sema analysis in generate_or_errors path
     pending_modules: Option<Vec<ImplementationModule>>,
+    /// Pending module names for embedded generation (topo-sorted before emission)
+    pending_module_names: Vec<String>,
+    /// Import dependencies per module (for topo sorting): mod_name → [dep_mod_names]
+    module_import_deps: HashMap<String, Vec<String>>,
     /// Exception names from definition modules (M2+ only), keyed by module name
     def_exception_names: HashMap<String, Vec<String>>,
     /// Maps nested proc name → env struct type name it receives (e.g., "Add" → "Accumulate_env")
@@ -295,6 +300,8 @@ impl CodeGen {
             imported_modules: HashSet::new(),
             module_exports: HashMap::new(),
             pending_modules: None,
+            pending_module_names: Vec::new(),
+            module_import_deps: HashMap::new(),
             def_exception_names: HashMap::new(),
             closure_env_type: HashMap::new(),
             closure_env_fields: HashMap::new(),
@@ -400,11 +407,26 @@ impl CodeGen {
     pub fn add_imported_module(&mut self, imp: ImplementationModule) {
         let mod_name = imp.name.clone();
         let exports = self.build_module_exports_from_sema(&mod_name);
-        self.module_exports.insert(mod_name, exports);
-        if self.pending_modules.is_none() {
-            self.pending_modules = Some(Vec::new());
-        }
+        self.module_exports.insert(mod_name.clone(), exports);
+        let deps = Self::extract_import_deps(&imp.imports);
+        self.module_import_deps.insert(mod_name.clone(), deps);
+        self.pending_module_names.push(mod_name);
+        if self.pending_modules.is_none() { self.pending_modules = Some(Vec::new()); }
         self.pending_modules.as_mut().unwrap().push(imp);
+    }
+
+    fn extract_import_deps(imports: &[crate::ast::Import]) -> Vec<String> {
+        let mut deps = Vec::new();
+        for imp in imports {
+            if let Some(ref from_mod) = imp.from_module {
+                deps.push(from_mod.clone());
+            } else {
+                for name in &imp.names {
+                    deps.push(name.name.clone());
+                }
+            }
+        }
+        deps
     }
 
     pub fn pre_register_type_names(&mut self, def: &crate::ast::DefinitionModule) {
@@ -511,13 +533,21 @@ impl CodeGen {
                 }
             }
         }
-        // Extract M2+ exception names for later emission
+        // Extract M2+ exception names and import deps for later use
         let exc_names: Vec<String> = def.definitions.iter()
             .filter_map(|d| if let crate::ast::Definition::Exception(e) = d { Some(e.name.clone()) } else { None })
             .collect();
         if !exc_names.is_empty() {
             self.def_exception_names.insert(def.name.clone(), exc_names);
         }
+        let def_deps = Self::extract_import_deps(&def.imports);
+        self.module_import_deps.entry(def.name.clone())
+            .and_modify(|existing| {
+                for d in &def_deps {
+                    if !existing.contains(d) { existing.push(d.clone()); }
+                }
+            })
+            .or_insert(def_deps);
         if def.foreign_lang.is_none() {
             self.def_modules.insert(def.name.clone(), def.clone());
         }
@@ -533,10 +563,11 @@ impl CodeGen {
     pub fn add_imported_module_no_sema(&mut self, imp: ImplementationModule) {
         let mod_name = imp.name.clone();
         let exports = self.build_module_exports_from_sema(&mod_name);
-        self.module_exports.insert(mod_name, exports);
-        if self.pending_modules.is_none() {
-            self.pending_modules = Some(Vec::new());
-        }
+        self.module_exports.insert(mod_name.clone(), exports);
+        let deps = Self::extract_import_deps(&imp.imports);
+        self.module_import_deps.insert(mod_name.clone(), deps);
+        self.pending_module_names.push(mod_name);
+        if self.pending_modules.is_none() { self.pending_modules = Some(Vec::new()); }
         self.pending_modules.as_mut().unwrap().push(imp);
     }
 

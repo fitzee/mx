@@ -894,6 +894,74 @@ impl CodeGen {
         self.typeid_c_names = new_typeid_names;
     }
 
+    /// Topologically sort module names using pre-extracted import dependencies.
+    fn topo_sort_by_deps(&self, module_names: &[String]) -> CompileResult<Vec<String>> {
+        let names: HashSet<String> = module_names.iter().cloned().collect();
+        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+        for mod_name in module_names {
+            let mut my_deps = Vec::new();
+            // Get deps from pre-extracted module imports
+            if let Some(import_deps) = self.module_import_deps.get(mod_name) {
+                for dep in import_deps {
+                    if names.contains(dep) && !my_deps.contains(dep) {
+                        my_deps.push(dep.clone());
+                    }
+                }
+            }
+            // Def module deps are already merged into module_import_deps during registration
+            deps.insert(mod_name.clone(), my_deps);
+        }
+        // Topo sort using DFS
+        let mut visited = HashSet::new();
+        let mut visiting = HashSet::new();
+        let mut order = Vec::new();
+        for name in module_names {
+            Self::topo_visit(name, &deps, &mut visited, &mut visiting, &mut order)
+                .map_err(|cycle_desc| {
+                    CompileError::codegen(
+                        crate::errors::SourceLoc::new("<codegen>", 0, 0),
+                        format!("module dependency cycle detected: {}", cycle_desc),
+                    )
+                })?;
+        }
+        Ok(order)
+    }
+
+    fn extract_import_deps_from_ast_imports(imports: &[crate::ast::Import]) -> Vec<String> {
+        let mut deps = Vec::new();
+        for imp in imports {
+            if let Some(ref from_mod) = imp.from_module {
+                deps.push(from_mod.clone());
+            } else {
+                for name in &imp.names {
+                    deps.push(name.name.clone());
+                }
+            }
+        }
+        deps
+    }
+
+    fn topo_visit(
+        name: &str,
+        deps: &HashMap<String, Vec<String>>,
+        visited: &mut HashSet<String>,
+        visiting: &mut HashSet<String>,
+        order: &mut Vec<String>,
+    ) -> Result<(), String> {
+        if visited.contains(name) { return Ok(()); }
+        if visiting.contains(name) { return Err(name.to_string()); }
+        visiting.insert(name.to_string());
+        if let Some(d) = deps.get(name) {
+            for dep in d {
+                Self::topo_visit(dep, deps, visited, visiting, order)?;
+            }
+        }
+        visiting.remove(name);
+        visited.insert(name.to_string());
+        order.push(name.to_string());
+        Ok(())
+    }
+
     /// Topologically sort implementation modules so dependencies come before dependents.
     /// Also considers imports from corresponding .def files so that type dependencies
     /// (e.g. `FROM Gfx IMPORT Renderer;` in Font.def) are properly ordered.
@@ -1095,8 +1163,9 @@ impl CodeGen {
 
         self.gen_foreign_extern_decls();
 
-        if let Some(pending) = self.pending_modules.take() {
-            let sorted = Self::topo_sort_modules(pending, &self.def_modules)?;
+        if !self.pending_module_names.is_empty() {
+            let pending_names = std::mem::take(&mut self.pending_module_names);
+            let sorted = self.topo_sort_by_deps(&pending_names)?;
             let embedded_names: std::collections::HashSet<String> =
                 sorted.iter().cloned().collect();
 
