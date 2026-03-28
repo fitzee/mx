@@ -1,84 +1,6 @@
 use super::*;
 
 impl CodeGen {
-    // ── Declarations ────────────────────────────────────────────────
-
-    pub(crate) fn gen_declaration(&mut self, decl: &Declaration) {
-        match decl {
-            Declaration::Const(c) => {
-                let sym = self.sema.symtab.lookup_innermost(&c.name);
-                if let Some(s) = sym {
-                    if let crate::symtab::SymbolKind::Constant(cv) = &s.kind {
-                        let val = crate::hir_build::const_value_to_hir(cv);
-                        let hc = crate::hir::HirConstDecl {
-                            name: c.name.clone(),
-                            mangled: self.mangle(&c.name),
-                            value: val.clone(),
-                            type_id: s.typ,
-                            exported: s.exported,
-                            c_type: crate::hir_build::const_val_c_type(&val),
-                        };
-                        self.gen_hir_const_decl(&hc);
-                    }
-                }
-            }
-            Declaration::Type(t) => {
-                let sym = self.sema.symtab.lookup_innermost(&t.name);
-                let tid = sym.map(|s| s.typ).unwrap_or(crate::types::TY_VOID);
-                if tid != crate::types::TY_VOID {
-                    self.gen_type_decl_from_id(&t.name, tid);
-                }
-            }
-            Declaration::Var(v) => {
-                let sym = self.sema.symtab.lookup_innermost(&v.names[0]);
-                let tid = sym.map(|s| s.typ).unwrap_or(TY_INTEGER);
-                let resolved = self.resolve_hir_alias(tid);
-                let is_proc = matches!(self.sema.types.get(resolved), crate::types::Type::ProcedureType { .. });
-                let is_ptr_to_arr = if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
-                    matches!(self.sema.types.get(self.resolve_hir_alias(*base)), crate::types::Type::Array { .. })
-                } else { false };
-                if is_proc {
-                    let c_name = self.mangle_decl_name(&v.names[0]);
-                    self.emit_indent();
-                    let d = self.proc_type_decl_from_id(resolved, &c_name, false);
-                    self.emit(&format!("{};\n", d));
-                } else if is_ptr_to_arr {
-                    if let crate::types::Type::Pointer { base } = self.sema.types.get(resolved) {
-                        let (elem_c, arr_suffix) = self.field_type_and_suffix(*base);
-                        for name in &v.names {
-                            let c_name = self.mangle_decl_name(name);
-                            self.emit_indent();
-                            self.emit(&format!("{} (*{}){};\n", elem_c, c_name, arr_suffix));
-                        }
-                    }
-                } else {
-                    let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
-                    for name in &v.names {
-                        let c_name = self.mangle_decl_name(name);
-                        self.emit_indent();
-                        self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
-                    }
-                }
-            }
-            Declaration::Procedure(p) => self.gen_proc_decl(p),
-            Declaration::Module(m) => {
-                let inside_proc = !self.parent_proc_stack.is_empty();
-                self.emitln(&format!("/* Nested module {} */", m.name));
-                for d in &m.block.decls {
-                    if inside_proc && matches!(d, Declaration::Procedure(_)) {
-                        continue;
-                    }
-                    self.gen_declaration(d);
-                }
-            }
-            Declaration::Exception(e) => {
-                self.exception_names.insert(e.name.clone());
-                let mangled = format!("M2_EXC_{}", self.mangle(&e.name));
-                self.emitln(&format!("#define {} __COUNTER__", mangled));
-            }
-        }
-    }
-
     /// Emit a constant declaration from prebuilt HIR.
     /// Since HirConstDecl.value is already fully evaluated, no topo-sort needed.
     pub(crate) fn gen_hir_const_decl(&mut self, c: &crate::hir::HirConstDecl) {
@@ -495,10 +417,6 @@ impl CodeGen {
             self.emit_indent();
             self.emit(&format!("{} {}{};\n", ctype, c_name, array_suffix));
         }
-    }
-
-    pub(crate) fn gen_proc_decl(&mut self, p: &ProcDecl) {
-        self.gen_proc_by_name(&p.heading.name);
     }
 
     pub(crate) fn gen_proc_by_name(&mut self, proc_name: &str) {
