@@ -1799,9 +1799,20 @@ impl<'a> HirBuilder<'a> {
         let mut current_ty = base_tid;
 
         for sel in selectors {
-            let proj = self.resolve_selector(current_ty, sel)?;
-            current_ty = proj.ty;
-            projections.push(proj);
+            // Multi-index: A[i, j] has one Selector::Index with multiple exprs.
+            // Emit one projection per index expression.
+            if let Selector::Index(exprs, loc_span) = sel {
+                for expr in exprs {
+                    let single_sel = Selector::Index(vec![expr.clone()], loc_span.clone());
+                    let proj = self.resolve_selector(current_ty, &single_sel)?;
+                    current_ty = proj.ty;
+                    projections.push(proj);
+                }
+            } else {
+                let proj = self.resolve_selector(current_ty, sel)?;
+                current_ty = proj.ty;
+                projections.push(proj);
+            }
         }
 
         Some(Place {
@@ -1823,7 +1834,7 @@ impl<'a> HirBuilder<'a> {
                 self.resolve_field_projection(resolved, field_name)
             }
             Selector::Index(exprs, _) => {
-                // Current type must be an array.
+                // For multi-index (A[i, j]), only the first index is handled here.
                 let idx_expr = if let Some(e) = exprs.first() {
                     self.lower_expr(e)
                 } else {
