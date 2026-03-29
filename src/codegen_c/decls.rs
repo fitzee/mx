@@ -196,6 +196,22 @@ impl CodeGen {
             crate::types::Type::Pointer { base } => {
                 let base_id = *base;
                 let base_resolved = self.resolve_hir_alias(base_id);
+                // If the base is a named record type that already has a C struct,
+                // emit typedef BaseRecord *TypeName instead of creating a new struct.
+                let base_c_name = self.typeid_c_names.get(&base_resolved).cloned()
+                    .or_else(|| self.typeid_c_names.get(&base_id).cloned());
+                let base_has_struct = base_c_name.as_ref()
+                    .map(|n| self.known_type_names.contains(n))
+                    .unwrap_or(false);
+                if base_has_struct {
+                    let base_name = base_c_name.unwrap();
+                    self.emitln(&format!("typedef {} *{};", base_name, c_type_name));
+                    self.pointer_base_types.insert(c_type_name.clone(), base_name.clone());
+                    self.pointer_base_types.insert(name.to_string(), base_name.clone());
+                    if let Some(fields) = self.record_fields.get(&base_name).cloned() {
+                        self.record_fields.insert(name.to_string(), fields);
+                    }
+                } else {
                 let base_ty = self.sema.types.get(base_resolved).clone();
                 if let crate::types::Type::Record { ref fields, .. } = base_ty {
                     let fields = fields.clone();
@@ -230,6 +246,7 @@ impl CodeGen {
                     self.emit_indent();
                     self.emit(&format!("typedef {} *{};\n", base_c, c_type_name));
                 }
+                } // end else (no existing base C type)
             }
             crate::types::Type::Array { elem_type, high, .. } => {
                 let elem_tid = *elem_type;
