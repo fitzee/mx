@@ -72,7 +72,7 @@ impl LLVMCodeGen {
 
             HirStmtKind::ProcCall { target, args } => {
                 // HIR has already expanded open arrays and marked VAR with AddrOf
-                let arg_str = self.expand_hir_call_args(args);
+                let mut arg_str = self.expand_hir_call_args(args);
 
                 match target {
                     HirCallTarget::Direct(sid) if builtins::is_builtin_proc(&sid.source_name) => {
@@ -214,6 +214,19 @@ impl LLVMCodeGen {
                     HirCallTarget::Direct(sid) => {
                         let call_name = self.fn_name_map.get(&sid.mangled)
                             .cloned().unwrap_or_else(|| sid.mangled.clone());
+                        // Coerce arg types to match declared param types
+                        if let Some(params) = self.proc_params.get(&call_name)
+                            .or_else(|| self.proc_params.get(&sid.source_name)).cloned()
+                        {
+                            for (i, param) in params.iter().enumerate() {
+                                if i < arg_str.len() && arg_str[i].starts_with("double ") && param.llvm_type == "float" {
+                                    let val_name = arg_str[i].strip_prefix("double ").unwrap().to_string();
+                                    let tmp = self.next_tmp();
+                                    self.emitln(&format!("  {} = fptrunc double {} to float", tmp, val_name));
+                                    arg_str[i] = format!("float {}", tmp);
+                                }
+                            }
+                        }
                         self.emitln(&format!("  call void @{}({})",
                             call_name, arg_str.join(", ")));
                     }

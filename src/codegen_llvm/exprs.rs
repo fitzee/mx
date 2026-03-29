@@ -315,9 +315,23 @@ impl LLVMCodeGen {
                 }
 
                 let ret_ty = self.tl_type_str(expr.ty);
-                let arg_str = self.expand_hir_call_args(args);
+                let mut arg_str = self.expand_hir_call_args(args);
                 let call_name = self.fn_name_map.get(&target.mangled)
                     .cloned().unwrap_or_else(|| target.mangled.clone());
+                // Coerce arg types to match declared param types
+                if let Some(params) = self.proc_params.get(&call_name).or_else(|| self.proc_params.get(&target.source_name)).cloned() {
+                    for (i, param) in params.iter().enumerate() {
+                        if i < arg_str.len() {
+                            // Check for double→float coercion needed
+                            if arg_str[i].starts_with("double ") && param.llvm_type == "float" {
+                                let val_name = arg_str[i].strip_prefix("double ").unwrap();
+                                let tmp = self.next_tmp();
+                                self.emitln(&format!("  {} = fptrunc double {} to float", tmp, val_name));
+                                arg_str[i] = format!("float {}", tmp);
+                            }
+                        }
+                    }
+                }
                 let tmp = self.next_tmp();
                 if ret_ty == "void" {
                     self.emitln(&format!("  call void @{}({})",

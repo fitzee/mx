@@ -181,13 +181,27 @@ impl LLVMCodeGen {
                     current_type_id = Some(proj.ty);
                 }
                 ProjectionKind::VariantField { field_index, record_ty, .. } => {
-                    // Variant fields: use the field_index within the flattened struct
+                    // Variant fields: offset by fixed fields + tag within the flattened struct
                     let record_llvm_ty = self.tl_record_type_str(*record_ty)
                         .unwrap_or_else(|| current_ty.clone());
+                    // Count fixed fields before the variant part:
+                    // fixed fields + tag (not including variant pseudo-field or variant fields)
+                    let fixed_field_count = if let crate::types::Type::Record { fields, variants } = self.sema.types.get(*record_ty) {
+                        if let Some(vi) = variants {
+                            // Fixed fields = total fields - variant pseudo-field - all variant case fields
+                            let variant_field_count: usize = vi.variants.iter()
+                                .map(|vc| vc.fields.len()).sum();
+                            let pseudo = 1; // "variant" pseudo-field
+                            fields.len() - pseudo - variant_field_count
+                        } else {
+                            fields.len()
+                        }
+                    } else { 0 };
+                    let actual_index = fixed_field_count + field_index;
                     let gep = self.next_tmp();
                     self.emitln(&format!(
                         "  {} = getelementptr inbounds {}, ptr {}, i32 0, i32 {}",
-                        gep, record_llvm_ty, current_addr, field_index
+                        gep, record_llvm_ty, current_addr, actual_index
                     ));
                     current_addr = gep;
                     current_ty = self.tl_type_str(proj.ty);
