@@ -95,13 +95,62 @@ pub fn build_module(
             Declaration::Procedure(p) => {
                 let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
                 procedures.push(hir_proc);
-                new_proc_decls.push(build_proc_decl(&p.heading, &p.block.decls, &module_name, sema, false, None));
-                // Also add nested proc decls
+                let mut pd = build_proc_decl(&p.heading, &p.block.decls, &module_name, sema, false, None);
+                // Lower the procedure body
+                if let Some(stmts) = &p.block.body {
+                    let mut hb = HirBuilder::new(
+                        &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+                    );
+                    hb.set_imported_modules(imported_modules.clone());
+                    hb.set_import_alias_map(import_aliases.clone());
+                    hb.enter_procedure_named(&p.heading.name);
+                    for fp in &p.heading.params {
+                        if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                            for name in &fp.names {
+                                let high_name = format!("{}_high", name);
+                                hb.register_var(&high_name, TY_INTEGER);
+                                hb.register_local(&high_name);
+                            }
+                        }
+                    }
+                    pd.body = Some(hb.lower_stmts(stmts));
+                }
+                if let Some(stmts) = &p.block.except {
+                    let mut hb = HirBuilder::new(
+                        &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+                    );
+                    hb.set_imported_modules(imported_modules.clone());
+                    hb.set_import_alias_map(import_aliases.clone());
+                    hb.enter_procedure_named(&p.heading.name);
+                    pd.except_handler = Some(hb.lower_stmts(stmts));
+                }
+                // Build nested proc decls with bodies
                 for nd in &p.block.decls {
                     if let Declaration::Procedure(np) = nd {
-                        new_proc_decls.push(build_proc_decl(&np.heading, &np.block.decls, &module_name, sema, true, Some(&p.heading.name)));
+                        let mut npd = build_proc_decl(&np.heading, &np.block.decls, &module_name, sema, true, Some(&p.heading.name));
+                        if let Some(stmts) = &np.block.body {
+                            let mut nhb = HirBuilder::new(
+                                &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+                            );
+                            nhb.set_imported_modules(imported_modules.clone());
+                            nhb.set_import_alias_map(import_aliases.clone());
+                            nhb.enter_procedure_named(&p.heading.name);
+                            nhb.enter_procedure_named(&np.heading.name);
+                            for fp in &np.heading.params {
+                                if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                                    for name in &fp.names {
+                                        let high_name = format!("{}_high", name);
+                                        nhb.register_var(&high_name, TY_INTEGER);
+                                        nhb.register_local(&high_name);
+                                    }
+                                }
+                            }
+                            npd.body = Some(nhb.lower_stmts(stmts));
+                        }
+                        pd.nested_procs.push(npd);
                     }
                 }
+                new_proc_decls.push(pd);
             }
             Declaration::Type(t) => {
                 // Use scoped lookup: try module scope, then scope 0 (program module top-level)
@@ -217,12 +266,60 @@ pub fn build_module(
                         Declaration::Procedure(p) => {
                             let hir_proc = build_proc(p, &module_name, &imported_modules, &import_aliases, sema);
                             procedures.push(hir_proc);
-                            new_proc_decls.push(build_proc_decl(&p.heading, &p.block.decls, &module_name, sema, false, None));
+                            let mut pd = build_proc_decl(&p.heading, &p.block.decls, &module_name, sema, false, None);
+                            if let Some(stmts) = &p.block.body {
+                                let mut hb = HirBuilder::new(
+                                    &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+                                );
+                                hb.set_imported_modules(imported_modules.clone());
+                                hb.set_import_alias_map(import_aliases.clone());
+                                hb.enter_procedure_named(&p.heading.name);
+                                for fp in &p.heading.params {
+                                    if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                                        for name in &fp.names {
+                                            let high_name = format!("{}_high", name);
+                                            hb.register_var(&high_name, TY_INTEGER);
+                                            hb.register_local(&high_name);
+                                        }
+                                    }
+                                }
+                                pd.body = Some(hb.lower_stmts(stmts));
+                            }
+                            if let Some(stmts) = &p.block.except {
+                                let mut hb = HirBuilder::new(
+                                    &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+                                );
+                                hb.set_imported_modules(imported_modules.clone());
+                                hb.set_import_alias_map(import_aliases.clone());
+                                hb.enter_procedure_named(&p.heading.name);
+                                pd.except_handler = Some(hb.lower_stmts(stmts));
+                            }
                             for nd in &p.block.decls {
                                 if let Declaration::Procedure(np) = nd {
-                                    new_proc_decls.push(build_proc_decl(&np.heading, &np.block.decls, &module_name, sema, true, Some(&p.heading.name)));
+                                    let mut npd = build_proc_decl(&np.heading, &np.block.decls, &module_name, sema, true, Some(&p.heading.name));
+                                    if let Some(stmts) = &np.block.body {
+                                        let mut nhb = HirBuilder::new(
+                                            &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
+                                        );
+                                        nhb.set_imported_modules(imported_modules.clone());
+                                        nhb.set_import_alias_map(import_aliases.clone());
+                                        nhb.enter_procedure_named(&p.heading.name);
+                                        nhb.enter_procedure_named(&np.heading.name);
+                                        for fp in &np.heading.params {
+                                            if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                                                for name in &fp.names {
+                                                    let high_name = format!("{}_high", name);
+                                                    nhb.register_var(&high_name, TY_INTEGER);
+                                                    nhb.register_local(&high_name);
+                                                }
+                                            }
+                                        }
+                                        npd.body = Some(nhb.lower_stmts(stmts));
+                                    }
+                                    pd.nested_procs.push(npd);
                                 }
                             }
+                            new_proc_decls.push(pd);
                         }
                         Declaration::Type(t) => {
                             let sym = sema.symtab.lookup_any(&t.name);
