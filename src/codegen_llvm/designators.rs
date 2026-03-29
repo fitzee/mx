@@ -109,6 +109,17 @@ impl LLVMCodeGen {
                     let ptr = self.next_tmp();
                     self.emitln(&format!("  {} = load ptr, ptr {}", ptr, addr));
                     (ptr, "ptr".to_string(), Some(sid.ty))
+                } else if ty.starts_with('[') {
+                    // Named array params: alloca stores ptr to the array (passed as ptr)
+                    // Need to load the pointer for correct GEP
+                    let resolved = self.resolve_alias_id(sid.ty);
+                    if self.named_array_params.last().map(|s| s.contains(&sid.source_name)).unwrap_or(false) {
+                        let ptr = self.next_tmp();
+                        self.emitln(&format!("  {} = load ptr, ptr {}", ptr, addr));
+                        (ptr, ty, Some(sid.ty))
+                    } else {
+                        (addr, ty, Some(sid.ty))
+                    }
                 } else {
                     (addr, ty, Some(sid.ty))
                 }

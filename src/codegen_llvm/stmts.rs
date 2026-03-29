@@ -555,7 +555,10 @@ impl LLVMCodeGen {
                 self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
 
                 if excepts.is_empty() {
-                    // No handlers — re-raise
+                    // No EXCEPT handlers — run FINALLY then re-raise
+                    if let Some(ref fb) = finally_body {
+                        for s in fb { self.gen_hir_statement(s); }
+                    }
                     self.emitln(&format!("  call void @m2_exc_reraise(ptr {})", frame));
                     self.emitln("  unreachable");
                     let dead = self.next_label("exc.dead");
