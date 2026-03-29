@@ -403,8 +403,8 @@ impl CodeGen {
                     crate::types::Type::LongCard => "uint64_t",
                     crate::types::Type::Word => "uint32_t",
                     crate::types::Type::Byte => "uint8_t",
-                    crate::types::Type::Complex => "float _Complex",
-                    crate::types::Type::LongComplex => "double _Complex",
+                    crate::types::Type::Complex => "m2_COMPLEX",
+                    crate::types::Type::LongComplex => "m2_LONGCOMPLEX",
                     _ => "int32_t",
                 };
                 // Track unsigned aliases

@@ -132,7 +132,13 @@ impl super::CodeGen {
             HirExprKind::UnaryOp { op, operand } => {
                 let inner = self.hir_expr_to_string(operand);
                 match op {
-                    UnaryOp::Neg => format!("(-{})", inner),
+                    UnaryOp::Neg => {
+                        if self.is_hir_complex(operand) {
+                            format!("m2_complex_neg({})", inner)
+                        } else {
+                            format!("(-{})", inner)
+                        }
+                    }
                     UnaryOp::Pos => inner,
                 }
             }
@@ -214,12 +220,18 @@ impl super::CodeGen {
             BinaryOp::RealDiv if self.is_hir_set(left) || self.is_hir_set(right) => {
                 format!("({} ^ {})", l, r)
             }
+            BinaryOp::RealDiv if self.is_hir_complex(left) => {
+                format!("m2_complex_div({}, {})", l, r)
+            }
             BinaryOp::RealDiv => {
                 format!("((double)({}) / (double)({}))", l, r)
             }
             BinaryOp::In => {
                 format!("(({} >> {}) & 1)", r, l)
             }
+            // COMPLEX comparison
+            BinaryOp::Eq if self.is_hir_complex(left) => format!("m2_complex_eq({}, {})", l, r),
+            BinaryOp::Ne if self.is_hir_complex(left) => format!("(!m2_complex_eq({}, {}))", l, r),
             // Comparison and logical — no outer parens to avoid -Wparentheses-equality
             BinaryOp::Eq => format!("{} == {}", l, r),
             BinaryOp::Ne => format!("{} != {}", l, r),
@@ -233,10 +245,21 @@ impl super::CodeGen {
             BinaryOp::Add if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} | {})", l, r),
             BinaryOp::Sub if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} & ~({}))", l, r),
             BinaryOp::Mul if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} & {})", l, r),
+            // COMPLEX arithmetic — use helper functions instead of C operators
+            BinaryOp::Add if self.is_hir_complex(left) => format!("m2_complex_add({}, {})", l, r),
+            BinaryOp::Sub if self.is_hir_complex(left) => format!("m2_complex_sub({}, {})", l, r),
+            BinaryOp::Mul if self.is_hir_complex(left) => format!("m2_complex_mul({}, {})", l, r),
             BinaryOp::Add => format!("({} + {})", l, r),
             BinaryOp::Sub => format!("({} - {})", l, r),
             BinaryOp::Mul => format!("({} * {})", l, r),
         }
+    }
+
+    /// Check if an HIR expression is a COMPLEX or LONGCOMPLEX type.
+    fn is_hir_complex(&self, expr: &HirExpr) -> bool {
+        let resolved = self.resolve_hir_alias(expr.ty);
+        matches!(self.sema.types.get(resolved),
+            crate::types::Type::Complex | crate::types::Type::LongComplex)
     }
 
     /// Check if an HIR expression is a set type (BITSET or user-defined SET).
@@ -381,6 +404,8 @@ impl super::CodeGen {
             TY_WORD => "uint32_t".to_string(),
             TY_BYTE => "uint8_t".to_string(),
             TY_VOID => "void".to_string(),
+            crate::types::TY_COMPLEX => "m2_COMPLEX".to_string(),
+            crate::types::TY_LONGCOMPLEX => "m2_LONGCOMPLEX".to_string(),
             _ => {
                 let resolved = self.resolve_hir_alias(tid);
                 // Check TypeId → C name map first (covers records, enums registered by gen_type_decl)
@@ -436,8 +461,8 @@ impl super::CodeGen {
                         format!("{} (*)({})", ret, param_strs.join(", "))
                     }
                     crate::types::Type::Record { .. } => "int32_t".to_string(),
-                    crate::types::Type::Complex => "float _Complex".to_string(),
-                    crate::types::Type::LongComplex => "double _Complex".to_string(),
+                    crate::types::Type::Complex => "m2_COMPLEX".to_string(),
+                    crate::types::Type::LongComplex => "m2_LONGCOMPLEX".to_string(),
                     crate::types::Type::Opaque { .. } => "void *".to_string(),
                     crate::types::Type::StringLit(_) => "const char *".to_string(),
                     crate::types::Type::Nil => "void *".to_string(),
