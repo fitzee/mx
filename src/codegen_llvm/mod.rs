@@ -157,14 +157,11 @@ pub struct LLVMCodeGen {
     pub(crate) import_map: HashMap<String, String>,
     pub(crate) import_alias_map: HashMap<String, String>,
     pub(crate) imported_modules: HashSet<String>,
-    pub(crate) pending_modules: Option<Vec<ImplementationModule>>,
     pub(crate) pending_module_names: Vec<String>,
     pub(crate) module_imports: HashMap<String, Vec<crate::hir::HirImport>>,
     pub(crate) def_module_names: HashSet<String>,
     pub(crate) def_exception_names: HashMap<String, Vec<String>>,
     pub(crate) foreign_modules: HashSet<String>,
-    pub(crate) foreign_def_modules: Vec<DefinitionModule>,
-    pub(crate) def_modules: HashMap<String, DefinitionModule>,
     pub(crate) module_exports: HashMap<String, Vec<(String, Vec<ParamLLVMInfo>)>>,
     // ── RTTI (M2+ REF/OBJECT type descriptors) ────────────────────
     /// Maps type name → LLVM global symbol for M2_TypeDesc
@@ -277,14 +274,11 @@ impl LLVMCodeGen {
             import_map: HashMap::new(),
             import_alias_map: HashMap::new(),
             imported_modules: HashSet::new(),
-            pending_modules: None,
             pending_module_names: Vec::new(),
             module_imports: HashMap::new(),
             def_module_names: HashSet::new(),
             def_exception_names: HashMap::new(),
             foreign_modules: HashSet::new(),
-            foreign_def_modules: Vec::new(),
-            def_modules: HashMap::new(),
             module_exports: HashMap::new(),
             ref_type_descs: HashMap::new(),
             rtti_type_id_counter: 0,
@@ -343,16 +337,6 @@ impl LLVMCodeGen {
         self.sema = sema;
     }
 
-    /// Pre-register type names as Opaques for cross-module resolution.
-    pub fn pre_register_type_names(&mut self, def: &DefinitionModule) {
-        self.sema.pre_register_type_names(def);
-    }
-
-    pub fn register_def_module(&mut self, def: &DefinitionModule) {
-        self.register_def_module_impl(def, true);
-    }
-
-    /// Register a .def module's non-sema state only (when sema is shared).
     /// Store import list for a module (for topo sorting and import map building).
     pub fn register_module_imports(&mut self, name: &str, imports: Vec<crate::hir::HirImport>) {
         self.module_imports.entry(name.to_string())
@@ -407,98 +391,9 @@ impl LLVMCodeGen {
         }
     }
 
-    pub fn register_def_module_no_sema(&mut self, def: &DefinitionModule) {
-        self.register_def_module_impl(def, false);
-    }
-
-    fn register_def_module_impl(&mut self, def: &DefinitionModule, run_sema: bool) {
-        if run_sema {
-            self.sema.register_def_module(def);
-        }
-        if def.foreign_lang.is_none() {
-            self.def_modules.insert(def.name.clone(), def.clone());
-        }
-
-        if def.foreign_lang.is_some() {
-            self.foreign_modules.insert(def.name.clone());
-            self.foreign_def_modules.push(def.clone());
-
-            let mut exports = Vec::new();
-            for d in &def.definitions {
-                if let Definition::Procedure(h) = d {
-                    let mut param_info = Vec::new();
-                    for fp in &h.params {
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        let llvm_ty = self.llvm_type_for_type_node(&fp.typ);
-                        for name in &fp.names {
-                            let elem_ty = if is_open_array {
-                                if let TypeNode::OpenArray { elem_type, .. } = &fp.typ {
-                                    Some(self.llvm_type_for_type_node(elem_type))
-                                } else { None }
-                            } else { None };
-                            param_info.push(ParamLLVMInfo {
-                                name: name.clone(),
-                                is_var: fp.is_var,
-                                is_open_array,
-                                llvm_type: if fp.is_var { "ptr".to_string() } else { llvm_ty.clone() },
-                                open_array_elem_type: elem_ty,
-                            });
-                        }
-                    }
-                    exports.push((h.name.clone(), param_info));
-                }
-            }
-            self.module_exports.insert(def.name.clone(), exports);
-        }
-    }
-
     pub fn add_imported_module_by_name(&mut self, name: &str) {
         self.imported_modules.insert(name.to_string());
         self.pending_module_names.push(name.to_string());
-    }
-
-    pub fn add_imported_module(&mut self, imp: ImplementationModule) {
-        self.imported_modules.insert(imp.name.clone());
-        if self.pending_modules.is_none() {
-            self.pending_modules = Some(Vec::new());
-        }
-        self.pending_modules.as_mut().unwrap().push(imp);
-    }
-
-    /// Build module_exports from pending modules. Must be called AFTER
-    /// analyze_all_impl_modules() so sema has full type information.
-    fn build_module_exports(&mut self) {
-        let modules: Vec<_> = self.pending_modules.as_ref()
-            .map(|v| v.iter().cloned().collect())
-            .unwrap_or_default();
-        for imp in &modules {
-            let mut exports = Vec::new();
-            for decl in &imp.block.decls {
-                if let Declaration::Procedure(p) = decl {
-                    let mut param_info = Vec::new();
-                    for fp in &p.heading.params {
-                        let is_open_array = matches!(fp.typ, TypeNode::OpenArray { .. });
-                        let llvm_ty = self.llvm_type_for_type_node(&fp.typ);
-                        let elem_ty2 = if is_open_array {
-                            if let TypeNode::OpenArray { elem_type, .. } = &fp.typ {
-                                Some(self.llvm_type_for_type_node(elem_type))
-                            } else { None }
-                        } else { None };
-                        for name in &fp.names {
-                            param_info.push(ParamLLVMInfo {
-                                name: name.clone(),
-                                is_var: fp.is_var,
-                                is_open_array,
-                                llvm_type: if fp.is_var { "ptr".to_string() } else { llvm_ty.clone() },
-                                open_array_elem_type: elem_ty2.clone(),
-                            });
-                        }
-                    }
-                    exports.push((p.heading.name.clone(), param_info));
-                }
-            }
-            self.module_exports.insert(imp.name.clone(), exports);
-        }
     }
 
     pub fn is_foreign_module(&self, name: &str) -> bool {
@@ -506,50 +401,17 @@ impl LLVMCodeGen {
     }
 
     pub fn generate_or_errors(&mut self, unit: &CompilationUnit) -> Result<String, Vec<CompileError>> {
-        // Sema already fully populated by driver.
         self.sema.fixup_record_field_types();
-        self.build_module_exports();
         self.build_type_lowering();
-        let _hir_module = self.build_hir_module(unit);
         self.post_sema_generate(unit).map_err(|e| vec![e])?;
         Ok(self.finalize())
     }
 
     pub fn generate(&mut self, unit: &CompilationUnit) -> CompileResult<String> {
-        // Sema already fully populated by driver.
         self.sema.fixup_record_field_types();
-        self.build_module_exports();
         self.build_type_lowering();
-        // Build HIR module (parallel path — built but not consumed yet)
-        let _hir_module = self.build_hir_module(unit);
         self.post_sema_generate(unit)?;
         Ok(self.finalize())
-    }
-
-    /// Build an HIR module from the current compilation unit.
-    /// Call after sema is complete and before codegen.
-    /// The HIR module is a fully-resolved, typed representation that
-    /// backends can consume instead of walking the AST.
-    pub fn build_hir_module(&self, unit: &CompilationUnit) -> Option<crate::hir::HirModule> {
-        let mut hb = self.make_hir_builder();
-        match unit {
-            CompilationUnit::ProgramModule(m) => Some(hb.build_module_from_program(m)),
-            CompilationUnit::ImplementationModule(m) => Some(hb.build_module_from_impl(m)),
-            CompilationUnit::DefinitionModule(_) => None, // def modules don't produce HIR
-        }
-    }
-
-    /// Run full semantic analysis on all imported implementation modules.
-    /// Must run AFTER sema.analyze(main_unit) and BEFORE build_type_lowering()
-    /// so all types (including private impl-only types like records, pointers)
-    /// are fully registered in sema's type registry and scopes.
-    fn analyze_all_impl_modules(&mut self) {
-        let modules: Vec<_> = self.pending_modules.as_ref()
-            .map(|v| v.iter().cloned().collect())
-            .unwrap_or_default();
-        for imp in &modules {
-            self.sema.analyze_impl_module(imp);
-        }
     }
 
     /// Register a type descriptor for a REF/OBJECT type.
@@ -619,7 +481,7 @@ impl LLVMCodeGen {
                 // Definition modules don't produce output
                 Ok(())
             }
-            CompilationUnit::ImplementationModule(m) => self.gen_implementation_module(m),
+            CompilationUnit::ImplementationModule(_) => self.gen_implementation_module(),
         }
     }
 
@@ -786,50 +648,6 @@ impl LLVMCodeGen {
         }
     }
 
-    /// Create a debug type metadata ID for a TypeNode.
-    pub(crate) fn debug_type_for_type_node(&mut self, typ: &TypeNode) -> usize {
-        match typ {
-            TypeNode::Named(qi) => {
-                self.debug_type_for_named(&qi.name)
-            }
-            TypeNode::Pointer { base, .. } => {
-                let base_id = self.debug_type_for_type_node(base);
-                self.di.as_mut().unwrap().create_pointer_type(base_id, 64)
-            }
-            TypeNode::OpenArray { elem_type, .. } => {
-                // Open arrays are passed as ptr — treat as pointer to element
-                let elem_id = self.debug_type_for_type_node(elem_type);
-                self.di.as_mut().unwrap().create_pointer_type(elem_id, 64)
-            }
-            TypeNode::Array { elem_type, index_types, .. } => {
-                let elem_id = self.debug_type_for_type_node(elem_type);
-                let count = if let Some(idx_tn) = index_types.first() {
-                    if let TypeNode::Subrange { low, high, .. } = idx_tn {
-                        if let (ExprKind::IntLit(lo), ExprKind::IntLit(hi)) = (&low.kind, &high.kind) {
-                            (hi - lo + 1) as usize
-                        } else { 1 }
-                    } else { 1 }
-                } else { 1 };
-                let elem_size = self.debug_type_size_bits(elem_type);
-                self.di.as_mut().unwrap().create_array_type(elem_id, count, elem_size)
-            }
-            TypeNode::Record { fields, .. } => {
-                self.debug_type_for_record("RECORD", fields)
-            }
-            TypeNode::Subrange { .. } => {
-                self.di.as_mut().unwrap().get_m2_type("INTEGER")
-            }
-            TypeNode::Enumeration { .. } => {
-                self.di.as_mut().unwrap().get_m2_type("CARDINAL")
-            }
-            TypeNode::Set { .. } => {
-                self.di.as_mut().unwrap().get_m2_type("BITSET")
-            }
-            _ => {
-                self.di.as_mut().unwrap().get_m2_type("INTEGER")
-            }
-        }
-    }
 
     /// Create debug type for a named type — checks if it's a record, pointer, array, or builtin.
     fn debug_type_for_named(&mut self, name: &str) -> usize {
@@ -877,24 +695,6 @@ impl LLVMCodeGen {
         self.di.as_mut().unwrap().get_m2_type(name)
     }
 
-    /// Create debug type for an inline record TypeNode.
-    fn debug_type_for_record(&mut self, name: &str, fields: &[FieldList]) -> usize {
-        let file = self.source_file.clone();
-        let mut members = Vec::new();
-        let mut offset_bits = 0usize;
-        for fl in fields {
-            for f in &fl.fixed {
-                let ftype_node = &f.typ;
-                let ftype_id = self.debug_type_for_type_node(&ftype_node.clone());
-                let fsize = self.debug_type_size_bits(ftype_node);
-                for fname in &f.names {
-                    members.push((fname.clone(), ftype_id, fsize, offset_bits));
-                    offset_bits += fsize;
-                }
-            }
-        }
-        self.di.as_mut().unwrap().create_record_type(name, &file, 0, offset_bits, members)
-    }
 
     /// Map an LLVM type string to a debug type ID.
     fn debug_type_for_llvm_type_str(&mut self, ty: &str) -> usize {
@@ -931,19 +731,6 @@ impl LLVMCodeGen {
         }
     }
 
-    /// Get the size in bits for a type node (for debug array element sizing).
-    fn debug_type_size_bits(&self, typ: &TypeNode) -> usize {
-        match typ {
-            TypeNode::Named(qi) => match qi.name.as_str() {
-                "CHAR" | "BOOLEAN" => 8,
-                "INTEGER" | "CARDINAL" | "REAL" | "BITSET" => 32,
-                "LONGINT" | "LONGCARD" | "LONGREAL" => 64,
-                _ => 32, // fallback for user types
-            },
-            TypeNode::Pointer { .. } => 64,
-            _ => 32,
-        }
-    }
 
     pub(crate) fn intern_string(&mut self, s: &str) -> (String, usize) {
         // Check if already interned

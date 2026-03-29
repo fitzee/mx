@@ -196,12 +196,21 @@ impl LLVMCodeGen {
         Ok(())
     }
 
-    pub(crate) fn gen_implementation_module(&mut self, m: &ImplementationModule) -> CompileResult<()> {
-        self.module_name = m.name.clone();
-        self.source_file = m.loc.file.clone();
-        self.build_import_map(&m.imports);
+    pub(crate) fn gen_implementation_module(&mut self) -> CompileResult<()> {
+        let (mod_name, source_file) = if let Some(ref hir) = self.prebuilt_hir {
+            (hir.name.clone(), hir.source_file.clone())
+        } else {
+            return Err(CompileError::codegen(
+                crate::errors::SourceLoc::new("<codegen>", 0, 0),
+                "no prebuilt HIR for implementation module".to_string(),
+            ));
+        };
+        self.module_name = mod_name.clone();
+        self.source_file = source_file;
 
-        // Register proc_params
+        self.build_import_map_from_hir();
+
+        // Register proc_params from module_exports
         for (mod_name, exports) in &self.module_exports.clone() {
             for (proc_name, param_info) in exports {
                 let prefixed = format!("{}_{}", mod_name, proc_name);
@@ -209,38 +218,48 @@ impl LLVMCodeGen {
             }
         }
 
-        self.declare_imports(&m.imports);
+        self.declare_imports_from_hir();
         self.declare_runtime_helpers();
 
-        if let Some(pending) = self.pending_modules.take() {
-            for imp_mod in &pending {
-                self.gen_embedded_impl_module(imp_mod)?;
+        // Generate embedded implementation modules (topologically sorted)
+        if !self.pending_module_names.is_empty() {
+            let pending_names = std::mem::take(&mut self.pending_module_names);
+            let sorted = self.topo_sort_by_deps(&pending_names)?;
+            for imp_name in &sorted {
+                self.gen_embedded_impl_module_by_name(imp_name)?;
             }
         }
 
-        self.gen_type_decls(&m.block.decls);
+        // Declarations from prebuilt HIR
+        if let Some(ref hir) = self.prebuilt_hir.clone() {
+            self.gen_hir_type_decls_from(&hir.type_decls);
+        }
         self.gen_hir_const_decls();
-        self.gen_var_decls_global(&m.block.decls);
+        if let Some(ref hir) = self.prebuilt_hir.clone() {
+            self.gen_hir_var_decls_global_from(&hir.global_decls);
+        }
 
-        for decl in &m.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                self.gen_proc_decl(p)?;
+        // Procedures from prebuilt HIR
+        if let Some(ref hir) = self.prebuilt_hir.clone() {
+            for pd in &hir.proc_decls {
+                if !pd.sig.is_nested {
+                    self.gen_hir_proc_decl(pd)?;
+                }
             }
         }
 
         // Init function for this module
-        if let Some(stmts) = &m.block.body {
+        let hir_init = self.prebuilt_hir.as_ref().and_then(|h| h.init_body.clone());
+        if let Some(ref stmts) = hir_init {
             if !stmts.is_empty() {
-                let init_name = format!("{}_init", self.module_name);
+                let init_name = format!("{}_init", mod_name);
                 self.emitln(&format!("define void @{}() {{", init_name));
                 self.emitln("bb.entry:");
                 self.in_function = true;
                 self.tmp_counter = 0;
                 self.locals.push(HashMap::new());
 
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(stmts);
-                self.gen_hir_statements(&hir_stmts);
+                self.gen_hir_statements(stmts);
 
                 self.emitln("  ret void");
                 self.emitln("}");
@@ -552,210 +571,6 @@ impl LLVMCodeGen {
                     }
                 } else if self.foreign_modules.contains(imp.module.as_str()) {
                     // Foreign C modules — declare functions with proper signatures
-                    for iname in &imp.names {
-                        let bare_name = &iname.name;
-                        if !self.declared_fns.contains(bare_name) {
-                            if let Some(sym) = self.sema.symtab.lookup_any(bare_name) {
-                                if let crate::symtab::SymbolKind::Procedure { params, return_type, .. } = &sym.kind {
-                                    let ret_ty = if let Some(ret_id) = return_type {
-                                        self.llvm_type_for_type_id(*ret_id)
-                                    } else { "void".to_string() };
-                                    let param_tys: Vec<String> = params.iter()
-                                        .map(|p| {
-                                            let ty = self.llvm_type_for_type_id(p.typ);
-                                            if p.is_var || ty == "ptr" { "ptr".to_string() } else { ty }
-                                        })
-                                        .collect();
-                                    let params_str = param_tys.join(", ");
-                                    self.emit_preambleln(&format!("declare {} @{}({})", ret_ty, bare_name, params_str));
-                                } else {
-                                    self.emit_preambleln(&format!("declare i32 @{}(...)", bare_name));
-                                }
-                            } else {
-                                self.emit_preambleln(&format!("declare i32 @{}(...)", bare_name));
-                            }
-                            self.declared_fns.insert(bare_name.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Legacy AST-based methods (kept for gen_implementation_module) ─
-
-    pub(crate) fn gen_embedded_impl_module(&mut self, imp: &ImplementationModule) -> CompileResult<()> {
-        let saved_module = self.module_name.clone();
-        let saved_import_map = self.import_map.clone();
-        let saved_import_alias_map = self.import_alias_map.clone();
-        let saved_imported_modules = self.imported_modules.clone();
-
-        self.module_name = imp.name.clone();
-
-        self.build_import_map(&imp.imports);
-        self.declare_imports(&imp.imports);
-
-        // Process type/const/var declarations from the definition module first
-        if let Some(def_mod) = self.def_modules.get(&imp.name).cloned() {
-            let def_decls: Vec<Declaration> = def_mod.definitions.iter().filter_map(|d| {
-                match d {
-                    Definition::Type(td) => Some(Declaration::Type(td.clone())),
-                    Definition::Const(cd) => Some(Declaration::Const(cd.clone())),
-                    Definition::Var(vd) => Some(Declaration::Var(vd.clone())),
-                    _ => None,
-                }
-            }).collect();
-            self.gen_const_decls(&def_decls);
-            self.gen_type_decls(&def_decls);
-            self.gen_var_decls_global(&def_decls);
-
-            for d in &def_mod.definitions {
-                if let Definition::Type(td) = d {
-                    if let Some(ty) = self.type_map.get(&td.name).cloned() {
-                        let prefixed = format!("{}_{}", imp.name, td.name);
-                        self.type_map.insert(prefixed.clone(), ty);
-                        if let Some(fields) = self.record_fields.get(&td.name).cloned() {
-                            self.record_fields.insert(prefixed, fields);
-                        }
-                    }
-                }
-            }
-        }
-
-        self.gen_type_decls(&imp.block.decls);
-        self.gen_const_decls(&imp.block.decls);
-        self.gen_exception_decls(&imp.block.decls);
-        self.gen_var_decls_global(&imp.block.decls);
-
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                let name = self.mangle(&p.heading.name);
-                self.declared_fns.insert(name);
-                self.declared_fns.insert(p.heading.name.clone());
-            }
-        }
-        for decl in &imp.block.decls {
-            if let Declaration::Procedure(p) = decl {
-                self.gen_proc_decl(p)?;
-            }
-        }
-
-        if let Some(stmts) = &imp.block.body {
-            if !stmts.is_empty() {
-                let init_name = format!("{}_init", imp.name);
-                self.emitln(&format!("define void @{}() {{", init_name));
-                self.emitln("bb.entry:");
-                self.in_function = true;
-                self.tmp_counter = 0;
-                self.locals.push(HashMap::new());
-
-                let mut hb = self.make_hir_builder();
-                let hir_stmts = hb.lower_stmts(stmts);
-                self.gen_hir_statements(&hir_stmts);
-
-                self.emitln("  ret void");
-                self.emitln("}");
-                self.locals.pop();
-                self.in_function = false;
-                self.embedded_init_modules.push(imp.name.clone());
-            }
-        }
-
-        self.module_name = saved_module;
-        self.import_map = saved_import_map;
-        self.import_alias_map = saved_import_alias_map;
-        self.imported_modules = saved_imported_modules;
-        Ok(())
-    }
-
-    /// Topologically sort implementation modules by dependency order (legacy AST-based).
-    pub(crate) fn topo_sort_impl_modules(&self, modules: Vec<ImplementationModule>) -> Vec<ImplementationModule> {
-        let mod_map: HashMap<String, &ImplementationModule> = modules.iter()
-            .map(|m| (m.name.clone(), m))
-            .collect();
-        let mut visited = HashSet::new();
-        let mut sorted_names = Vec::new();
-
-        fn visit(
-            name: &str,
-            mod_map: &HashMap<String, &ImplementationModule>,
-            visited: &mut HashSet<String>,
-            sorted: &mut Vec<String>,
-        ) {
-            if visited.contains(name) { return; }
-            visited.insert(name.to_string());
-            if let Some(m) = mod_map.get(name) {
-                for imp in &m.imports {
-                    if let Some(ref from_mod) = imp.from_module {
-                        visit(from_mod, mod_map, visited, sorted);
-                    } else {
-                        for n in &imp.names {
-                            visit(&n.name, mod_map, visited, sorted);
-                        }
-                    }
-                }
-            }
-            sorted.push(name.to_string());
-        }
-
-        for name in mod_map.keys() {
-            visit(name, &mod_map, &mut visited, &mut sorted_names);
-        }
-
-        sorted_names.iter()
-            .filter_map(|name| modules.iter().find(|m| m.name == *name).cloned())
-            .collect()
-    }
-
-    pub(crate) fn build_import_map(&mut self, imports: &[Import]) {
-        for imp in imports {
-            if let Some(ref from_mod) = imp.from_module {
-                for iname in &imp.names {
-                    let local = iname.local_name().to_string();
-                    self.import_map.insert(local.clone(), from_mod.clone());
-                    if let Some(ref alias) = iname.alias {
-                        self.import_alias_map.insert(alias.clone(), iname.name.clone());
-                    }
-                }
-            } else {
-                for iname in &imp.names {
-                    self.imported_modules.insert(iname.name.clone());
-                }
-            }
-        }
-    }
-
-    /// Resolve a name to its module-qualified form.
-    pub(crate) fn resolve_name(&self, name: &str) -> String {
-        if let Some(module) = self.import_map.get(name) {
-            let orig = self.import_alias_map.get(name).cloned().unwrap_or_else(|| name.to_string());
-            if stdlib::is_stdlib_module(module) || self.foreign_modules.contains(module.as_str()) {
-                return format!("{}_{}", module, orig);
-            }
-            return format!("{}_{}", module, orig);
-        }
-        name.to_string()
-    }
-
-    /// Declare external functions needed by imported modules (legacy AST-based).
-    pub(crate) fn declare_imports(&mut self, imports: &[Import]) {
-        for imp in imports {
-            if imp.from_module.is_none() {
-                for iname in &imp.names {
-                    if stdlib::is_stdlib_module(&iname.name) && !stdlib::is_native_stdlib(&iname.name) {
-                        let exports = stdlib::get_stdlib_exports(&iname.name);
-                        for export in &exports {
-                            self.declare_stdlib_function(&iname.name, export);
-                        }
-                    }
-                }
-            }
-            if let Some(ref from_mod) = imp.from_module {
-                if stdlib::is_stdlib_module(from_mod) && !stdlib::is_native_stdlib(from_mod) {
-                    for iname in &imp.names {
-                        self.declare_stdlib_function(from_mod, &iname.name);
-                    }
-                } else if self.foreign_modules.contains(from_mod.as_str()) {
                     for iname in &imp.names {
                         let bare_name = &iname.name;
                         if !self.declared_fns.contains(bare_name) {
