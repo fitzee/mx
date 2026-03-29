@@ -1292,6 +1292,19 @@ impl<'a> HirBuilder<'a> {
                     return;
                 }
             }
+            // Also search grandchild scopes (proc inside nested MODULE)
+            for mid in 0..count {
+                if self.symtab.scope_parent(mid) == Some(cur) {
+                    for id in 0..count {
+                        if self.symtab.scope_name(id) == Some(proc_name)
+                            && self.symtab.scope_parent(id) == Some(mid)
+                        {
+                            self.current_scope = Some(id);
+                            return;
+                        }
+                    }
+                }
+            }
         }
         // Fallback: nested proc mangled name (e.g., "Outer_Inner").
         // Walk the scope chain: split on '_', find each segment as a child scope.

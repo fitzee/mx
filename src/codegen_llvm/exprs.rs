@@ -280,9 +280,36 @@ impl LLVMCodeGen {
                                 return Val::with_tid(tmp, "i32".to_string(), expr.ty);
                             }
                         }
+                        "CMPLX" => {
+                            // Construct { float, float } struct inline
+                            if args.len() >= 2 {
+                                let re = self.gen_hir_expr(&args[0]);
+                                let im = self.gen_hir_expr(&args[1]);
+                                let tmp1 = self.next_tmp();
+                                self.emitln(&format!("  {} = insertvalue {{ float, float }} undef, float {}, 0", tmp1, re.name));
+                                let tmp2 = self.next_tmp();
+                                self.emitln(&format!("  {} = insertvalue {{ float, float }} {}, float {}, 1", tmp2, tmp1, im.name));
+                                return Val::with_tid(tmp2, "{ float, float }".to_string(), expr.ty);
+                            }
+                        }
+                        "RE" => {
+                            if let Some(arg) = args.first() {
+                                let val = self.gen_hir_expr(arg);
+                                let tmp = self.next_tmp();
+                                self.emitln(&format!("  {} = extractvalue {{ float, float }} {}, 0", tmp, val.name));
+                                return Val::with_tid(tmp, "float".to_string(), expr.ty);
+                            }
+                        }
+                        "IM" => {
+                            if let Some(arg) = args.first() {
+                                let val = self.gen_hir_expr(arg);
+                                let tmp = self.next_tmp();
+                                self.emitln(&format!("  {} = extractvalue {{ float, float }} {}, 1", tmp, val.name));
+                                return Val::with_tid(tmp, "float".to_string(), expr.ty);
+                            }
+                        }
                         _ => {
                             // Other builtins: evaluate args and emit as regular call
-                            // This handles cases we haven't specialized yet
                         }
                     }
                 }
