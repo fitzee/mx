@@ -350,9 +350,48 @@ impl LLVMCodeGen {
             }
 
             HirExprKind::BinaryOp { op, left, right } => {
-                let lhs = self.gen_hir_expr(left);
-                let rhs = self.gen_hir_expr(right);
-                self.gen_hir_binary_op(*op, &lhs, &rhs, left.ty, right.ty, expr.ty)
+                // Short-circuit AND/OR: don't evaluate RHS if LHS determines result
+                if *op == BinaryOp::And || *op == BinaryOp::Or {
+                    let lhs = self.gen_hir_expr(left);
+                    let lhs_bool = self.to_i1(&lhs);
+                    let eval_rhs_label = self.next_label("sc.rhs");
+                    let merge_label = self.next_label("sc.merge");
+                    let current_block = self.current_block.clone();
+                    if *op == BinaryOp::And {
+                        // AND: if lhs is false, skip rhs (result = false)
+                        self.emitln(&format!("  br i1 {}, label %{}, label %{}",
+                            lhs_bool, eval_rhs_label, merge_label));
+                    } else {
+                        // OR: if lhs is true, skip rhs (result = true)
+                        self.emitln(&format!("  br i1 {}, label %{}, label %{}",
+                            lhs_bool, merge_label, eval_rhs_label));
+                    }
+                    self.emitln(&format!("{}:", eval_rhs_label));
+                    self.current_block = eval_rhs_label.clone();
+                    let rhs = self.gen_hir_expr(right);
+                    let rhs_bool = self.to_i1(&rhs);
+                    let rhs_block = self.current_block.clone();
+                    self.emitln(&format!("  br label %{}", merge_label));
+                    self.emitln(&format!("{}:", merge_label));
+                    self.current_block = merge_label.clone();
+                    let result = self.next_tmp();
+                    if *op == BinaryOp::And {
+                        // AND: false from lhs-block, rhs_bool from rhs-block
+                        self.emitln(&format!("  {} = phi i1 [ false, %{} ], [ {}, %{} ]",
+                            result, current_block, rhs_bool, rhs_block));
+                    } else {
+                        // OR: true from lhs-block, rhs_bool from rhs-block
+                        self.emitln(&format!("  {} = phi i1 [ true, %{} ], [ {}, %{} ]",
+                            result, current_block, rhs_bool, rhs_block));
+                    }
+                    let ext = self.next_tmp();
+                    self.emitln(&format!("  {} = zext i1 {} to i32", ext, result));
+                    Val::with_tid(ext, "i32".to_string(), expr.ty)
+                } else {
+                    let lhs = self.gen_hir_expr(left);
+                    let rhs = self.gen_hir_expr(right);
+                    self.gen_hir_binary_op(*op, &lhs, &rhs, left.ty, right.ty, expr.ty)
+                }
             }
 
             HirExprKind::Not(operand) => {

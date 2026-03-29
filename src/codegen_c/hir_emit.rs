@@ -227,8 +227,8 @@ impl super::CodeGen {
             BinaryOp::Le => format!("{} <= {}", l, r),
             BinaryOp::Gt => format!("{} > {}", l, r),
             BinaryOp::Ge => format!("{} >= {}", l, r),
-            BinaryOp::And => format!("{} && {}", l, r),
-            BinaryOp::Or => format!("{} || {}", l, r),
+            BinaryOp::And => format!("({} && {})", l, r),
+            BinaryOp::Or => format!("({} || {})", l, r),
             // Arithmetic — for set types, +/*/-  mean union/intersection/difference
             BinaryOp::Add if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} | {})", l, r),
             BinaryOp::Sub if self.is_hir_set(left) || self.is_hir_set(right) => format!("({} & ~({}))", l, r),
