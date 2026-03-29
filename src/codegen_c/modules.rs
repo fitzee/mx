@@ -1054,9 +1054,7 @@ impl CodeGen {
 
         if !self.pending_module_names.is_empty() {
             let pending_names = std::mem::take(&mut self.pending_module_names);
-            eprintln!("TOPO INPUT: {:?}", pending_names);
             let sorted = self.topo_sort_by_deps(&pending_names)?;
-            eprintln!("TOPO OUTPUT: {:?}", sorted);
             let embedded_names: std::collections::HashSet<String> =
                 sorted.iter().cloned().collect();
 
