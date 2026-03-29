@@ -540,13 +540,45 @@ impl LLVMCodeGen {
                 Val::with_tid(tmp, float_ty.to_string(), result_ty)
             }
             BinaryOp::IntDiv => {
-                let div_op = if is_unsigned { "udiv" } else { "sdiv" };
-                self.emitln(&format!("  {} = {} {} {}, {}", tmp, div_op, common, l.name, r.name));
+                if is_unsigned {
+                    self.emitln(&format!("  {} = udiv {} {}, {}", tmp, common, l.name, r.name));
+                } else if common == "i64" {
+                    // PIM4 floored division for LONGINT
+                    if !self.declared_fns.contains("m2_div64") {
+                        self.emit_preambleln("declare i64 @m2_div64(i64, i64)");
+                        self.declared_fns.insert("m2_div64".to_string());
+                    }
+                    self.emitln(&format!("  {} = call i64 @m2_div64({} {}, {} {})",
+                        tmp, common, l.name, common, r.name));
+                } else {
+                    // PIM4 floored division
+                    if !self.declared_fns.contains("m2_div") {
+                        self.emit_preambleln("declare i32 @m2_div(i32, i32)");
+                        self.declared_fns.insert("m2_div".to_string());
+                    }
+                    self.emitln(&format!("  {} = call i32 @m2_div({} {}, {} {})",
+                        tmp, common, l.name, common, r.name));
+                }
                 Val::with_tid(tmp, common, result_ty)
             }
             BinaryOp::Mod => {
-                let rem_op = if is_unsigned { "urem" } else { "srem" };
-                self.emitln(&format!("  {} = {} {} {}, {}", tmp, rem_op, common, l.name, r.name));
+                if is_unsigned {
+                    self.emitln(&format!("  {} = urem {} {}, {}", tmp, common, l.name, r.name));
+                } else if common == "i64" {
+                    if !self.declared_fns.contains("m2_mod64") {
+                        self.emit_preambleln("declare i64 @m2_mod64(i64, i64)");
+                        self.declared_fns.insert("m2_mod64".to_string());
+                    }
+                    self.emitln(&format!("  {} = call i64 @m2_mod64({} {}, {} {})",
+                        tmp, common, l.name, common, r.name));
+                } else {
+                    if !self.declared_fns.contains("m2_mod") {
+                        self.emit_preambleln("declare i32 @m2_mod(i32, i32)");
+                        self.declared_fns.insert("m2_mod".to_string());
+                    }
+                    self.emitln(&format!("  {} = call i32 @m2_mod({} {}, {} {})",
+                        tmp, common, l.name, common, r.name));
+                }
                 Val::with_tid(tmp, common, result_ty)
             }
             // Logical

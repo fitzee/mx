@@ -1420,7 +1420,8 @@ impl SemanticAnalyzer {
     }
 
     fn get_ordinal_range(&self, type_id: TypeId) -> (i64, i64) {
-        match self.types.get(type_id) {
+        let resolved = self.resolve_alias(type_id);
+        match self.types.get(resolved) {
             Type::Subrange { low, high, .. } => (*low, *high),
             Type::Enumeration { variants, .. } => (0, variants.len() as i64 - 1),
             Type::Boolean => (0, 1),
