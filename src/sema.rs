@@ -992,7 +992,9 @@ impl SemanticAnalyzer {
                         self.types.get(type_id),
                         Type::Opaque { module, .. } if module.is_empty()
                     );
-                    if is_forward_placeholder && type_id != old_id {
+                    let is_opaque = matches!(self.types.get(old_id), Type::Opaque { .. });
+                    if (is_forward_placeholder || is_opaque) && type_id != old_id {
+                        // Create alias so both names resolve to the same underlying type
                         *self.types.get_mut(old_id) = Type::Alias {
                             name: t.name.clone(),
                             target: type_id,
