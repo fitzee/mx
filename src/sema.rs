@@ -1500,7 +1500,8 @@ impl SemanticAnalyzer {
                 else_body,
             } => {
                 let et = self.analyze_expr(expr);
-                if et != TY_ERROR && et != TY_VOID && !self.types.get(et).is_ordinal() {
+                let et_resolved = self.resolve_alias(et);
+                if et != TY_ERROR && et != TY_VOID && !self.types.get(et_resolved).is_ordinal() {
                     self.error(&stmt.loc, "CASE expression must be ordinal type");
                 }
                 for branch in branches {
@@ -1558,7 +1559,7 @@ impl SemanticAnalyzer {
                     .map(|(ds, sym)| (ds, sym.typ));
                 if let Some((def_scope, vt)) = lookup {
                     self.record_use_ref(&stmt.loc, var, def_scope);
-                    if !self.types.get(vt).is_ordinal() {
+                    if !self.types.get(self.resolve_alias(vt)).is_ordinal() {
                         self.error(&stmt.loc, "FOR variable must be ordinal type");
                     }
                 } else {
@@ -1585,7 +1586,8 @@ impl SemanticAnalyzer {
             StatementKind::With { desig, body } => {
                 let dt = self.analyze_designator(desig);
                 if dt != TY_ERROR && dt != TY_VOID {
-                    if !matches!(self.types.get(dt), Type::Record { .. }) {
+                    let dt_resolved = self.resolve_alias(dt);
+                    if !matches!(self.types.get(dt_resolved), Type::Record { .. } | Type::Pointer { .. }) {
                         self.error(&stmt.loc, "WITH requires a record variable");
                     }
                 }
