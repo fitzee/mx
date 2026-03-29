@@ -863,20 +863,46 @@ impl CodeGen {
         self.child_env_type_stack.push(if has_any_captures { Some(env_type_name.clone()) } else { None });
         self.child_captures_stack.push(child_capture_info);
 
-        // Body from HIR — search top-level and nested procs
+        // Body from HIR — prefer proc_decls (has correct bodies for nested procs)
         let mod_name = self.module_name.clone();
+        // For nested procs, the parent is second-to-last (current proc is already pushed)
+        let parent_proc_name = if self.parent_proc_stack.len() >= 2 {
+            let parent = &self.parent_proc_stack[self.parent_proc_stack.len() - 2];
+            Some(parent.rsplit('_').next().unwrap_or(parent).to_string())
+        } else {
+            None
+        };
         let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
-            hir.procedures.iter()
-                .find(|hp| hp.name.source_name == proc_name
-                    && hp.name.module.as_deref() == Some(mod_name.as_str()))
-                .and_then(|hp| hp.body.clone())
+            // 1. Search proc_decls (new format, correct bodies)
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == mod_name)
+                .and_then(|pd| pd.body.clone())
                 .or_else(|| {
-                    hir.procedures.iter()
-                        .flat_map(|hp| hp.nested_procs.iter())
-                        .find(|np| np.name.source_name == proc_name
-                            && np.name.module.as_deref() == Some(mod_name.as_str()))
-                        .and_then(|np| np.body.clone())
+                    // Nested in proc_decls — use parent to disambiguate
+                    if let Some(ref parent) = parent_proc_name {
+                        hir.proc_decls.iter()
+                            .find(|pd| pd.sig.name == *parent && pd.sig.module == mod_name)
+                            .and_then(|pd| pd.nested_procs.iter()
+                                .find(|np| np.sig.name == proc_name)
+                                .and_then(|np| np.body.clone()))
+                    } else {
+                        hir.proc_decls.iter()
+                            .flat_map(|pd| pd.nested_procs.iter())
+                            .find(|np| np.sig.name == proc_name && np.sig.module == mod_name)
+                            .and_then(|np| np.body.clone())
+                    }
                 })
+                // 2. Fallback: legacy HirProc (top-level only)
+                .or_else(|| hir.procedures.iter()
+                    .find(|hp| hp.name.source_name == proc_name
+                        && hp.name.module.as_deref() == Some(mod_name.as_str()))
+                    .and_then(|hp| hp.body.clone()))
+                // 3. Nested in embedded modules
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == mod_name)
+                    .and_then(|e| e.procedures.iter()
+                        .find(|pd| pd.sig.name == proc_name)
+                        .and_then(|pd| pd.body.clone())))
         });
         // Check for procedure-level EXCEPT handler
         let except_body = self.prebuilt_hir.as_ref().and_then(|hir| {
