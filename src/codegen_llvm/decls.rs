@@ -136,20 +136,22 @@ impl LLVMCodeGen {
                     self.const_values.insert(self.mangle(&c.name), *ch as i64);
                 }
                 ConstVal::String(s) => {
-                    let (str_name, _) = self.intern_string(s);
-                    let mut mangled = self.mangle(&c.name);
-                    if self.globals.contains_key(&mangled) {
-                        self.anon_record_counter += 1;
-                        mangled = format!("{}_{}", mangled, self.anon_record_counter);
-                    }
-                    let global_name = format!("@{}", mangled);
-                    self.emit_preambleln(&format!("{} = global ptr {}", global_name, str_name));
-                    self.globals.insert(c.name.clone(), (global_name.clone(), "ptr".to_string()));
-                    self.globals.insert(mangled, (global_name, "ptr".to_string()));
-                    self.string_const_lengths.insert(c.name.clone(), s.len());
                     if s.len() == 1 {
+                        // Single-char string constant: treat as CHAR value, not string pointer
                         self.const_values.insert(c.name.clone(), s.as_bytes()[0] as i64);
                         self.const_values.insert(self.mangle(&c.name), s.as_bytes()[0] as i64);
+                    } else {
+                        let (str_name, _) = self.intern_string(s);
+                        let mut mangled = self.mangle(&c.name);
+                        if self.globals.contains_key(&mangled) {
+                            self.anon_record_counter += 1;
+                            mangled = format!("{}_{}", mangled, self.anon_record_counter);
+                        }
+                        let global_name = format!("@{}", mangled);
+                        self.emit_preambleln(&format!("{} = global ptr {}", global_name, str_name));
+                        self.globals.insert(c.name.clone(), (global_name.clone(), "ptr".to_string()));
+                        self.globals.insert(mangled, (global_name, "ptr".to_string()));
+                        self.string_const_lengths.insert(c.name.clone(), s.len());
                     }
                 }
                 ConstVal::Real(v) => {

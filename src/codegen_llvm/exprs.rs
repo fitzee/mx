@@ -42,11 +42,11 @@ impl LLVMCodeGen {
             }
 
             HirExprKind::StringLit(ref s) => {
-                // Single-char or empty strings with CHAR type: produce the
-                // char value directly, not a string pointer.
-                if expr.ty == crate::types::TY_CHAR {
+                // Single-char strings: produce the char value directly
+                if expr.ty == crate::types::TY_CHAR || s.len() <= 1 {
                     let ch_val = if s.is_empty() { 0u32 } else { s.as_bytes()[0] as u32 };
-                    return Val::with_tid(format!("{}", ch_val), "i8".to_string(), expr.ty);
+                    return Val::with_tid(format!("{}", ch_val), "i8".to_string(),
+                        if s.len() <= 1 { crate::types::TY_CHAR } else { expr.ty });
                 }
                 let (name, _len) = self.intern_string(s);
                 Val::with_tid(name, "ptr".to_string(), expr.ty)

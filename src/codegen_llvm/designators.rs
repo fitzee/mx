@@ -138,8 +138,13 @@ impl LLVMCodeGen {
                             ConstVal::Boolean(v) => if *v { "1".into() } else { "0".into() },
                             ConstVal::Char(v) => format!("{}", *v as u32),
                             ConstVal::String(s) => {
-                                let (name, _len) = self.intern_string(s);
-                                return Val::with_tid(name, "ptr".to_string(), place.ty);
+                                if s.len() == 1 {
+                                    // Single-char string constant: emit as i8 char value
+                                    format!("{}", s.as_bytes()[0])
+                                } else {
+                                    let (name, _len) = self.intern_string(s);
+                                    return Val::with_tid(name, "ptr".to_string(), place.ty);
+                                }
                             }
                             ConstVal::Set(v) => format!("{}", v),
                             ConstVal::Nil => "null".into(),
