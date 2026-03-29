@@ -54,6 +54,22 @@ impl CodeGen {
 
     /// Emit a type declaration from TypeId (no AST bridge needed).
     /// Handles: Record, Enum, Pointer, Array, ProcedureType, Set, Subrange, Alias, Opaque.
+    /// Get the M2 type name for a TypeId.
+    fn type_name_for_type_id(&self, id: TypeId) -> String {
+        use crate::types::Type;
+        match self.sema.types.get(id) {
+            Type::Alias { name, .. } => name.clone(),
+            Type::Enumeration { name, .. } => name.clone(),
+            Type::Opaque { name, .. } => name.clone(),
+            Type::Ref { .. } => {
+                // Ref types don't carry their name — look up from typeid_c_names
+                self.typeid_c_names.get(&id).cloned().unwrap_or_default()
+            }
+            Type::Object { name, .. } => name.clone(),
+            _ => String::new(),
+        }
+    }
+
     pub(crate) fn gen_type_decl_from_id(&mut self, name: &str, type_id: TypeId) {
         self.known_type_names.insert(name.to_string());
         if let Some(ref mod_name) = self.generating_for_module {
@@ -318,6 +334,41 @@ impl CodeGen {
                 let ctype = self.type_id_to_c(*target);
                 self.emit_indent();
                 self.emit(&format!("typedef {} {};\n", ctype, c_type_name));
+            }
+            crate::types::Type::Ref { target, .. } => {
+                // REF type: typedef base* TypeName; + register RTTI descriptor
+                let base_c = self.type_id_to_c(*target);
+                self.emit_indent();
+                self.emit(&format!("typedef {} *{};\n", base_c, c_type_name));
+                let td_sym = self.register_type_desc(name, name, None);
+                self.ref_type_descs.insert(name.to_string(), td_sym);
+            }
+            crate::types::Type::Object { parent, fields, .. } => {
+                // OBJECT type: struct + pointer typedef + RTTI descriptor
+                let struct_name = format!("{}_r", c_type_name);
+                self.emit_indent();
+                self.emit(&format!("typedef struct {} *{};\n", struct_name, c_type_name));
+                self.emit_indent();
+                self.emit(&format!("struct {} {{\n", struct_name));
+                self.indent += 1;
+                for f in fields {
+                    let ft = self.type_id_to_c(f.typ);
+                    self.emit_indent();
+                    self.emit(&format!("{} {};\n", ft, f.name));
+                }
+                self.indent -= 1;
+                self.emit_indent();
+                self.emit("};\n");
+                let parent_td = parent.as_ref().and_then(|pid| {
+                    let pname = self.type_name_for_type_id(*pid);
+                    if !pname.is_empty() {
+                        self.object_type_descs.get(&pname).cloned()
+                    } else {
+                        None
+                    }
+                });
+                let td_sym = self.register_type_desc(name, name, parent_td);
+                self.object_type_descs.insert(name.to_string(), td_sym);
             }
             _ => {
                 // Fallback: emit structural C type directly (bypass typeid_c_names
