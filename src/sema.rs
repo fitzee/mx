@@ -951,6 +951,17 @@ impl SemanticAnalyzer {
         for decl in &block.decls {
             self.analyze_declaration(decl);
         }
+        // Third pass: re-evaluate forward-referenced constants
+        // (e.g., Total = Base + Extra where Base/Extra are defined after Total)
+        for decl in &block.decls {
+            if let Declaration::Const(c) = decl {
+                let new_val = self.eval_const_expr(&c.expr);
+                let scope = self.current_scope;
+                if let Some(sym) = self.symtab.lookup_in_scope_mut(scope, &c.name) {
+                    sym.kind = SymbolKind::Constant(new_val);
+                }
+            }
+        }
         if let Some(stmts) = &block.body {
             for stmt in stmts {
                 self.analyze_statement(stmt);
