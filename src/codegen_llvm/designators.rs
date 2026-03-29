@@ -171,10 +171,21 @@ impl LLVMCodeGen {
                     // Get the LLVM struct type for GEP
                     let record_llvm_ty = self.tl_record_type_str(*record_ty)
                         .unwrap_or_else(|| current_ty.clone());
+                    // Adjust index for variant pseudo-field removal:
+                    // sema includes a "variant" pseudo-field that's not in the LLVM struct
+                    let adjusted_index = if let crate::types::Type::Record { fields, variants } = self.sema.types.get(*record_ty) {
+                        if variants.is_some() {
+                            // Find the pseudo-field position
+                            let pseudo_pos = fields.iter().position(|f| f.name == "variant");
+                            if let Some(pp) = pseudo_pos {
+                                if *index > pp { index - 1 } else { *index }
+                            } else { *index }
+                        } else { *index }
+                    } else { *index };
                     let gep = self.next_tmp();
                     self.emitln(&format!(
                         "  {} = getelementptr inbounds {}, ptr {}, i32 0, i32 {}",
-                        gep, record_llvm_ty, current_addr, index
+                        gep, record_llvm_ty, current_addr, adjusted_index
                     ));
                     current_addr = gep;
                     current_ty = self.tl_type_str(proj.ty);
@@ -185,14 +196,11 @@ impl LLVMCodeGen {
                     let record_llvm_ty = self.tl_record_type_str(*record_ty)
                         .unwrap_or_else(|| current_ty.clone());
                     // Count fixed fields before the variant part:
-                    // fixed fields + tag (not including variant pseudo-field or variant fields)
+                    // fields list has [fixed..., variant_pseudo, tag] — variant case fields are separate
                     let fixed_field_count = if let crate::types::Type::Record { fields, variants } = self.sema.types.get(*record_ty) {
-                        if let Some(vi) = variants {
-                            // Fixed fields = total fields - variant pseudo-field - all variant case fields
-                            let variant_field_count: usize = vi.variants.iter()
-                                .map(|vc| vc.fields.len()).sum();
-                            let pseudo = 1; // "variant" pseudo-field
-                            fields.len() - pseudo - variant_field_count
+                        if variants.is_some() {
+                            // Subtract just the "variant" pseudo-field
+                            fields.len().saturating_sub(1)
                         } else {
                             fields.len()
                         }

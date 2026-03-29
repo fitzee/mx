@@ -139,11 +139,27 @@ impl LLVMCodeGen {
                 format!("[{} x {}]", size, elem_ty)
             }
             Type::OpenArray { .. } => "ptr".to_string(),
-            Type::Record { fields, .. } => {
+            Type::Record { fields, variants } => {
+                // Use type_lowering for records (handles variant pseudo-field skip + union)
+                if let Some(ref tl) = self.type_lowering {
+                    let s = tl.get_type_str(id);
+                    if s != "void" && s != "i32" { return s; }
+                }
+                // Fallback: emit all fields (no variant handling)
                 let field_types: Vec<String> = fields.iter()
+                    .filter(|f| !(f.name == "variant" && variants.is_some()))
                     .map(|f| self.llvm_type_for_type_id(f.typ))
                     .collect();
-                format!("{{ {} }}", field_types.join(", "))
+                // Include variant fields from VariantInfo
+                let mut all_types = field_types;
+                if let Some(vi) = variants {
+                    let max_variant: Vec<String> = vi.variants.iter()
+                        .map(|vc| vc.fields.iter().map(|f| self.llvm_type_for_type_id(f.typ)).collect::<Vec<_>>())
+                        .max_by_key(|v| v.len())
+                        .unwrap_or_default();
+                    all_types.extend(max_variant);
+                }
+                format!("{{ {} }}", all_types.join(", "))
             }
             Type::Alias { target, .. } => self.llvm_type_for_type_id(*target),
             Type::Opaque { .. } => "ptr".to_string(),

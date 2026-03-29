@@ -175,11 +175,8 @@ impl TypeLowering {
 
         for f in fields {
             // Skip the synthetic "variant" pseudo-field added by sema
-            // for C backend's s.variant.v0.field syntax
-            if f.name == "variant" {
-                if let Type::Record { fields: vf, variants: None } = reg.get(f.typ) {
-                    if vf.is_empty() { continue; }
-                }
+            if f.name == "variant" && variants.is_some() {
+                continue;
             }
             self.lower_type(reg, f.typ);
             let ft = self.types.get(&f.typ).cloned().unwrap_or(LLVMType::I32);
