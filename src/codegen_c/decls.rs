@@ -513,49 +513,106 @@ impl CodeGen {
         }
     }
 
-    pub(crate) fn gen_proc_by_name(&mut self, proc_name: &str) {
-        let current_module = self.module_name.clone();
-        let early_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
-            // Search top-level proc_decls
+    /// Search all nested procs at any depth for a matching name.
+    fn find_nested_proc_sig(&self, proc_name: &str, module: &str) -> Option<crate::hir::HirProcSig> {
+        self.prebuilt_hir.as_ref().and_then(|hir| {
+            fn search_nested(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<crate::hir::HirProcSig> {
+                for pd in procs {
+                    if pd.sig.name == name { return Some(pd.sig.clone()); }
+                    if let Some(sig) = search_nested(&pd.nested_procs, name) { return Some(sig); }
+                }
+                None
+            }
+            // Search top-level
             hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == proc_name && pd.sig.module == current_module)
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == module)
                 .map(|pd| pd.sig.clone())
-                // Search nested procs inside top-level proc_decls
+                .or_else(|| search_nested(&hir.proc_decls.iter()
+                    .flat_map(|pd| pd.nested_procs.clone())
+                    .collect::<Vec<_>>(), proc_name))
                 .or_else(|| hir.proc_decls.iter()
-                    .flat_map(|pd| pd.nested_procs.iter())
-                    .find(|np| np.sig.name == proc_name && np.sig.module == current_module)
-                    .map(|np| np.sig.clone()))
-                // Search embedded module procs
+                    .flat_map(|pd| search_nested(&pd.nested_procs, proc_name))
+                    .next())
                 .or_else(|| hir.embedded_modules.iter()
-                    .find(|e| e.name == current_module)
+                    .find(|e| e.name == module)
+                    .and_then(|e| {
+                        e.procedures.iter()
+                            .find(|pd| pd.sig.name == proc_name)
+                            .map(|pd| pd.sig.clone())
+                            .or_else(|| e.procedures.iter()
+                                .flat_map(|pd| search_nested(&pd.nested_procs, proc_name))
+                                .next())
+                    }))
+        })
+    }
+
+    /// Search all nested procs at any depth for a matching body.
+    fn find_nested_proc_body(&self, proc_name: &str, parent_name: Option<&str>) -> Option<Vec<crate::hir::HirStmt>> {
+        self.prebuilt_hir.as_ref().and_then(|hir| {
+            fn search_body(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<Vec<crate::hir::HirStmt>> {
+                for pd in procs {
+                    if pd.sig.name == name { return pd.body.clone(); }
+                    if let Some(body) = search_body(&pd.nested_procs, name) { return Some(body); }
+                }
+                None
+            }
+            let mod_name = &self.module_name;
+            // Top-level
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == *mod_name)
+                .and_then(|pd| pd.body.clone())
+                // Search by parent if given
+                .or_else(|| if let Some(parent) = parent_name {
+                    hir.proc_decls.iter()
+                        .find(|pd| pd.sig.name == parent)
+                        .and_then(|pd| search_body(&pd.nested_procs, proc_name))
+                } else { None })
+                // Search all nested at any depth
+                .or_else(|| hir.proc_decls.iter()
+                    .flat_map(|pd| search_body(&pd.nested_procs, proc_name))
+                    .next())
+                // Embedded modules
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == *mod_name)
                     .and_then(|e| e.procedures.iter()
                         .find(|pd| pd.sig.name == proc_name)
-                        .map(|pd| pd.sig.clone())
-                        // Search nested procs inside embedded module procs
+                        .and_then(|pd| pd.body.clone())
                         .or_else(|| e.procedures.iter()
-                            .flat_map(|pd| pd.nested_procs.iter())
-                            .find(|np| np.sig.name == proc_name)
-                            .map(|np| np.sig.clone()))))
-        });
+                            .flat_map(|pd| search_body(&pd.nested_procs, proc_name))
+                            .next())))
+        })
+    }
+
+    pub(crate) fn gen_proc_by_name(&mut self, proc_name: &str) {
+        let current_module = self.module_name.clone();
+        let early_sig = self.find_nested_proc_sig(proc_name, &current_module);
         if let Some(ref sig) = early_sig {
             self.register_hir_proc_params(sig);
         }
 
         // Get nested proc names from HIR (replaces AST Declaration::Procedure iteration)
         let nested_proc_names: Vec<String> = self.prebuilt_hir.as_ref().map(|hir| {
-            // Search top-level procs
-            hir.procedures.iter()
-                .find(|hp| hp.name.source_name == proc_name
-                    && hp.name.module.as_deref() == Some(current_module.as_str()))
-                .map(|hp| hp.nested_procs.iter().map(|np| np.name.source_name.clone()).collect())
-                .or_else(|| {
-                    // Search embedded module procs
-                    hir.embedded_modules.iter()
-                        .find(|e| e.name == current_module)
-                        .and_then(|e| e.procedures.iter()
-                            .find(|pd| pd.sig.name == proc_name)
-                            .map(|_| Vec::new())) // embedded procs don't track nested_procs in HirProcDecl
-                })
+            fn find_children(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<Vec<String>> {
+                for pd in procs {
+                    if pd.sig.name == name {
+                        return Some(pd.nested_procs.iter().map(|np| np.sig.name.clone()).collect());
+                    }
+                    if let Some(names) = find_children(&pd.nested_procs, name) {
+                        return Some(names);
+                    }
+                }
+                None
+            }
+            // Search proc_decls at any depth
+            find_children(&hir.proc_decls, proc_name)
+                // Legacy HirProc
+                .or_else(|| hir.procedures.iter()
+                    .find(|hp| hp.name.source_name == proc_name)
+                    .map(|hp| hp.nested_procs.iter().map(|np| np.name.source_name.clone()).collect()))
+                // Embedded modules
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == current_module)
+                    .and_then(|e| find_children(&e.procedures, proc_name)))
                 .unwrap_or_default()
         }).unwrap_or_default();
 
@@ -816,21 +873,31 @@ impl CodeGen {
             }
         }
 
-        // Local declarations from HirProcDecl.locals (TypeId-based)
-        let current_module = self.module_name.clone();
+        // Local declarations from HIR (search at any nesting depth)
         let proc_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
-            // Search HirProc (legacy, populated by build_proc with correct scope)
-            hir.procedures.iter()
-                .find(|hp| hp.name.source_name == proc_name
-                    && hp.name.module.as_deref() == Some(current_module.as_str()))
-                .map(|hp| hp.locals.clone())
-                .or_else(|| {
-                    hir.procedures.iter()
-                        .flat_map(|hp| hp.nested_procs.iter())
-                        .find(|np| np.name.source_name == proc_name
-                            && np.name.module.as_deref() == Some(current_module.as_str()))
-                        .map(|np| np.locals.clone())
-                })
+            fn search_locals(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<Vec<crate::hir::HirLocalDecl>> {
+                for pd in procs {
+                    if pd.sig.name == name { return Some(pd.locals.clone()); }
+                    if let Some(locals) = search_locals(&pd.nested_procs, name) { return Some(locals); }
+                }
+                None
+            }
+            let current_module = &self.module_name;
+            // Search proc_decls at any depth
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == *current_module)
+                .map(|pd| pd.locals.clone())
+                .or_else(|| hir.proc_decls.iter()
+                    .flat_map(|pd| search_locals(&pd.nested_procs, proc_name))
+                    .next())
+                // Legacy HirProc fallback
+                .or_else(|| hir.procedures.iter()
+                    .find(|hp| hp.name.source_name == proc_name)
+                    .map(|hp| hp.locals.clone()))
+                .or_else(|| hir.procedures.iter()
+                    .flat_map(|hp| hp.nested_procs.iter())
+                    .find(|np| np.name.source_name == proc_name)
+                    .map(|np| np.locals.clone()))
         });
         if let Some(ref locals) = proc_locals {
             for local in locals {
@@ -895,47 +962,14 @@ impl CodeGen {
         self.child_env_type_stack.push(if has_any_captures { Some(env_type_name.clone()) } else { None });
         self.child_captures_stack.push(child_capture_info);
 
-        // Body from HIR — prefer proc_decls (has correct bodies for nested procs)
-        let mod_name = self.module_name.clone();
-        // For nested procs, the parent is second-to-last (current proc is already pushed)
+        // Body from HIR — search at any nesting depth
         let parent_proc_name = if self.parent_proc_stack.len() >= 2 {
             let parent = &self.parent_proc_stack[self.parent_proc_stack.len() - 2];
             Some(parent.rsplit('_').next().unwrap_or(parent).to_string())
         } else {
             None
         };
-        let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
-            // 1. Search proc_decls (new format, correct bodies)
-            hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == proc_name && pd.sig.module == mod_name)
-                .and_then(|pd| pd.body.clone())
-                .or_else(|| {
-                    // Nested in proc_decls — use parent to disambiguate
-                    if let Some(ref parent) = parent_proc_name {
-                        hir.proc_decls.iter()
-                            .find(|pd| pd.sig.name == *parent && pd.sig.module == mod_name)
-                            .and_then(|pd| pd.nested_procs.iter()
-                                .find(|np| np.sig.name == proc_name)
-                                .and_then(|np| np.body.clone()))
-                    } else {
-                        hir.proc_decls.iter()
-                            .flat_map(|pd| pd.nested_procs.iter())
-                            .find(|np| np.sig.name == proc_name && np.sig.module == mod_name)
-                            .and_then(|np| np.body.clone())
-                    }
-                })
-                // 2. Fallback: legacy HirProc (top-level only)
-                .or_else(|| hir.procedures.iter()
-                    .find(|hp| hp.name.source_name == proc_name
-                        && hp.name.module.as_deref() == Some(mod_name.as_str()))
-                    .and_then(|hp| hp.body.clone()))
-                // 3. Nested in embedded modules
-                .or_else(|| hir.embedded_modules.iter()
-                    .find(|e| e.name == mod_name)
-                    .and_then(|e| e.procedures.iter()
-                        .find(|pd| pd.sig.name == proc_name)
-                        .and_then(|pd| pd.body.clone())))
-        });
+        let prebuilt_body = self.find_nested_proc_body(proc_name, parent_proc_name.as_deref());
         // Check for procedure-level EXCEPT handler
         let except_body = self.prebuilt_hir.as_ref().and_then(|hir| {
             let mod_name = self.module_name.clone();

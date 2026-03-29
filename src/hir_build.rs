@@ -125,31 +125,52 @@ pub fn build_module(
                     pd.except_handler = Some(hb.lower_stmts(stmts));
                 }
                 // Build nested proc decls with bodies
-                for nd in &p.block.decls {
-                    if let Declaration::Procedure(np) = nd {
-                        let mut npd = build_proc_decl(&np.heading, &np.block.decls, &module_name, sema, true, Some(&p.heading.name));
-                        if let Some(stmts) = &np.block.body {
-                            let mut nhb = HirBuilder::new(
-                                &sema.types, &sema.symtab, &module_name, &sema.foreign_modules,
-                            );
-                            nhb.set_imported_modules(imported_modules.clone());
-                            nhb.set_import_alias_map(import_aliases.clone());
-                            nhb.enter_procedure_named(&p.heading.name);
-                            nhb.enter_procedure_named(&np.heading.name);
-                            for fp in &np.heading.params {
-                                if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
-                                    for name in &fp.names {
-                                        let high_name = format!("{}_high", name);
-                                        nhb.register_var(&high_name, TY_INTEGER);
-                                        nhb.register_local(&high_name);
+                fn build_nested_recursive(
+                    parent_decl: &mut crate::hir::HirProcDecl,
+                    parent_ast_decls: &[Declaration],
+                    scope_chain: &[String],
+                    module_name: &str,
+                    imported_modules: &[String],
+                    import_aliases: &HashMap<String, String>,
+                    sema: &SemanticAnalyzer,
+                ) {
+                    for nd in parent_ast_decls {
+                        if let Declaration::Procedure(np) = nd {
+                            let parent_name = scope_chain.last().map(|s| s.as_str());
+                            let mut npd = build_proc_decl(&np.heading, &np.block.decls, module_name, sema, true, parent_name);
+                            if let Some(stmts) = &np.block.body {
+                                let mut nhb = HirBuilder::new(
+                                    &sema.types, &sema.symtab, module_name, &sema.foreign_modules,
+                                );
+                                nhb.set_imported_modules(imported_modules.to_vec());
+                                nhb.set_import_alias_map(import_aliases.clone());
+                                for scope_name in scope_chain {
+                                    nhb.enter_procedure_named(scope_name);
+                                }
+                                nhb.enter_procedure_named(&np.heading.name);
+                                for fp in &np.heading.params {
+                                    if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                                        for name in &fp.names {
+                                            let high_name = format!("{}_high", name);
+                                            nhb.register_var(&high_name, TY_INTEGER);
+                                            nhb.register_local(&high_name);
+                                        }
                                     }
                                 }
+                                npd.body = Some(nhb.lower_stmts(stmts));
                             }
-                            npd.body = Some(nhb.lower_stmts(stmts));
+                            // Recurse for deeper nesting
+                            let mut chain = scope_chain.to_vec();
+                            chain.push(np.heading.name.clone());
+                            build_nested_recursive(&mut npd, &np.block.decls, &chain,
+                                module_name, imported_modules, import_aliases, sema);
+                            parent_decl.nested_procs.push(npd);
                         }
-                        pd.nested_procs.push(npd);
                     }
                 }
+                let scope_chain = vec![p.heading.name.clone()];
+                build_nested_recursive(&mut pd, &p.block.decls, &scope_chain,
+                    &module_name, &imported_modules, &import_aliases, sema);
                 new_proc_decls.push(pd);
             }
             Declaration::Type(t) => {
