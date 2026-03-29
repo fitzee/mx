@@ -647,12 +647,12 @@ mod tests {
         cg.sema.analyze(&unit).unwrap();
         let hir = crate::hir_build::build_module(&unit, &[], &cg.sema);
         cg.prebuilt_hir = Some(hir);
-        let (name, kind) = match &unit {
-            crate::ast::CompilationUnit::ProgramModule(m) => (m.name.clone(), ModuleKind::Program),
-            crate::ast::CompilationUnit::DefinitionModule(m) => (m.name.clone(), ModuleKind::Definition),
-            crate::ast::CompilationUnit::ImplementationModule(m) => (m.name.clone(), ModuleKind::Implementation),
+        let kind = match &unit {
+            crate::ast::CompilationUnit::ProgramModule(_) => ModuleKind::Program,
+            crate::ast::CompilationUnit::DefinitionModule(_) => ModuleKind::Definition,
+            crate::ast::CompilationUnit::ImplementationModule(_) => ModuleKind::Implementation,
         };
-        cg.module_name = name;
+        cg.module_name = cg.prebuilt_hir.as_ref().unwrap().name.clone();
         cg.populate_typeid_c_names();
         cg.generate_module(kind).unwrap()
     }
