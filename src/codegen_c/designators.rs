@@ -176,7 +176,7 @@ impl CodeGen {
                     result.push_str(name);
                 }
                 ProjectionKind::VariantField { variant_index, name, .. } => {
-                    result.push_str(&format!(".variant.v{}.{}", variant_index, name));
+                    result.push_str(&format!("._variant._v{}.{}", variant_index, name));
                 }
                 ProjectionKind::Index(idx_expr) => {
                     let idx_str = self.hir_expr_to_c_string(idx_expr);

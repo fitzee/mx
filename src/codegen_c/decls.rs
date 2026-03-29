@@ -93,7 +93,18 @@ impl CodeGen {
                 self.emitln(&format!("typedef struct {} {};", c_type_name, c_type_name));
                 self.emitln(&format!("struct {} {{", c_type_name));
                 self.indent += 1;
+                // Skip variant-related fields in the regular fields loop:
+                // - the tag field (emitted separately below with the union)
+                // - the synthetic "variant" pseudo-field (the union itself covers this)
+                let tag_name = variants.as_ref().and_then(|vi| vi.tag_name.clone());
+                let has_variants = variants.is_some();
                 for f in fields {
+                    if Some(&f.name) == tag_name.as_ref() {
+                        continue;
+                    }
+                    if has_variants && f.name == "variant" {
+                        continue;
+                    }
                     let field_resolved = self.resolve_hir_alias(f.typ);
                     // For struct fields, resolve arrays to element type + suffix
                     // (matching emit_record_fields AST behavior: char field[65], not TypedefName field)
@@ -422,14 +433,26 @@ impl CodeGen {
     pub(crate) fn gen_proc_by_name(&mut self, proc_name: &str) {
         let current_module = self.module_name.clone();
         let early_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
+            // Search top-level proc_decls
             hir.proc_decls.iter()
                 .find(|pd| pd.sig.name == proc_name && pd.sig.module == current_module)
                 .map(|pd| pd.sig.clone())
+                // Search nested procs inside top-level proc_decls
+                .or_else(|| hir.proc_decls.iter()
+                    .flat_map(|pd| pd.nested_procs.iter())
+                    .find(|np| np.sig.name == proc_name && np.sig.module == current_module)
+                    .map(|np| np.sig.clone()))
+                // Search embedded module procs
                 .or_else(|| hir.embedded_modules.iter()
                     .find(|e| e.name == current_module)
                     .and_then(|e| e.procedures.iter()
                         .find(|pd| pd.sig.name == proc_name)
-                        .map(|pd| pd.sig.clone())))
+                        .map(|pd| pd.sig.clone())
+                        // Search nested procs inside embedded module procs
+                        .or_else(|| e.procedures.iter()
+                            .flat_map(|pd| pd.nested_procs.iter())
+                            .find(|np| np.sig.name == proc_name)
+                            .map(|np| np.sig.clone()))))
         });
         if let Some(ref sig) = early_sig {
             self.register_hir_proc_params(sig);

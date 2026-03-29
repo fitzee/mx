@@ -16,6 +16,7 @@ impl CodeGen {
         self.emit_hir_record_forward_decls();
         self.emit_hir_type_decls();
         self.emit_hir_const_decls();
+        self.emit_hir_exception_decls();
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
@@ -304,6 +305,7 @@ impl CodeGen {
         self.emit_hir_record_forward_decls();
         self.emit_hir_type_decls();
         self.emit_hir_const_decls();
+        self.emit_hir_exception_decls();
 
         // Emit M2+ type descriptors (after all types are declared)
         if self.m2plus {
@@ -1222,6 +1224,19 @@ impl CodeGen {
         };
         for c in &consts {
             self.gen_hir_const_decl(c);
+        }
+    }
+
+    /// Emit exception declarations from prebuilt HirModule.
+    pub(crate) fn emit_hir_exception_decls(&mut self) {
+        let exceptions = if let Some(ref hir) = self.prebuilt_hir {
+            hir.exception_decls.clone()
+        } else {
+            return;
+        };
+        for e in &exceptions {
+            self.exception_names.insert(e.name.clone());
+            self.emitln(&format!("#define {} {}", e.mangled, e.exc_id));
         }
     }
 
