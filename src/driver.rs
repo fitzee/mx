@@ -1005,12 +1005,14 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         // Share sema from the driver — all .def/.mod already registered.
         llvm_codegen.set_sema(sema.clone());
         llvm_codegen.prebuilt_hir = Some(hir_module.clone());
-        // LLVM backend still uses AST for embedded module generation (pending full decoupling)
+        // Register backend-specific metadata (name-only APIs)
         for def_mod in &all_sorted_defs {
-            llvm_codegen.register_def_module_no_sema(def_mod);
+            llvm_codegen.register_def_by_name(&def_mod.name, def_mod.foreign_lang.is_some());
+            llvm_codegen.register_module_imports(&def_mod.name, ast_imports_to_hir(&def_mod.imports));
         }
         for imp_mod in &all_impl_mods {
-            llvm_codegen.add_imported_module(imp_mod.clone());
+            llvm_codegen.register_module_imports(&imp_mod.name, ast_imports_to_hir(&imp_mod.imports));
+            llvm_codegen.add_imported_module_by_name(&imp_mod.name);
         }
 
         // Generate LLVM IR

@@ -158,6 +158,10 @@ pub struct LLVMCodeGen {
     pub(crate) import_alias_map: HashMap<String, String>,
     pub(crate) imported_modules: HashSet<String>,
     pub(crate) pending_modules: Option<Vec<ImplementationModule>>,
+    pub(crate) pending_module_names: Vec<String>,
+    pub(crate) module_imports: HashMap<String, Vec<crate::hir::HirImport>>,
+    pub(crate) def_module_names: HashSet<String>,
+    pub(crate) def_exception_names: HashMap<String, Vec<String>>,
     pub(crate) foreign_modules: HashSet<String>,
     pub(crate) foreign_def_modules: Vec<DefinitionModule>,
     pub(crate) def_modules: HashMap<String, DefinitionModule>,
@@ -274,6 +278,10 @@ impl LLVMCodeGen {
             import_alias_map: HashMap::new(),
             imported_modules: HashSet::new(),
             pending_modules: None,
+            pending_module_names: Vec::new(),
+            module_imports: HashMap::new(),
+            def_module_names: HashSet::new(),
+            def_exception_names: HashMap::new(),
             foreign_modules: HashSet::new(),
             foreign_def_modules: Vec::new(),
             def_modules: HashMap::new(),
@@ -345,7 +353,17 @@ impl LLVMCodeGen {
     }
 
     /// Register a .def module's non-sema state only (when sema is shared).
+    /// Store import list for a module (for topo sorting and import map building).
+    pub fn register_module_imports(&mut self, name: &str, imports: Vec<crate::hir::HirImport>) {
+        self.module_imports.entry(name.to_string())
+            .and_modify(|existing| existing.extend(imports.clone()))
+            .or_insert(imports);
+    }
+
     pub fn register_def_by_name(&mut self, name: &str, is_foreign: bool) {
+        if !is_foreign {
+            self.def_module_names.insert(name.to_string());
+        }
         if is_foreign {
             self.foreign_modules.insert(name.to_string());
             // Build exports from sema
@@ -436,6 +454,7 @@ impl LLVMCodeGen {
 
     pub fn add_imported_module_by_name(&mut self, name: &str) {
         self.imported_modules.insert(name.to_string());
+        self.pending_module_names.push(name.to_string());
     }
 
     pub fn add_imported_module(&mut self, imp: ImplementationModule) {
