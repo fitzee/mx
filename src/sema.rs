@@ -1786,7 +1786,8 @@ impl SemanticAnalyzer {
                         TY_REAL
                     }
                     BinaryOp::IntDiv | BinaryOp::Mod => {
-                        if lt != TY_ERROR && lt != TY_VOID && !self.types.get(lt).is_integer_type() && lt != TY_ADDRESS {
+                        let lt_resolved = self.resolve_alias(lt);
+                        if lt != TY_ERROR && lt != TY_VOID && !self.types.get(lt_resolved).is_integer_type() && lt_resolved != TY_ADDRESS {
                             self.error(&expr.loc, "DIV/MOD requires integer operands");
                         }
                         if lt == TY_ADDRESS || rt == TY_ADDRESS {

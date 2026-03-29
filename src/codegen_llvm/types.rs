@@ -313,7 +313,13 @@ impl LLVMCodeGen {
             return Val::new(tmp, "ptr".to_string());
         }
 
-        // Ptr to int
+        // Ptr to i8 (string to char): load the first byte
+        if val.ty == "ptr" && target_ty == "i8" {
+            let tmp = self.next_tmp();
+            self.emitln(&format!("  {} = load i8, ptr {}", tmp, val.name));
+            return Val::new(tmp, "i8".to_string());
+        }
+        // Ptr to int (other sizes)
         if val.ty == "ptr" && target_ty.starts_with('i') {
             let tmp = self.next_tmp();
             self.emitln(&format!("  {} = ptrtoint ptr {} to {}", tmp, val.name, target_ty));
