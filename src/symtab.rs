@@ -152,9 +152,13 @@ impl SymbolTable {
     pub fn define(&mut self, scope_id: usize, mut sym: Symbol) -> Result<(), String> {
         let scope = &mut self.scopes[scope_id];
         if let Some(existing) = scope.symbols.get(&sym.name) {
-            // Local definitions shadow imported names (PIM4 §11)
-            if existing.module.is_none() || sym.module.is_some() {
-                return Err(format!("'{}' is already defined in this scope", sym.name));
+            // Last-import-wins: if both are imports, allow the second to shadow
+            let both_imported = existing.module.is_some() && sym.module.is_some();
+            if !both_imported {
+                // Local definitions shadow imported names (PIM4 §11)
+                if existing.module.is_none() || sym.module.is_some() {
+                    return Err(format!("'{}' is already defined in this scope", sym.name));
+                }
             }
             // Preserve exported flag: if .def exported it, .mod re-declaration
             // must not lose that (unified scope reuse).
