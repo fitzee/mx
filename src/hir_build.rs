@@ -3571,6 +3571,66 @@ fn collect_refs_in_desig(desig: &ast::Designator, out: &mut HashSet<String>) {
 
 // ── HIR-based capture analysis ──────────────────────────────────────
 
+/// Collect all variable names referenced in HIR statements.
+/// Used for transitive capture propagation.
+pub fn collect_hir_var_refs(stmts: &[crate::hir::HirStmt], out: &mut Vec<String>) {
+    use crate::hir::*;
+    fn collect_from_expr(expr: &HirExpr, out: &mut Vec<String>) {
+        match &expr.kind {
+            HirExprKind::Place(p) => {
+                match &p.base {
+                    PlaceBase::Local(sid) | PlaceBase::Global(sid) => {
+                        out.push(sid.source_name.clone());
+                    }
+                    _ => {}
+                }
+                for proj in &p.projections {
+                    if let ProjectionKind::Index(idx) = &proj.kind {
+                        collect_from_expr(idx, out);
+                    }
+                }
+            }
+            HirExprKind::BinaryOp { left, right, .. } => {
+                collect_from_expr(left, out);
+                collect_from_expr(right, out);
+            }
+            HirExprKind::UnaryOp { operand, .. } | HirExprKind::Not(operand) => {
+                collect_from_expr(operand, out);
+            }
+            HirExprKind::DirectCall { args, .. } | HirExprKind::IndirectCall { args, .. } => {
+                for arg in args { collect_from_expr(arg, out); }
+            }
+            _ => {}
+        }
+    }
+    fn collect_from_stmts(stmts: &[HirStmt], out: &mut Vec<String>) {
+        for stmt in stmts {
+            match &stmt.kind {
+                HirStmtKind::Assign { value, .. } => collect_from_expr(value, out),
+                HirStmtKind::ProcCall { args, .. } => {
+                    for arg in args { collect_from_expr(arg, out); }
+                }
+                HirStmtKind::If { cond, then_body, elsifs, else_body } => {
+                    collect_from_expr(cond, out);
+                    collect_from_stmts(then_body, out);
+                    for (c, b) in elsifs { collect_from_expr(c, out); collect_from_stmts(b, out); }
+                    if let Some(b) = else_body { collect_from_stmts(b, out); }
+                }
+                HirStmtKind::While { cond, body } => { collect_from_expr(cond, out); collect_from_stmts(body, out); }
+                HirStmtKind::Repeat { body, cond } => { collect_from_stmts(body, out); collect_from_expr(cond, out); }
+                HirStmtKind::For { body, start, end, .. } => {
+                    collect_from_expr(start, out); collect_from_expr(end, out);
+                    collect_from_stmts(body, out);
+                }
+                HirStmtKind::Loop { body } => collect_from_stmts(body, out),
+                HirStmtKind::Return { expr } => { if let Some(e) = expr { collect_from_expr(e, out); } }
+                _ => {}
+            }
+        }
+    }
+    collect_from_stmts(stmts, out);
+}
+
 /// Compute captures for a procedure from its HIR body.
 /// Replaces AST-walking compute_captures for procs with lowered HIR bodies.
 pub fn compute_captures_hir(

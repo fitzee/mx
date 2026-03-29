@@ -657,42 +657,28 @@ impl CodeGen {
 
         for np_name in &nested_proc_names {
             let current_mod = self.module_name.clone();
-            // Find nested proc in HIR — extract body, params, locals for capture analysis
-            let hir_proc_info = self.prebuilt_hir.as_ref().and_then(|hir| {
-                hir.procedures.iter()
-                    .find(|hp| hp.name.source_name == *np_name
-                        && hp.name.module.as_deref() == Some(current_mod.as_str()))
-                    .map(|hp| {
-                        let params: Vec<String> = hp.params.iter().map(|p| p.name.clone()).collect();
-                        let locals: HashSet<String> = hp.locals.iter()
-                            .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                            .collect();
-                        (hp.body.clone(), params, locals)
-                    })
-                    // Search nested procs in legacy format
-                    .or_else(|| hir.procedures.iter()
-                        .flat_map(|hp| hp.nested_procs.iter())
-                        .find(|np| np.name.source_name == *np_name
-                            && np.name.module.as_deref() == Some(current_mod.as_str()))
-                        .map(|np| {
-                            let params: Vec<String> = np.params.iter().map(|p| p.name.clone()).collect();
-                            let locals: HashSet<String> = np.locals.iter()
+            // Find nested proc in HIR — use deep search helpers
+            let np_body = self.find_nested_proc_body(np_name, Some(proc_name));
+            let np_sig = self.find_nested_proc_sig(np_name, &current_mod);
+            let np_params: Vec<String> = np_sig.as_ref()
+                .map(|s| s.params.iter().map(|p| p.name.clone()).collect())
+                .unwrap_or_default();
+            let np_locals: HashSet<String> = self.prebuilt_hir.as_ref().and_then(|hir| {
+                fn find_locals(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<HashSet<String>> {
+                    for pd in procs {
+                        if pd.sig.name == name {
+                            return Some(pd.locals.iter()
                                 .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                                .collect();
-                            (np.body.clone(), params, locals)
-                        }))
-                    // Search proc_decls nested procs
-                    .or_else(|| hir.proc_decls.iter()
-                        .flat_map(|pd| pd.nested_procs.iter())
-                        .find(|np| np.sig.name == *np_name && np.sig.module == current_mod)
-                        .map(|np| {
-                            let params: Vec<String> = np.sig.params.iter().map(|p| p.name.clone()).collect();
-                            let locals: HashSet<String> = np.locals.iter()
-                                .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                                .collect();
-                            (np.body.clone(), params, locals)
-                        }))
-            });
+                                .collect());
+                        }
+                        if let Some(r) = find_locals(&pd.nested_procs, name) { return Some(r); }
+                    }
+                    None
+                }
+                find_locals(&hir.proc_decls, np_name)
+            }).unwrap_or_default();
+            let hir_proc_info: Option<(Option<Vec<crate::hir::HirStmt>>, Vec<String>, HashSet<String>)> =
+                Some((np_body, np_params, np_locals));
             let hir_captures = if let Some((Some(ref body), ref param_names, ref local_names)) = hir_proc_info {
                 crate::hir_build::compute_captures_hir(
                     np_name, body, &param_names, &local_names,
@@ -712,6 +698,50 @@ impl CodeGen {
                 }
                 self.closure_env_type.insert(np_name.clone(), env_type_name.clone());
                 child_capture_info.push((np_name.clone(), captures));
+            }
+
+            // Propagate transitive captures: scan the nested proc's children's bodies
+            // for references to outer-scope variables that need to be forwarded.
+            if let Some(ref hir) = self.prebuilt_hir {
+                fn find_proc_and_scan(procs: &[crate::hir::HirProcDecl], name: &str) -> Vec<String> {
+                    for pd in procs {
+                        if pd.sig.name == name {
+                            // Collect all var refs from all grandchild bodies
+                            let mut refs = Vec::new();
+                            fn collect_nested_refs(nested: &[crate::hir::HirProcDecl], out: &mut Vec<String>) {
+                                for np in nested {
+                                    if let Some(ref body) = np.body {
+                                        crate::hir_build::collect_hir_var_refs(body, out);
+                                    }
+                                    collect_nested_refs(&np.nested_procs, out);
+                                }
+                            }
+                            collect_nested_refs(&pd.nested_procs, &mut refs);
+                            return refs;
+                        }
+                        let result = find_proc_and_scan(&pd.nested_procs, name);
+                        if !result.is_empty() { return result; }
+                    }
+                    Vec::new()
+                }
+                let grandchild_refs = find_proc_and_scan(&hir.proc_decls, np_name);
+                for ref_name in &grandchild_refs {
+                    if !scope_vars.contains_key(ref_name) { continue; }
+                    if !all_captures.iter().any(|(n, _)| n == ref_name) {
+                        has_any_captures = true;
+                        let c_type = scope_vars.get(ref_name).cloned().unwrap_or("int32_t".to_string());
+                        all_captures.push((ref_name.clone(), c_type));
+                    }
+                    // Also add to this proc's capture info (for env forwarding)
+                    if let Some((_, caps)) = child_capture_info.iter_mut().find(|(n, _)| n == np_name) {
+                        if !caps.contains(ref_name) {
+                            caps.push(ref_name.clone());
+                        }
+                    } else {
+                        self.closure_env_type.insert(np_name.clone(), env_type_name.clone());
+                        child_capture_info.push((np_name.clone(), vec![ref_name.clone()]));
+                    }
+                }
             }
         }
 
@@ -743,51 +773,43 @@ impl CodeGen {
             self.nested_proc_names.insert(np_name.clone(), mangled);
             if let Some(_) = self.closure_env_type.get(np_name) {
                 let current_mod = self.module_name.clone();
-                let hir_proc_info = self.prebuilt_hir.as_ref().and_then(|hir| {
-                    // Search top-level legacy procs
-                    hir.procedures.iter()
-                        .find(|hp| hp.name.source_name == *np_name
-                            && hp.name.module.as_deref() == Some(current_mod.as_str()))
-                        .map(|hp| {
-                            let params: Vec<String> = hp.params.iter().map(|p| p.name.clone()).collect();
-                            let locals: HashSet<String> = hp.locals.iter()
-                                .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                                .collect();
-                            (hp.body.clone(), params, locals)
-                        })
-                        // Also search nested procs in legacy format
-                        .or_else(|| hir.procedures.iter()
-                            .flat_map(|hp| hp.nested_procs.iter())
-                            .find(|np| np.name.source_name == *np_name
-                                && np.name.module.as_deref() == Some(current_mod.as_str()))
-                            .map(|np| {
-                                let params: Vec<String> = np.params.iter().map(|p| p.name.clone()).collect();
-                                let locals: HashSet<String> = np.locals.iter()
+                // Use deep search helpers for body, sig, locals
+                let np_body2 = self.find_nested_proc_body(np_name, Some(proc_name));
+                let np_sig2 = self.find_nested_proc_sig(np_name, &current_mod);
+                let np_params2: Vec<String> = np_sig2.as_ref()
+                    .map(|s| s.params.iter().map(|p| p.name.clone()).collect())
+                    .unwrap_or_default();
+                let np_locals2: HashSet<String> = self.prebuilt_hir.as_ref().and_then(|hir| {
+                    fn find_locals3(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<HashSet<String>> {
+                        for pd in procs {
+                            if pd.sig.name == name {
+                                return Some(pd.locals.iter()
                                     .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                                    .collect();
-                                (np.body.clone(), params, locals)
-                            }))
-                        // Search proc_decls nested procs (new format)
-                        .or_else(|| hir.proc_decls.iter()
-                            .flat_map(|pd| pd.nested_procs.iter())
-                            .find(|np| np.sig.name == *np_name && np.sig.module == current_mod)
-                            .map(|np| {
-                                let params: Vec<String> = np.sig.params.iter().map(|p| p.name.clone()).collect();
-                                let locals: HashSet<String> = np.locals.iter()
-                                    .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
-                                    .collect();
-                                (np.body.clone(), params, locals)
-                            }))
-                });
-                let np_hir_caps = if let Some((Some(ref body), ref param_names, ref local_names)) = hir_proc_info {
+                                    .collect());
+                            }
+                            if let Some(l) = find_locals3(&pd.nested_procs, name) { return Some(l); }
+                        }
+                        None
+                    }
+                    find_locals3(&hir.proc_decls, np_name)
+                }).unwrap_or_default();
+                let np_hir_caps = if let Some(ref body) = np_body2 {
                     crate::hir_build::compute_captures_hir(
-                        np_name, body, param_names, local_names,
+                        np_name, body, &np_params2, &np_locals2,
                         &scope_vars_tid, &self.import_map, &imported_mods,
                     )
                 } else {
                     Vec::new()
                 };
-                let np_captures: Vec<String> = np_hir_caps.iter().map(|c| c.name.clone()).collect();
+                let mut np_captures: Vec<String> = np_hir_caps.iter().map(|c| c.name.clone()).collect();
+                // Include transitive captures from child_capture_info
+                if let Some((_, transitive_caps)) = child_capture_info.iter().find(|(n, _)| n == np_name) {
+                    for tc in transitive_caps {
+                        if !np_captures.contains(tc) {
+                            np_captures.push(tc.clone());
+                        }
+                    }
+                }
                 self.env_access_names.push(np_captures.iter().cloned().collect());
             }
             self.gen_proc_by_name(np_name);
@@ -943,10 +965,15 @@ impl CodeGen {
         // If this proc has nested procs with captures, declare and init the child env
         if has_any_captures {
             self.emitln(&format!("{} _child_env;", env_type_name));
+            // Collect parent env fields (if current proc receives an env)
+            let parent_env_fields: HashSet<String> = early_sig.as_ref()
+                .and_then(|_| self.env_access_names.last())
+                .map(|s| s.clone())
+                .unwrap_or_default();
             for (cap_name, _cap_type) in &all_captures {
                 self.emit_indent();
-                if self.is_env_var(cap_name) {
-                    // Forward from our own env
+                if self.is_env_var(cap_name) || parent_env_fields.contains(cap_name.as_str()) {
+                    // Forward from our own env (direct or transitive capture)
                     self.emit(&format!("_child_env.{} = _env->{};\n", cap_name, cap_name));
                 } else if self.is_var_param(cap_name) {
                     // VAR param: already a pointer
@@ -1199,17 +1226,8 @@ impl CodeGen {
     pub(crate) fn build_scope_vars(&self, proc_name: &str) -> HashMap<String, String> {
         let mut vars = HashMap::new();
         let current_module = self.module_name.clone();
-        // Try to get params from HirProcSig
-        let hir_sig = self.prebuilt_hir.as_ref().and_then(|hir| {
-            hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == proc_name && pd.sig.module == current_module)
-                .map(|pd| pd.sig.clone())
-                .or_else(|| hir.embedded_modules.iter()
-                    .find(|e| e.name == current_module)
-                    .and_then(|e| e.procedures.iter()
-                        .find(|pd| pd.sig.name == proc_name)
-                        .map(|pd| pd.sig.clone())))
-        });
+        // Use deep search for sig
+        let hir_sig = self.find_nested_proc_sig(proc_name, &current_module);
         if let Some(ref sig) = hir_sig {
             for param in &sig.params {
                 let c_type = self.type_id_to_c(param.type_id);
@@ -1223,16 +1241,53 @@ impl CodeGen {
         }
         // Local vars from HirProc.locals
         let hir_locals = self.prebuilt_hir.as_ref().and_then(|hir| {
-            hir.procedures.iter()
-                .find(|hp| hp.name.source_name == proc_name
-                    && hp.name.module.as_deref() == Some(current_module.as_str()))
-                .map(|hp| hp.locals.clone())
+            fn search_locals_deep(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<Vec<crate::hir::HirLocalDecl>> {
+                for pd in procs {
+                    if pd.sig.name == name { return Some(pd.locals.clone()); }
+                    if let Some(l) = search_locals_deep(&pd.nested_procs, name) { return Some(l); }
+                }
+                None
+            }
+            search_locals_deep(&hir.proc_decls, proc_name)
+                .or_else(|| hir.procedures.iter()
+                    .find(|hp| hp.name.source_name == proc_name)
+                    .map(|hp| hp.locals.clone()))
         });
         if let Some(ref locals) = hir_locals {
             for local in locals {
                 if let crate::hir::HirLocalDecl::Var { name, type_id } = local {
                     let c_type = self.type_id_to_c(*type_id);
                     vars.insert(name.clone(), c_type);
+                }
+            }
+        }
+        // For nested procs, also include vars from ancestor proc scopes.
+        // These are available via the closure env chain.
+        for parent in self.parent_proc_stack.iter().rev() {
+            let parent_source = parent.rsplit('_').next().unwrap_or(parent);
+            if parent_source == proc_name { continue; }
+            if let Some(sig) = self.find_nested_proc_sig(parent_source, &current_module) {
+                for param in &sig.params {
+                    vars.entry(param.name.clone())
+                        .or_insert_with(|| self.type_id_to_c(param.type_id));
+                }
+            }
+            // Parent's locals
+            if let Some(ref hir) = self.prebuilt_hir {
+                fn search_locals_deep2(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<Vec<crate::hir::HirLocalDecl>> {
+                    for pd in procs {
+                        if pd.sig.name == name { return Some(pd.locals.clone()); }
+                        if let Some(l) = search_locals_deep2(&pd.nested_procs, name) { return Some(l); }
+                    }
+                    None
+                }
+                if let Some(locals) = search_locals_deep2(&hir.proc_decls, parent_source) {
+                    for local in &locals {
+                        if let crate::hir::HirLocalDecl::Var { name, type_id } = local {
+                            vars.entry(name.clone())
+                                .or_insert_with(|| self.type_id_to_c(*type_id));
+                        }
+                    }
                 }
             }
         }
