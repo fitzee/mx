@@ -1055,6 +1055,9 @@ struct WithScope {
     field_names: Vec<String>,
     /// Whether the designator needed a pointer deref (POINTER TO Record).
     needs_deref: bool,
+    /// For nested WITH: the parent Place base + projections to chain through.
+    /// None for top-level WITH on a real variable.
+    parent_base: Option<(PlaceBase, Vec<Projection>)>,
 }
 
 /// Read-only context from the backend, passed by reference.
@@ -1321,12 +1324,77 @@ impl<'a> HirBuilder<'a> {
             _ => Vec::new(),
         };
 
+        // Check if var_name is a field in an outer WITH scope (nested WITH)
+        let parent_base = self.build_with_parent_base(var_name);
+
         self.with_stack.push(WithScope {
             record_var: var_name.to_string(),
             record_tid,
             field_names,
             needs_deref,
+            parent_base,
         });
+    }
+
+    /// For nested WITH: build the parent base + projections so field
+    /// access chains correctly (e.g., WITH p DO ... WITH birthdate DO ... year
+    /// resolves to p.birthdate.year, not birthdate.year).
+    fn build_with_parent_base(&self, field_name: &str) -> Option<(PlaceBase, Vec<Projection>)> {
+        for ws in self.with_stack.iter().rev() {
+            if !ws.field_names.contains(&field_name.to_string()) {
+                continue;
+            }
+            // Build the base from the outer WITH scope
+            let (base, mut projs) = if let Some(ref pb) = ws.parent_base {
+                (pb.0.clone(), pb.1.clone())
+            } else {
+                let record_var_tid = self.get_var_type(&ws.record_var)
+                    .unwrap_or(ws.record_tid);
+                let is_local = self.is_local_name(&ws.record_var);
+                let base = if is_local {
+                    PlaceBase::Local(SymbolId {
+                        mangled: ws.record_var.clone(),
+                        source_name: ws.record_var.clone(),
+                        module: None,
+                        ty: record_var_tid,
+                        is_var_param: false,
+                        is_open_array: false,
+                    })
+                } else {
+                    PlaceBase::Global(SymbolId {
+                        mangled: self.mangle(&ws.record_var),
+                        source_name: ws.record_var.clone(),
+                        module: Some(self.module_name.clone()),
+                        ty: record_var_tid,
+                        is_var_param: false,
+                        is_open_array: false,
+                    })
+                };
+                let mut projs = Vec::new();
+                if ws.needs_deref {
+                    projs.push(Projection {
+                        kind: ProjectionKind::Deref,
+                        ty: ws.record_tid,
+                    });
+                }
+                (base, projs)
+            };
+            // Add field projection for this nested field
+            if let Type::Record { fields, .. } = self.types.get(ws.record_tid) {
+                if let Some((idx, f)) = fields.iter().enumerate().find(|(_, f)| f.name == field_name) {
+                    projs.push(Projection {
+                        kind: ProjectionKind::Field {
+                            index: idx,
+                            name: field_name.to_string(),
+                            record_ty: ws.record_tid,
+                        },
+                        ty: f.typ,
+                    });
+                    return Some((base, projs));
+                }
+            }
+        }
+        None
     }
 
     pub fn pop_with(&mut self) {
@@ -1379,41 +1447,41 @@ impl<'a> HirBuilder<'a> {
             }
 
             // Found: this bare name is a field in the WITH record.
-            // Build a Place: base is the WITH record variable, first
-            // projection is the field access.
-            let record_var_tid = self.get_var_type(&ws.record_var)
-                .unwrap_or(ws.record_tid);
-
-            let is_local = self.is_local_name(&ws.record_var);
-            let base = if is_local {
-                PlaceBase::Local(SymbolId {
-                    mangled: ws.record_var.clone(),
-                    source_name: ws.record_var.clone(),
-                    module: None,
-                    ty: record_var_tid,
-                    is_var_param: false,
-                    is_open_array: false,
-                })
+            // Use parent_base for nested WITH (chains through outer record).
+            let (base, mut projections) = if let Some(ref pb) = ws.parent_base {
+                (pb.0.clone(), pb.1.clone())
             } else {
-                PlaceBase::Global(SymbolId {
-                    mangled: self.mangle(&ws.record_var),
-                    source_name: ws.record_var.clone(),
-                    module: Some(self.module_name.clone()),
-                    ty: record_var_tid,
-                    is_var_param: false,
-                    is_open_array: false,
-                })
+                let record_var_tid = self.get_var_type(&ws.record_var)
+                    .unwrap_or(ws.record_tid);
+                let is_local = self.is_local_name(&ws.record_var);
+                let base = if is_local {
+                    PlaceBase::Local(SymbolId {
+                        mangled: ws.record_var.clone(),
+                        source_name: ws.record_var.clone(),
+                        module: None,
+                        ty: record_var_tid,
+                        is_var_param: false,
+                        is_open_array: false,
+                    })
+                } else {
+                    PlaceBase::Global(SymbolId {
+                        mangled: self.mangle(&ws.record_var),
+                        source_name: ws.record_var.clone(),
+                        module: Some(self.module_name.clone()),
+                        ty: record_var_tid,
+                        is_var_param: false,
+                        is_open_array: false,
+                    })
+                };
+                let mut projs = Vec::new();
+                if ws.needs_deref {
+                    projs.push(Projection {
+                        kind: ProjectionKind::Deref,
+                        ty: ws.record_tid,
+                    });
+                }
+                (base, projs)
             };
-
-            let mut projections = Vec::new();
-
-            // If WITH var is a pointer, add a Deref first
-            if ws.needs_deref {
-                projections.push(Projection {
-                    kind: ProjectionKind::Deref,
-                    ty: ws.record_tid,
-                });
-            }
 
             // Add the field projection
             let field_proj = self.resolve_field_projection(ws.record_tid, name)?;
@@ -2906,9 +2974,24 @@ impl<'a> HirBuilder<'a> {
             if let crate::ast::StatementKind::With { desig, body } = &stmt.kind {
                 // WITH elimination: push scope, lower body inline, pop scope
                 let var_name = &desig.ident.name;
+                // Check if the designator is a field in an outer WITH scope
                 let desig_tid = self.get_var_type(var_name)
                     .or_else(|| self.scope_lookup(var_name).map(|s| s.typ))
                     .or_else(|| self.symtab.lookup_any(var_name).map(|s| s.typ))
+                    .or_else(|| {
+                        // Look up in WITH stack — for nested WITH on record fields
+                        for ws in self.with_stack.iter().rev() {
+                            if ws.field_names.contains(&var_name.to_string()) {
+                                // Found as a field in an outer WITH record
+                                if let Type::Record { fields, .. } = self.types.get(ws.record_tid) {
+                                    if let Some(f) = fields.iter().find(|f| f.name == *var_name) {
+                                        return Some(f.typ);
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    })
                     .unwrap_or(TY_ERROR);
                 self.push_with(var_name, desig_tid);
                 result.extend(self.lower_stmts(body));
