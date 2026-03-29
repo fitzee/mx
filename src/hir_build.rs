@@ -378,7 +378,6 @@ pub fn build_module(
                     local_module_inits.push((local_mod.name.clone(), hir_stmts));
                 }
             }
-            _ => {}
         }
     }
 
@@ -386,8 +385,8 @@ pub fn build_module(
     for imp in impl_mods {
         let (imp_modules, imp_aliases) = extract_imports(&imp.imports);
         // Use only the embedded module's own imports (not main module imports)
-        let mut merged_modules = imp_modules;
-        let mut merged_aliases = imp_aliases;
+        let merged_modules = imp_modules;
+        let merged_aliases = imp_aliases;
         // Also include imports from the corresponding definition module (via sema scope)
         if let Some(scope_id) = sema.symtab.lookup_module_scope(&imp.name) {
             for sym in sema.symtab.symbols_in_scope(scope_id) {
@@ -458,7 +457,7 @@ pub fn build_module(
         let mut emp_const_decls = Vec::new();
         let mut emp_type_decls = Vec::new();
         let mut emp_global_decls = Vec::new();
-        let mut emp_exception_decls = Vec::new();
+        let emp_exception_decls = Vec::new();
         let mut emp_proc_decls = Vec::new();
 
         // Use scoped lookup for this embedded module to avoid TypeId conflicts

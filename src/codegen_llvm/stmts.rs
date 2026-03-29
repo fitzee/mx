@@ -655,7 +655,7 @@ impl LLVMCodeGen {
                 }
 
                 let tc_end = self.next_label("tc.end");
-                let mut has_else = else_body.is_some();
+                let has_else = else_body.is_some();
 
                 // Pre-allocate TYPECASE binding variables
                 for branch in branches {
