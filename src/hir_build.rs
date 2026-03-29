@@ -138,6 +138,11 @@ pub fn build_module(
                         if let Declaration::Procedure(np) = nd {
                             let parent_name = scope_chain.last().map(|s| s.as_str());
                             let mut npd = build_proc_decl(&np.heading, &np.block.decls, module_name, sema, true, parent_name);
+                            // Fix mangled name to include full parent chain
+                            let full_mangled = format!("{}_{}", scope_chain.iter()
+                                .map(|s| s.as_str()).collect::<Vec<_>>().join("_"),
+                                np.heading.name);
+                            npd.sig.mangled = format!("{}_{}", module_name, full_mangled);
                             if let Some(stmts) = &np.block.body {
                                 let mut nhb = HirBuilder::new(
                                     &sema.types, &sema.symtab, module_name, &sema.foreign_modules,
@@ -159,11 +164,45 @@ pub fn build_module(
                                 }
                                 npd.body = Some(nhb.lower_stmts(stmts));
                             }
+                            // Compute closure captures
+                            if let Some(ref body) = npd.body {
+                                let param_names: Vec<String> = npd.sig.params.iter().map(|p| p.name.clone()).collect();
+                                let local_names: HashSet<String> = npd.locals.iter()
+                                    .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
+                                    .collect();
+                                let mut refs = Vec::new();
+                                collect_hir_var_refs(body, &mut refs);
+                                let mut seen = HashSet::new();
+                                for ref_name in &refs {
+                                    if param_names.contains(ref_name) { continue; }
+                                    if local_names.contains(ref_name) { continue; }
+                                    if seen.contains(ref_name) { continue; }
+                                    let tid = sema.symtab.lookup_any(ref_name)
+                                        .map(|s| s.typ).unwrap_or(TY_INTEGER);
+                                    npd.closure_captures.push(crate::hir::CapturedVar {
+                                        name: ref_name.clone(), ty: tid, is_high_companion: false,
+                                    });
+                                    seen.insert(ref_name.clone());
+                                }
+                            }
                             // Recurse for deeper nesting
                             let mut chain = scope_chain.to_vec();
                             chain.push(np.heading.name.clone());
                             build_nested_recursive(&mut npd, &np.block.decls, &chain,
                                 module_name, imported_modules, import_aliases, sema);
+                            // Propagate grandchild captures: if a child captures vars
+                            // from outer scopes, the parent needs them too for forwarding.
+                            let parent_params: HashSet<String> = parent_decl.sig.params.iter()
+                                .map(|p| p.name.clone()).collect();
+                            let parent_locals: HashSet<String> = parent_decl.locals.iter()
+                                .filter_map(|l| if let crate::hir::HirLocalDecl::Var { name, .. } = l { Some(name.clone()) } else { None })
+                                .collect();
+                            for child_cap in &npd.closure_captures {
+                                if parent_params.contains(&child_cap.name) { continue; }
+                                if parent_locals.contains(&child_cap.name) { continue; }
+                                if parent_decl.closure_captures.iter().any(|c| c.name == child_cap.name) { continue; }
+                                parent_decl.closure_captures.push(child_cap.clone());
+                            }
                             parent_decl.nested_procs.push(npd);
                         }
                     }

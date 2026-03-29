@@ -466,7 +466,26 @@ impl LLVMCodeGen {
             self.declared_fns.insert(nested.sig.name.clone());
             let module_name = format!("{}_{}", self.module_name, nested.sig.name);
             if module_name != nested_name {
-                self.declared_fns.insert(module_name);
+                self.declared_fns.insert(module_name.clone());
+            }
+            // Map all possible HIR mangled names → actual LLVM function name
+            if nested.sig.mangled != nested_name {
+                self.fn_name_map.insert(nested.sig.mangled.clone(), nested_name.clone());
+            }
+            if module_name != nested_name {
+                self.fn_name_map.insert(module_name, nested_name.clone());
+            }
+            // Also map module + parent_source + name (how HIR body resolves calls)
+            if let Some(parent_src) = proc.sig.name.rsplit('_').next() {
+                let alt_name = format!("{}_{}_{}", self.module_name, parent_src, nested.sig.name);
+                if alt_name != nested_name {
+                    self.fn_name_map.insert(alt_name, nested_name.clone());
+                }
+            }
+            // And just module + immediate_parent + name
+            let parent_child = format!("{}_{}_{}", self.module_name, proc.sig.name, nested.sig.name);
+            if parent_child != nested_name {
+                self.fn_name_map.insert(parent_child, nested_name.clone());
             }
 
             // Promote captured variables to globals

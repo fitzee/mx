@@ -173,6 +173,8 @@ pub struct LLVMCodeGen {
     pub(crate) proc_params: HashMap<String, Vec<ParamLLVMInfo>>,
     /// Known return types for functions (populated by declare_stdlib_function and gen_proc_decl)
     pub(crate) fn_return_types: HashMap<String, String>,
+    /// Map HIR mangled names → actual LLVM function names (for nested proc calls)
+    pub(crate) fn_name_map: HashMap<String, String>,
     /// String constant lengths (for CONST s = "..." passed to open array params)
     pub(crate) string_const_lengths: HashMap<String, usize>,
     /// VAR params in current scope (passed as pointers)
@@ -284,6 +286,7 @@ impl LLVMCodeGen {
             rtti_type_id_counter: 0,
             proc_params: HashMap::new(),
             fn_return_types: HashMap::new(),
+            fn_name_map: HashMap::new(),
             string_const_lengths: HashMap::new(),
             var_params: vec![HashSet::new()],
             open_array_params: vec![HashSet::new()],

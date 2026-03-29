@@ -212,8 +212,10 @@ impl LLVMCodeGen {
                         }
                     }
                     HirCallTarget::Direct(sid) => {
+                        let call_name = self.fn_name_map.get(&sid.mangled)
+                            .cloned().unwrap_or_else(|| sid.mangled.clone());
                         self.emitln(&format!("  call void @{}({})",
-                            sid.mangled, arg_str.join(", ")));
+                            call_name, arg_str.join(", ")));
                     }
                     HirCallTarget::Indirect(callee_expr) => {
                         let fn_ptr = self.gen_hir_expr(callee_expr);

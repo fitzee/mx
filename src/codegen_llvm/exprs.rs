@@ -289,14 +289,16 @@ impl LLVMCodeGen {
 
                 let ret_ty = self.tl_type_str(expr.ty);
                 let arg_str = self.expand_hir_call_args(args);
+                let call_name = self.fn_name_map.get(&target.mangled)
+                    .cloned().unwrap_or_else(|| target.mangled.clone());
                 let tmp = self.next_tmp();
                 if ret_ty == "void" {
                     self.emitln(&format!("  call void @{}({})",
-                        target.mangled, arg_str.join(", ")));
+                        call_name, arg_str.join(", ")));
                     Val::with_tid("void", "void".to_string(), expr.ty)
                 } else {
                     self.emitln(&format!("  {} = call {} @{}({})",
-                        tmp, ret_ty, target.mangled, arg_str.join(", ")));
+                        tmp, ret_ty, call_name, arg_str.join(", ")));
                     Val::with_tid(tmp, ret_ty, expr.ty)
                 }
             }
