@@ -780,7 +780,45 @@ impl CodeGen {
                         .and_then(|np| np.body.clone())
                 })
         });
-        if let Some(body) = prebuilt_body {
+        // Check for procedure-level EXCEPT handler
+        let except_body = self.prebuilt_hir.as_ref().and_then(|hir| {
+            let mod_name = self.module_name.clone();
+            // Search proc_decls for the except handler
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == mod_name)
+                .and_then(|pd| pd.except_handler.clone())
+                .or_else(|| hir.proc_decls.iter()
+                    .flat_map(|pd| pd.nested_procs.iter())
+                    .find(|np| np.sig.name == proc_name && np.sig.module == mod_name)
+                    .and_then(|np| np.except_handler.clone()))
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == mod_name)
+                    .and_then(|e| e.procedures.iter()
+                        .find(|pd| pd.sig.name == proc_name)
+                        .and_then(|pd| pd.except_handler.clone())))
+        });
+
+        if let Some(ref except_stmts) = except_body {
+            // Procedure-level EXCEPT: wrap body in M2_TRY/M2_CATCH
+            self.emitln("m2_ExcFrame _ef;");
+            self.emitln("M2_TRY(_ef) {");
+            self.indent += 1;
+            if let Some(body) = prebuilt_body {
+                for stmt in &body {
+                    self.emit_hir_stmt(stmt);
+                }
+            }
+            self.emitln("M2_ENDTRY(_ef);");
+            self.indent -= 1;
+            self.emitln("} M2_CATCH {");
+            self.indent += 1;
+            self.emitln("M2_ENDTRY(_ef);");
+            for stmt in except_stmts {
+                self.emit_hir_stmt(stmt);
+            }
+            self.indent -= 1;
+            self.emitln("}");
+        } else if let Some(body) = prebuilt_body {
             for stmt in &body {
                 self.emit_hir_stmt(stmt);
             }
