@@ -614,8 +614,8 @@ impl LLVMCodeGen {
 
     fn post_sema_generate(&mut self, unit: &CompilationUnit) -> CompileResult<()> {
         match unit {
-            CompilationUnit::ProgramModule(m) => self.gen_program_module(m),
-            CompilationUnit::DefinitionModule(_m) => {
+            CompilationUnit::ProgramModule(_) => self.gen_program_module(),
+            CompilationUnit::DefinitionModule(_) => {
                 // Definition modules don't produce output
                 Ok(())
             }

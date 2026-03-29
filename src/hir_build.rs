@@ -421,7 +421,64 @@ pub fn build_module(
                     }
                 }
                 Declaration::Procedure(p) => {
-                    emp_proc_decls.push(build_proc_decl(&p.heading, &p.block.decls, &imp.name, sema, false, None));
+                    let mut pd = build_proc_decl(&p.heading, &p.block.decls, &imp.name, sema, false, None);
+                    // Lower the procedure body for LLVM backend consumption
+                    if let Some(stmts) = &p.block.body {
+                        let mut hb = HirBuilder::new(
+                            &sema.types, &sema.symtab, &imp.name, &sema.foreign_modules,
+                        );
+                        hb.set_imported_modules(merged_modules.clone());
+                        hb.set_import_alias_map(merged_aliases.clone());
+                        hb.enter_procedure_named(&p.heading.name);
+                        // Register open array _high companions
+                        for fp in &p.heading.params {
+                            if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                                for name in &fp.names {
+                                    let high_name = format!("{}_high", name);
+                                    hb.register_var(&high_name, TY_INTEGER);
+                                    hb.register_local(&high_name);
+                                }
+                            }
+                        }
+                        pd.body = Some(hb.lower_stmts(stmts));
+                    }
+                    // Lower except handler if present
+                    if let Some(stmts) = &p.block.except {
+                        let mut hb = HirBuilder::new(
+                            &sema.types, &sema.symtab, &imp.name, &sema.foreign_modules,
+                        );
+                        hb.set_imported_modules(merged_modules.clone());
+                        hb.set_import_alias_map(merged_aliases.clone());
+                        hb.enter_procedure_named(&p.heading.name);
+                        pd.except_handler = Some(hb.lower_stmts(stmts));
+                    }
+                    // Build nested proc decls with bodies
+                    for nd in &p.block.decls {
+                        if let Declaration::Procedure(np) = nd {
+                            let mut npd = build_proc_decl(&np.heading, &np.block.decls, &imp.name, sema, true, Some(&p.heading.name));
+                            if let Some(stmts) = &np.block.body {
+                                let mut nhb = HirBuilder::new(
+                                    &sema.types, &sema.symtab, &imp.name, &sema.foreign_modules,
+                                );
+                                nhb.set_imported_modules(merged_modules.clone());
+                                nhb.set_import_alias_map(merged_aliases.clone());
+                                nhb.enter_procedure_named(&p.heading.name);
+                                nhb.enter_procedure_named(&np.heading.name);
+                                for fp in &np.heading.params {
+                                    if matches!(fp.typ, ast::TypeNode::OpenArray { .. }) {
+                                        for name in &fp.names {
+                                            let high_name = format!("{}_high", name);
+                                            nhb.register_var(&high_name, TY_INTEGER);
+                                            nhb.register_local(&high_name);
+                                        }
+                                    }
+                                }
+                                npd.body = Some(nhb.lower_stmts(stmts));
+                            }
+                            pd.nested_procs.push(npd);
+                        }
+                    }
+                    emp_proc_decls.push(pd);
                 }
                 _ => {}
             }
