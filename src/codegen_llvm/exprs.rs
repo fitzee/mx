@@ -335,7 +335,20 @@ impl LLVMCodeGen {
                 match op {
                     UnaryOp::Neg => {
                         let tmp = self.next_tmp();
-                        if Self::is_float_type(&val.ty) {
+                        // COMPLEX negation
+                        let operand_resolved = self.resolve_alias_id(operand.ty);
+                        if matches!(self.sema.types.get(operand_resolved),
+                            crate::types::Type::Complex | crate::types::Type::LongComplex)
+                        {
+                            let func = "m2_complex_neg";
+                            if !self.declared_fns.contains(func) {
+                                self.emit_preambleln(&format!("declare {} @{}({} %a)", val.ty, func, val.ty));
+                                self.declared_fns.insert(func.to_string());
+                            }
+                            self.emitln(&format!("  {} = call {} @{}({} {})",
+                                tmp, val.ty, func, val.ty, val.name));
+                            Val::with_tid(tmp, val.ty, expr.ty)
+                        } else if Self::is_float_type(&val.ty) {
                             self.emitln(&format!("  {} = fneg {} {}", tmp, val.ty, val.name));
                             Val::with_tid(tmp, val.ty, expr.ty)
                         } else {
@@ -390,7 +403,15 @@ impl LLVMCodeGen {
                 } else {
                     let lhs = self.gen_hir_expr(left);
                     let rhs = self.gen_hir_expr(right);
-                    self.gen_hir_binary_op(*op, &lhs, &rhs, left.ty, right.ty, expr.ty)
+                    // COMPLEX: delegate to runtime C helpers
+                    let lhs_resolved = self.resolve_alias_id(left.ty);
+                    if matches!(self.sema.types.get(lhs_resolved),
+                        crate::types::Type::Complex | crate::types::Type::LongComplex)
+                    {
+                        self.gen_complex_binary_op(*op, &lhs, &rhs, expr.ty)
+                    } else {
+                        self.gen_hir_binary_op(*op, &lhs, &rhs, left.ty, right.ty, expr.ty)
+                    }
                 }
             }
 
@@ -695,6 +716,49 @@ impl LLVMCodeGen {
             }
             format!("{} {}", val.ty, val.name)
         }).collect()
+    }
+
+    /// Emit a COMPLEX binary operation via runtime C helper.
+    fn gen_complex_binary_op(&mut self, op: BinaryOp, lhs: &Val, rhs: &Val, result_ty: crate::types::TypeId) -> Val {
+        let func = match op {
+            BinaryOp::Add => "m2_complex_add",
+            BinaryOp::Sub => "m2_complex_sub",
+            BinaryOp::Mul => "m2_complex_mul",
+            BinaryOp::RealDiv => "m2_complex_div",
+            BinaryOp::Eq => "m2_complex_eq",
+            BinaryOp::Ne => "m2_complex_eq", // negate after
+            _ => {
+                // Fallback for unsupported ops
+                let tmp = self.next_tmp();
+                self.emitln(&format!("  {} = alloca {}", tmp, lhs.ty));
+                return Val::with_tid(tmp, lhs.ty.clone(), result_ty);
+            }
+        };
+        let ty = &lhs.ty; // e.g., "{ float, float }"
+        if !self.declared_fns.contains(func) {
+            if func == "m2_complex_eq" {
+                self.emit_preambleln(&format!("declare i32 @{}({} %a, {} %b)", func, ty, ty));
+            } else {
+                self.emit_preambleln(&format!("declare {} @{}({} %a, {} %b)", ty, func, ty, ty));
+            }
+            self.declared_fns.insert(func.to_string());
+        }
+        let tmp = self.next_tmp();
+        if op == BinaryOp::Eq {
+            self.emitln(&format!("  {} = call i32 @{}({} {}, {} {})",
+                tmp, func, ty, lhs.name, ty, rhs.name));
+            Val::with_tid(tmp, "i32".to_string(), result_ty)
+        } else if op == BinaryOp::Ne {
+            let eq_tmp = self.next_tmp();
+            self.emitln(&format!("  {} = call i32 @{}({} {}, {} {})",
+                eq_tmp, func, ty, lhs.name, ty, rhs.name));
+            self.emitln(&format!("  {} = xor i32 {}, 1", tmp, eq_tmp));
+            Val::with_tid(tmp, "i32".to_string(), result_ty)
+        } else {
+            self.emitln(&format!("  {} = call {} @{}({} {}, {} {})",
+                tmp, ty, func, ty, lhs.name, ty, rhs.name));
+            Val::with_tid(tmp, ty.clone(), result_ty)
+        }
     }
 
     /// Convert an HIR expression to i1 for use in branch conditions.
