@@ -598,6 +598,17 @@ impl CodeGen {
         self.emit(" {\n");
         self.indent += 1;
 
+        // Suppress -Wunused-parameter for generated code
+        if let Some(ref sig) = early_sig {
+            for hp in &sig.params {
+                let mangled = self.mangle(&hp.name);
+                self.emitln(&format!("(void){};", mangled));
+                if hp.needs_high {
+                    self.emitln(&format!("(void){}_high;", mangled));
+                }
+            }
+        }
+
         // Push a new VAR param scope and register VAR params
         // Note: VAR open array params are already pointers, so don't register them
         // as VAR (which would cause double dereferencing with (*a)[i])

@@ -733,6 +733,17 @@ impl CodeGen {
                 self.emit(") {\n");
                 self.indent += 1;
 
+                // Suppress -Wunused-parameter for generated code
+                if let Some(ref sig) = emb_sig {
+                    for hp in &sig.params {
+                        let mangled = self.mangle(&hp.name);
+                        self.emitln(&format!("(void){};", mangled));
+                        if hp.needs_high {
+                            self.emitln(&format!("(void){}_high;", mangled));
+                        }
+                    }
+                }
+
                 // Track VAR and open array params for body codegen (from HIR sig)
                 let mut param_vars = HashMap::new();
                 let mut oa_params = HashSet::new();
