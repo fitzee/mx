@@ -555,7 +555,21 @@ impl super::CodeGen {
                 // (C supports struct assignment), memcpy for arrays.
                 let resolved = self.resolve_hir_alias(target.ty);
                 let is_array = matches!(self.sema.types.get(resolved), crate::types::Type::Array { .. });
-                if is_array {
+                // Check if this is a string-to-char-array assignment
+                let is_char_array = if let crate::types::Type::Array { elem_type, .. } = self.sema.types.get(resolved) {
+                    matches!(self.sema.types.get(*elem_type), crate::types::Type::Char)
+                } else { false };
+                let is_string_source = match &value.kind {
+                    HirExprKind::StringLit(_) => true,
+                    HirExprKind::Place(p) => matches!(&p.base, PlaceBase::Constant(ConstVal::String(_))),
+                    _ => false,
+                };
+                if is_array && is_char_array && is_string_source {
+                    // String-to-char-array: use m2_Strings_Assign to avoid overread
+                    self.emit_indent();
+                    self.emit(&format!("m2_Strings_Assign({}, {}, sizeof({}) - 1);\n",
+                        value_str, target_str, target_str));
+                } else if is_array {
                     self.emit_indent();
                     self.emit(&format!("memcpy({}, {}, sizeof({}));\n",
                         target_str, value_str, target_str));
