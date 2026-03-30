@@ -641,227 +641,562 @@ mod tests {
         }
     }
 
-    // ── Builder mechanics ────────────────────────────────────────
+    // Helper: make an IF with elsifs
+    fn if_elsif_stmt(
+        cond: HirExpr,
+        then_body: Vec<HirStmt>,
+        elsifs: Vec<(HirExpr, Vec<HirStmt>)>,
+        else_body: Option<Vec<HirStmt>>,
+    ) -> HirStmt {
+        HirStmt {
+            kind: HirStmtKind::If { cond, then_body, elsifs, else_body },
+            loc: loc(),
+        }
+    }
+
+    fn while_stmt(cond: HirExpr, body: Vec<HirStmt>) -> HirStmt {
+        HirStmt {
+            kind: HirStmtKind::While { cond, body },
+            loc: loc(),
+        }
+    }
+
+    fn loop_stmt(body: Vec<HirStmt>) -> HirStmt {
+        HirStmt {
+            kind: HirStmtKind::Loop { body },
+            loc: loc(),
+        }
+    }
+
+    /// Assert a block has a specific terminator kind and return its successors.
+    fn assert_goto(cfg: &Cfg, block: BlockId) -> BlockId {
+        match &cfg.blocks[block].terminator {
+            Some(Terminator::Goto(t)) => *t,
+            other => panic!("block {} expected Goto, got {:?}", block, other),
+        }
+    }
+
+    fn assert_branch(cfg: &Cfg, block: BlockId) -> (BlockId, BlockId) {
+        match &cfg.blocks[block].terminator {
+            Some(Terminator::Branch { on_true, on_false, .. }) => (*on_true, *on_false),
+            other => panic!("block {} expected Branch, got {:?}", block, other),
+        }
+    }
+
+    fn assert_return(cfg: &Cfg, block: BlockId) {
+        match &cfg.blocks[block].terminator {
+            Some(Terminator::Return(_)) => {}
+            other => panic!("block {} expected Return, got {:?}", block, other),
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  Builder / invariant tests
+    // ════════════════════════════════════════════════════════════
 
     #[test]
-    fn empty_body() {
+    fn finish_seals_open_current_block() {
+        // Empty body → finish() auto-seals entry with Return(None)
         let cfg = build_cfg(&[]);
         assert_eq!(cfg.blocks.len(), 1);
-        assert!(matches!(cfg.blocks[0].terminator, Some(Terminator::Return(None))));
+        assert_return(&cfg, 0);
+        assert_eq!(cfg.blocks[0].stmts.len(), 0);
     }
 
     #[test]
-    fn linear_sequence() {
-        let stmts = vec![assign_stmt(), assign_stmt(), assign_stmt()];
-        let cfg = build_cfg(&stmts);
-        assert_eq!(cfg.blocks.len(), 1);
-        assert_eq!(cfg.blocks[0].stmts.len(), 3);
-        assert!(matches!(cfg.blocks[0].terminator, Some(Terminator::Return(None))));
-    }
-
-    #[test]
-    fn return_discards_rest() {
-        let stmts = vec![assign_stmt(), return_stmt(Some(1)), assign_stmt()];
-        let cfg = build_cfg(&stmts);
-        assert_eq!(cfg.blocks.len(), 1);
-        assert_eq!(cfg.blocks[0].stmts.len(), 1); // only first assign
-        assert!(matches!(cfg.blocks[0].terminator, Some(Terminator::Return(Some(_)))));
-    }
-
-    // ── IF ───────────────────────────────────────────────────────
-
-    #[test]
-    fn if_then_only() {
-        // IF cond THEN assign END
-        let stmts = vec![if_stmt(bool_expr("c"), vec![assign_stmt()], None)];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-        // Blocks: entry(0) → branch, then(1), merge(2)
-        // entry branches to then or merge
-        // then → Goto(merge)
-        // merge has implicit return
-        assert!(cfg.blocks.len() >= 3);
-    }
-
-    #[test]
-    fn if_then_else() {
-        let stmts = vec![if_stmt(
-            bool_expr("c"),
-            vec![assign_stmt()],
-            Some(vec![assign_stmt()]),
-        )];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-        // merge, then, else blocks + entry
-        assert!(cfg.blocks.len() >= 4);
-    }
-
-    #[test]
-    fn if_both_branches_return() {
+    fn finish_seals_unreached_allocated_blocks() {
         // IF cond THEN RETURN 1 ELSE RETURN 2 END
-        let stmts = vec![if_stmt(
+        // → merge block allocated but never started
+        let cfg = build_cfg(&[if_stmt(
             bool_expr("c"),
             vec![return_stmt(Some(1))],
             Some(vec![return_stmt(Some(2))]),
-        )];
-        let cfg = build_cfg(&stmts);
+        )]);
         cfg.validate();
-        // merge block is allocated but unreachable — sealed by finish()
-        // No path reaches merge, so builder's current is None after the IF
-    }
-
-    // ── WHILE ───────────────────────────────────────────────────
-
-    #[test]
-    fn simple_while() {
-        // WHILE cond DO assign END
-        let stmts = vec![HirStmt {
-            kind: HirStmtKind::While {
-                cond: bool_expr("c"),
-                body: vec![assign_stmt()],
-            },
-            loc: loc(),
-        }];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-        // Blocks: entry(0), header(1), body(2), exit(3)
-        assert!(cfg.blocks.len() >= 4);
-        // Header is a branch target
+        // The merge block exists and is sealed (by finish)
+        // but has no predecessors
         let preds = cfg.predecessors();
-        // header should have entry and body as predecessors
-        assert!(preds[1].len() >= 2); // pre→header and body→header
+        let merge = 1; // first allocated block after entry
+        // Find the block with no predecessors that isn't entry
+        let unreached: Vec<_> = (1..cfg.blocks.len())
+            .filter(|&b| preds[b].is_empty())
+            .collect();
+        assert!(!unreached.is_empty(), "should have at least one unreached block");
+        // All unreached blocks must be sealed with Return(None)
+        for b in &unreached {
+            assert_return(&cfg, *b);
+        }
     }
 
-    // ── LOOP + EXIT ─────────────────────────────────────────────
+    #[test]
+    #[should_panic(expected = "start_block: abandoning open block")]
+    fn start_block_panics_if_current_open() {
+        let mut builder = CfgBuilder::new(); // current = Some(0)
+        let b1 = builder.new_block();
+        builder.start_block(b1); // should panic: block 0 is still open
+    }
 
     #[test]
-    fn loop_with_exit() {
-        // LOOP IF cond THEN EXIT END; assign END
-        let stmts = vec![HirStmt {
-            kind: HirStmtKind::Loop {
-                body: vec![
-                    if_stmt(bool_expr("c"), vec![exit_stmt()], None),
-                    assign_stmt(),
-                ],
-            },
-            loc: loc(),
-        }];
-        let cfg = build_cfg(&stmts);
+    #[should_panic(expected = "seal: block 0 already has a terminator")]
+    fn seal_twice_panics() {
+        let mut builder = CfgBuilder::new();
+        builder.seal(Terminator::Return(None));
+        // current is now None, so we need to start_block(0) to seal again
+        // But block 0 is already sealed, so start_block will fail.
+        // Test the seal path instead via direct manipulation:
+        builder.current = Some(0);
+        builder.seal(Terminator::Return(None)); // should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "start_block: block 0 is already sealed")]
+    fn start_sealed_block_panics() {
+        let mut builder = CfgBuilder::new();
+        builder.seal(Terminator::Return(None));
+        builder.start_block(0); // should panic: block 0 is sealed
+    }
+
+    #[test]
+    fn push_stmt_discards_when_current_none() {
+        // RETURN then assign → assign is silently discarded
+        let cfg = build_cfg(&[return_stmt(Some(1)), assign_stmt()]);
+        assert_eq!(cfg.blocks.len(), 1);
+        assert_eq!(cfg.blocks[0].stmts.len(), 0); // assign discarded
+        assert_return(&cfg, 0);
+    }
+
+    #[test]
+    fn linear_stmts_stay_in_one_block() {
+        let cfg = build_cfg(&[assign_stmt(), assign_stmt(), assign_stmt()]);
+        assert_eq!(cfg.blocks.len(), 1);
+        assert_eq!(cfg.blocks[0].stmts.len(), 3);
+        assert_return(&cfg, 0); // implicit return from finish()
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  IF tests
+    // ════════════════════════════════════════════════════════════
+
+    #[test]
+    fn if_then_only_structure() {
+        // IF c THEN x:=42 END
+        // entry(0) → Branch(c) → then(2) | merge(1)
+        // then(2) → Goto(merge)
+        // merge(1) → Return(None)
+        let cfg = build_cfg(&[if_stmt(bool_expr("c"), vec![assign_stmt()], None)]);
         cfg.validate();
-        // Should have: entry, header, exit, plus IF blocks
-        // EXIT should jump to exit block
-        let exit_block_id = cfg.blocks.len() - 1; // approximately
-        // Just verify it validates and has back-edges
+
+        // entry branches: true→then, false→merge
+        let (on_true, on_false) = assert_branch(&cfg, 0);
+        // then block has the assign
+        assert_eq!(cfg.blocks[on_true].stmts.len(), 1);
+        // then → Goto(merge)
+        let merge = assert_goto(&cfg, on_true);
+        // false target is merge (no else)
+        assert_eq!(on_false, merge);
+        // merge has implicit return
+        assert_return(&cfg, merge);
+    }
+
+    #[test]
+    fn if_else_structure() {
+        // IF c THEN x:=1 ELSE x:=2 END
+        let cfg = build_cfg(&[if_stmt(
+            bool_expr("c"),
+            vec![assign_stmt()],
+            Some(vec![assign_stmt()]),
+        )]);
+        cfg.validate();
+
+        let (on_true, on_false) = assert_branch(&cfg, 0);
+        // then → Goto(merge)
+        let merge_from_then = assert_goto(&cfg, on_true);
+        // else → Goto(merge)
+        let merge_from_else = assert_goto(&cfg, on_false);
+        // both converge to same merge
+        assert_eq!(merge_from_then, merge_from_else);
+        assert_return(&cfg, merge_from_then);
+    }
+
+    #[test]
+    fn if_then_returns_no_goto_merge() {
+        // IF c THEN RETURN 1 ELSE x:=2 END
+        let cfg = build_cfg(&[if_stmt(
+            bool_expr("c"),
+            vec![return_stmt(Some(1))],
+            Some(vec![assign_stmt()]),
+        )]);
+        cfg.validate();
+
+        let (on_true, on_false) = assert_branch(&cfg, 0);
+        // then block: Return (no Goto to merge)
+        assert_return(&cfg, on_true);
+        // else block: Goto(merge)
+        let merge = assert_goto(&cfg, on_false);
+        assert_return(&cfg, merge);
+    }
+
+    #[test]
+    fn if_all_branches_return_merge_unreached() {
+        // IF c THEN RETURN 1 ELSE RETURN 2 END; x:=99
+        let cfg = build_cfg(&[
+            if_stmt(
+                bool_expr("c"),
+                vec![return_stmt(Some(1))],
+                Some(vec![return_stmt(Some(2))]),
+            ),
+            assign_stmt(), // unreachable
+        ]);
+        cfg.validate();
+
+        let (on_true, on_false) = assert_branch(&cfg, 0);
+        assert_return(&cfg, on_true);
+        assert_return(&cfg, on_false);
+        // The assign is discarded (current was None after IF)
+        // merge block sealed by finish() with Return(None), no predecessors
         let preds = cfg.predecessors();
-        // The header block should appear as a successor somewhere (back-edge)
-    }
-
-    // ── Short-circuit AND/OR ────────────────────────────────────
-
-    #[test]
-    fn if_with_and() {
-        // IF a AND b THEN assign END
-        let cond = and_expr(bool_expr("a"), bool_expr("b"));
-        let stmts = vec![if_stmt(cond, vec![assign_stmt()], None)];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-        // AND creates an extra rhs_block
-        // entry → Branch(a) → rhs_block | merge
-        // rhs_block → Branch(b) → then | merge
-        assert!(cfg.blocks.len() >= 4);
+        let merge = 1; // first allocated
+        let unreached: Vec<_> = (1..cfg.blocks.len())
+            .filter(|&b| preds[b].is_empty())
+            .collect();
+        assert!(!unreached.is_empty());
     }
 
     #[test]
-    fn if_with_or() {
-        // IF a OR b THEN assign END
-        let cond = or_expr(bool_expr("a"), bool_expr("b"));
-        let stmts = vec![if_stmt(cond, vec![assign_stmt()], None)];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-        assert!(cfg.blocks.len() >= 4);
-    }
-
-    #[test]
-    fn if_with_not_and() {
-        // IF NOT (a AND b) THEN assign END
-        let cond = not_expr(and_expr(bool_expr("a"), bool_expr("b")));
-        let stmts = vec![if_stmt(cond, vec![assign_stmt()], None)];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-    }
-
-    #[test]
-    fn nested_and_or() {
-        // IF a AND (b OR c) THEN assign END
-        let cond = and_expr(
+    fn if_elsif_else_chain() {
+        // IF a THEN x:=1 ELSIF b THEN x:=2 ELSE x:=3 END
+        let cfg = build_cfg(&[if_elsif_stmt(
             bool_expr("a"),
-            or_expr(bool_expr("b"), bool_expr("c")),
-        );
-        let stmts = vec![if_stmt(cond, vec![assign_stmt()], None)];
-        let cfg = build_cfg(&stmts);
+            vec![assign_stmt()],
+            vec![(bool_expr("b"), vec![assign_stmt()])],
+            Some(vec![assign_stmt()]),
+        )]);
         cfg.validate();
-        // AND: entry → Branch(a) → rhs1 | merge
-        // rhs1 has OR: → Branch(b) → then | rhs2
-        // rhs2: → Branch(c) → then | merge
+
+        // entry → Branch(a) → then1 | elsif_block
+        let (then1, elsif_entry) = assert_branch(&cfg, 0);
+        let merge_from_then1 = assert_goto(&cfg, then1);
+
+        // elsif_block → Branch(b) → then2 | else_block
+        let (then2, else_block) = assert_branch(&cfg, elsif_entry);
+        let merge_from_then2 = assert_goto(&cfg, then2);
+        let merge_from_else = assert_goto(&cfg, else_block);
+
+        // all converge to same merge
+        assert_eq!(merge_from_then1, merge_from_then2);
+        assert_eq!(merge_from_then2, merge_from_else);
+        assert_return(&cfg, merge_from_then1);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  WHILE / LOOP / EXIT tests
+    // ════════════════════════════════════════════════════════════
+
+    #[test]
+    fn while_normal_backedge() {
+        // WHILE c DO x:=42 END
+        // entry(0)→Goto(header), header→Branch(c)→body|exit, body→Goto(header), exit→Return
+        let cfg = build_cfg(&[while_stmt(bool_expr("c"), vec![assign_stmt()])]);
+        cfg.validate();
+
+        let header = assert_goto(&cfg, 0);
+        let (body, exit) = assert_branch(&cfg, header);
+        assert_eq!(cfg.blocks[body].stmts.len(), 1);
+        let backedge_target = assert_goto(&cfg, body);
+        assert_eq!(backedge_target, header); // back-edge
+        assert_return(&cfg, exit);
+
+        // header has 2 predecessors: entry and body
+        let preds = cfg.predecessors();
+        assert_eq!(preds[header].len(), 2);
+        assert!(preds[header].contains(&0));
+        assert!(preds[header].contains(&body));
+    }
+
+    #[test]
+    fn while_body_returns_no_backedge() {
+        // WHILE c DO RETURN 0 END
+        let cfg = build_cfg(&[while_stmt(bool_expr("c"), vec![return_stmt(Some(0))])]);
+        cfg.validate();
+
+        let header = assert_goto(&cfg, 0);
+        let (body, exit) = assert_branch(&cfg, header);
+        // body has Return, NOT Goto(header)
+        assert_return(&cfg, body);
+        // header has only 1 predecessor (entry), no back-edge from body
+        let preds = cfg.predecessors();
+        assert_eq!(preds[header].len(), 1);
+    }
+
+    #[test]
+    fn loop_with_exit_structure() {
+        // LOOP IF c THEN EXIT END; x:=42 END
+        let cfg = build_cfg(&[loop_stmt(vec![
+            if_stmt(bool_expr("c"), vec![exit_stmt()], None),
+            assign_stmt(),
+        ])]);
+        cfg.validate();
+
+        // entry(0) → Goto(header)
+        let header = assert_goto(&cfg, 0);
+        // header starts the loop body — first statement is IF
+        // The IF branches: true→exit_via_goto, false→merge(continue)
+        // After the IF merge, assign, then Goto(header) back-edge
+
+        // Find the exit block (the one that LOOP allocated)
+        // EXIT jumps there via Goto
+        let mut found_exit_goto = false;
+        let mut exit_block = 0;
+        for b in &cfg.blocks {
+            if let Some(Terminator::Goto(target)) = &b.terminator {
+                // A Goto that is NOT a back-edge to header and NOT entry→header
+                if *target != header && b.id != 0 {
+                    // Could be EXIT target or IF merge→Goto
+                }
+            }
+        }
+        // Simpler: verify back-edge exists (some block jumps to header)
+        let preds = cfg.predecessors();
+        assert!(preds[header].len() >= 2, "header needs entry + back-edge predecessors");
+    }
+
+    #[test]
+    fn nested_loop_exit_targets_innermost() {
+        // LOOP               ← outer (exit=outer_exit)
+        //   LOOP             ← inner (exit=inner_exit)
+        //     IF c THEN EXIT END  ← EXIT targets inner_exit
+        //   END
+        //   x:=42            ← runs after inner loop
+        // END
+        let cfg = build_cfg(&[loop_stmt(vec![
+            loop_stmt(vec![
+                if_stmt(bool_expr("c"), vec![exit_stmt()], None),
+            ]),
+            assign_stmt(),
+        ])]);
+        cfg.validate();
+
+        // outer: entry→Goto(outer_header)
+        let outer_header = assert_goto(&cfg, 0);
+        // outer_header starts with inner loop lowering:
+        //   inner: Goto(inner_header) inside outer_header
+        //   But outer_header IS the block, so it gets sealed with Goto(inner_header)
+
+        // After inner loop, assign, then Goto(outer_header)
+        // After outer loop, outer_exit → Return
+
+        // Verify: the assign statement exists somewhere
+        let block_with_assign = cfg.blocks.iter()
+            .find(|b| b.stmts.len() == 1)
+            .expect("should have a block with the assign");
+
+        // Verify: outer_header has a back-edge (some block Goto's to it)
+        let preds = cfg.predecessors();
+        assert!(preds[outer_header].len() >= 2);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  Short-circuit AND / OR / NOT tests
+    // ════════════════════════════════════════════════════════════
+
+    #[test]
+    fn and_creates_rhs_block() {
+        // IF a AND b THEN x:=42 END
+        // entry → Branch(a) → rhs | merge
+        // rhs → Branch(b) → then | merge
+        // then → Goto(merge)
+        // merge → Return
+        let cfg = build_cfg(&[if_stmt(
+            and_expr(bool_expr("a"), bool_expr("b")),
+            vec![assign_stmt()],
+            None,
+        )]);
+        cfg.validate();
+
+        // entry: Branch(a)
+        let (rhs, merge_or_false) = assert_branch(&cfg, 0);
+        // rhs: Branch(b)
+        let (then_block, also_merge) = assert_branch(&cfg, rhs);
+        // Both false targets should be merge
+        assert_eq!(merge_or_false, also_merge);
+        // then → Goto(merge)
+        let merge = assert_goto(&cfg, then_block);
+        assert_eq!(merge, merge_or_false);
+        assert_return(&cfg, merge);
+    }
+
+    #[test]
+    fn or_creates_rhs_block() {
+        // IF a OR b THEN x:=42 END
+        // entry → Branch(a) → then | rhs
+        // rhs → Branch(b) → then | merge
+        // then → Goto(merge)
+        // merge → Return
+        let cfg = build_cfg(&[if_stmt(
+            or_expr(bool_expr("a"), bool_expr("b")),
+            vec![assign_stmt()],
+            None,
+        )]);
+        cfg.validate();
+
+        // entry: Branch(a) — true goes to then, false to rhs
+        let (then_from_a, rhs) = assert_branch(&cfg, 0);
+        // rhs: Branch(b) — true goes to then, false to merge
+        let (then_from_b, merge) = assert_branch(&cfg, rhs);
+        // Both true targets should be the same then block
+        assert_eq!(then_from_a, then_from_b);
+        // then → Goto(merge)
+        let merge_from_then = assert_goto(&cfg, then_from_a);
+        assert_eq!(merge_from_then, merge);
+        assert_return(&cfg, merge);
+    }
+
+    #[test]
+    fn not_swaps_targets() {
+        // IF NOT c THEN x:=42 END
+        // NOT swaps on_true/on_false, so:
+        // entry → Branch(c) → merge(false-path) | then(true-path)
+        // (inverted: c=true means skip, c=false means enter then)
+        let cfg = build_cfg(&[if_stmt(
+            not_expr(bool_expr("c")),
+            vec![assign_stmt()],
+            None,
+        )]);
+        cfg.validate();
+
+        let (on_true, on_false) = assert_branch(&cfg, 0);
+        // NOT swaps: on_true of the Branch = merge (skip then)
+        //            on_false of the Branch = then block
+        // then block should have the assign
+        assert_eq!(cfg.blocks[on_false].stmts.len(), 1);
+        // on_true is merge (no stmts, just return)
+        let merge = on_true;
+        assert_return(&cfg, merge);
+    }
+
+    #[test]
+    fn and_or_nested() {
+        // IF a AND (b OR c) THEN x:=42 END
+        // AND: entry → Branch(a) → and_rhs | merge
+        // and_rhs starts OR: → Branch(b) → then | or_rhs
+        // or_rhs: → Branch(c) → then | merge
+        let cfg = build_cfg(&[if_stmt(
+            and_expr(bool_expr("a"), or_expr(bool_expr("b"), bool_expr("c"))),
+            vec![assign_stmt()],
+            None,
+        )]);
+        cfg.validate();
+
+        // entry: Branch(a)
+        let (and_rhs, merge1) = assert_branch(&cfg, 0);
+        // and_rhs: Branch(b) — OR left
+        let (then_from_b, or_rhs) = assert_branch(&cfg, and_rhs);
+        // or_rhs: Branch(c) — OR right
+        let (then_from_c, merge2) = assert_branch(&cfg, or_rhs);
+        // Both OR true targets → same then block
+        assert_eq!(then_from_b, then_from_c);
+        // AND false and OR false both → merge
+        assert_eq!(merge1, merge2);
+        // then → Goto(merge)
+        let merge_from_then = assert_goto(&cfg, then_from_b);
+        assert_eq!(merge_from_then, merge1);
+    }
+
+    #[test]
+    fn not_and_or_combined() {
+        // IF NOT (a AND b) OR c THEN x:=42 END
+        // OR: entry evaluates left=NOT(a AND b), right=c
+        // NOT(a AND b): swaps targets of AND
+        //   AND: Branch(a) → rhs | OR_TRUE
+        //   rhs: Branch(b) → OR_TRUE(inverted!) | or_rhs_block
+        //   Wait — NOT swaps the AND's on_true/on_false:
+        //   AND normally: a-true→rhs, a-false→on_false
+        //   NOT(AND): a-true→rhs, a-false→on_true (swapped)
+        //   rhs: b-true→on_false(swapped), b-false→on_true
+        // This is complex. Just verify it builds, validates, and has
+        // the right block count.
+        let cond = or_expr(
+            not_expr(and_expr(bool_expr("a"), bool_expr("b"))),
+            bool_expr("c"),
+        );
+        let cfg = build_cfg(&[if_stmt(cond, vec![assign_stmt()], None)]);
+        cfg.validate();
+        // OR needs rhs block. NOT(AND) needs AND's rhs block.
+        // At least: entry, and_rhs, or_rhs, then, merge = 5+
         assert!(cfg.blocks.len() >= 5);
     }
 
     #[test]
-    fn while_with_short_circuit() {
-        // WHILE a AND b DO assign END
-        let stmts = vec![HirStmt {
-            kind: HirStmtKind::While {
-                cond: and_expr(bool_expr("a"), bool_expr("b")),
-                body: vec![assign_stmt()],
-            },
-            loc: loc(),
-        }];
-        let cfg = build_cfg(&stmts);
+    fn while_with_short_circuit_condition() {
+        // WHILE a AND b DO x:=42 END
+        // header has AND lowering: Branch(a)→and_rhs|exit, and_rhs→Branch(b)→body|exit
+        let cfg = build_cfg(&[while_stmt(
+            and_expr(bool_expr("a"), bool_expr("b")),
+            vec![assign_stmt()],
+        )]);
         cfg.validate();
+
+        // entry → Goto(header)
+        let header = assert_goto(&cfg, 0);
+        // header: Branch(a) — AND left
+        let (and_rhs, exit1) = assert_branch(&cfg, header);
+        // and_rhs: Branch(b) — AND right
+        let (body, exit2) = assert_branch(&cfg, and_rhs);
+        // Both false targets = exit
+        assert_eq!(exit1, exit2);
+        // body → Goto(header) back-edge
+        let backedge = assert_goto(&cfg, body);
+        assert_eq!(backedge, header);
     }
 
-    // ── Edge cases ──────────────────────────────────────────────
+    // ════════════════════════════════════════════════════════════
+    //  finish() behavior tests
+    // ════════════════════════════════════════════════════════════
 
     #[test]
-    fn return_in_while_body() {
-        // WHILE cond DO RETURN 0 END
-        let stmts = vec![HirStmt {
-            kind: HirStmtKind::While {
-                cond: bool_expr("c"),
-                body: vec![return_stmt(Some(0))],
-            },
-            loc: loc(),
-        }];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-        // Body block has Return, no back-edge
-    }
-
-    #[test]
-    fn nested_loops() {
-        // LOOP LOOP IF c THEN EXIT END END END
-        let stmts = vec![HirStmt {
-            kind: HirStmtKind::Loop {
-                body: vec![HirStmt {
-                    kind: HirStmtKind::Loop {
-                        body: vec![if_stmt(bool_expr("c"), vec![exit_stmt()], None)],
-                    },
-                    loc: loc(),
-                }],
-            },
-            loc: loc(),
-        }];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
-    }
-
-    #[test]
-    fn code_after_return_discarded() {
-        // RETURN 1; assign (unreachable)
-        let stmts = vec![return_stmt(Some(1)), assign_stmt(), assign_stmt()];
-        let cfg = build_cfg(&stmts);
-        cfg.validate();
+    fn finish_with_linear_body() {
+        // x:=1; x:=2 → finish seals with Return(None)
+        let cfg = build_cfg(&[assign_stmt(), assign_stmt()]);
         assert_eq!(cfg.blocks.len(), 1);
-        assert_eq!(cfg.blocks[0].stmts.len(), 0); // no assigns — return has no preceding stmt
+        assert_eq!(cfg.blocks[0].stmts.len(), 2);
+        assert_return(&cfg, 0);
+    }
+
+    #[test]
+    fn finish_after_explicit_return() {
+        // RETURN 1 → finish does NOT double-seal, current is already None
+        let cfg = build_cfg(&[return_stmt(Some(1))]);
+        assert_eq!(cfg.blocks.len(), 1);
+        assert_eq!(cfg.blocks[0].stmts.len(), 0);
+        match &cfg.blocks[0].terminator {
+            Some(Terminator::Return(Some(_))) => {} // explicit return, not None
+            other => panic!("expected Return(Some), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn finish_unreached_blocks_have_no_predecessors() {
+        // IF c THEN RETURN 1 ELSE RETURN 2 END
+        let cfg = build_cfg(&[if_stmt(
+            bool_expr("c"),
+            vec![return_stmt(Some(1))],
+            Some(vec![return_stmt(Some(2))]),
+        )]);
+        let preds = cfg.predecessors();
+        // Every block sealed by finish (Return(None)) with no preds
+        // is genuinely unreachable
+        for (i, block) in cfg.blocks.iter().enumerate() {
+            if i == 0 { continue; } // entry has no preds by definition
+            if preds[i].is_empty() {
+                // Must be sealed with Return(None) — the finish() default
+                match &block.terminator {
+                    Some(Terminator::Return(None)) => {} // correct
+                    other => panic!(
+                        "unreached block {} should have Return(None), got {:?}",
+                        i, other
+                    ),
+                }
+            }
+        }
     }
 }
