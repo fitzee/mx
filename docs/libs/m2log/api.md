@@ -27,6 +27,20 @@ Log severity levels in ascending order. Compared via ORD.
 
 Discriminator for field value type.
 
+**FormatOptions**
+
+```
+RECORD
+  showTimestamp: BOOLEAN;
+  showLevel:    BOOLEAN;
+  showCategory: BOOLEAN;
+  showThread:   BOOLEAN;
+END
+```
+
+Controls log line format. Defaults: timestamp=TRUE, level=TRUE, category=TRUE,
+thread=FALSE. Set globally via SetFormatOptions.
+
 **Field**
 
 ```
@@ -40,7 +54,7 @@ END
 ```
 
 A single key/value field. Fixed-size, stack-allocatable. Use KVStr, KVInt,
-KVBool to construct.
+KVBool, or KVCard to construct.
 
 **LineBuf** = ARRAY [0..MaxLine-1] OF CHAR
 
@@ -111,6 +125,19 @@ convenience procedures.
 
 Set the minimum level. Messages below this are discarded without formatting.
 
+**SetDefaultLevel(level: Level)**
+
+Set the minimum level on the default logger. Calls InitDefault if needed.
+
+**InitFormatOptions(VAR opts: FormatOptions)**
+
+Initialize format options to defaults (timestamp=TRUE, level=TRUE,
+category=TRUE, thread=FALSE).
+
+**SetFormatOptions(opts: FormatOptions)**
+
+Set the global format options used by all Format calls.
+
 **AddSink(VAR l: Logger; s: Sink): BOOLEAN**
 
 Add a sink. Returns FALSE if the sink list is full (MaxSinks).
@@ -148,6 +175,10 @@ Shorthand for LogMsg(l, LEVEL, msg).
 
 ### Convenience (default logger)
 
+**LogKVD(level: Level; msg: ARRAY OF CHAR; fields: ARRAY OF Field; nFields: INTEGER)**
+
+Log a structured message with fields using the default logger.
+
 **TraceD(msg: ARRAY OF CHAR)**
 **DebugD(msg: ARRAY OF CHAR)**
 **InfoD(msg: ARRAY OF CHAR)**
@@ -170,6 +201,10 @@ Build an integer field.
 **KVBool(key: ARRAY OF CHAR; val: BOOLEAN; VAR out: Field)**
 
 Build a boolean field.
+
+**KVCard(key: ARRAY OF CHAR; val: LONGCARD; VAR dst: Field)**
+
+Build a cardinal field. Formats the LONGCARD as a decimal string internally.
 
 ### Diagnostics
 

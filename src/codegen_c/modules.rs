@@ -572,6 +572,21 @@ impl CodeGen {
                 self.exception_names.insert(e.name.clone());
                 self.emitln(&format!("#define {} {}", e.mangled, e.exc_id));
             }
+            // Emit M2_EXC_ aliases for exceptions declared in the .def module.
+            // These get emitted as constants (Module_Name) by gen_hir_const_decl
+            // but RAISE references them as M2_EXC_Name.
+            let exc_aliases: Vec<(String, String)> = self.sema.symtab.lookup_module_scope(&imp.name)
+                .map(|scope_id| {
+                    self.sema.symtab.symbols_in_scope(scope_id).iter()
+                        .filter(|sym| matches!(self.sema.types.get(sym.typ), crate::types::Type::Exception { .. }))
+                        .map(|sym| (sym.name.clone(), format!("{}_{}", imp.name, sym.name)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (exc_name, const_mangled) in &exc_aliases {
+                self.exception_names.insert(exc_name.clone());
+                self.emitln(&format!("#define M2_EXC_{} {}", exc_name, const_mangled));
+            }
         }
         self.generating_for_module = None;
 

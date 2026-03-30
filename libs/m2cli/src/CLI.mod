@@ -4,7 +4,7 @@ FROM Strings IMPORT Assign, Length, CompareStr, Concat;
 FROM InOut IMPORT WriteString, WriteLn;
 
 CONST
-  MaxSpecs = 16;
+  MaxSpecs = 32;
 
 TYPE
   SpecKind = (Flag, Option);

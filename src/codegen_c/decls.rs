@@ -386,22 +386,6 @@ impl CodeGen {
                 let td_sym = self.register_type_desc(name, name, parent_td);
                 self.object_type_descs.insert(name.to_string(), td_sym);
             }
-            crate::types::Type::Array { elem_type, high, .. } => {
-                let elem_tid = *elem_type;
-                let arr_high = *high;
-                if elem_tid == TY_CHAR {
-                    self.char_array_types.insert(name.to_string());
-                    self.char_array_types.insert(c_type_name.clone());
-                }
-                self.array_types.insert(name.to_string());
-                self.array_types.insert(c_type_name.clone());
-                self.array_type_high.insert(name.to_string(), format!("{}", arr_high));
-                self.array_type_high.insert(c_type_name.clone(), format!("{}", arr_high));
-                // Emit typedef with correct multi-dimensional suffix
-                let (base_type, suffix) = self.field_type_and_suffix(resolved);
-                self.emit_indent();
-                self.emit(&format!("typedef {} {}{};\n", base_type, c_type_name, suffix));
-            }
             _ => {
                 // Fallback: emit structural C type directly (bypass typeid_c_names
                 // to avoid circular typedef when a named type aliases a builtin)

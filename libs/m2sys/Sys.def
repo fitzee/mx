@@ -104,4 +104,11 @@ PROCEDURE m2sys_tar_extract(archivePath: ADDRESS;
 
 PROCEDURE m2sys_unix_time(): LONGINT;
 
+(* Format current wall-clock time as ISO 8601 with milliseconds:
+   "2026-03-30T14:23:45.123".  buf must be at least 24 bytes. *)
+PROCEDURE m2sys_format_time(buf: ADDRESS; bufSize: INTEGER);
+
+(* Return the current thread's OS thread ID. *)
+PROCEDURE m2sys_thread_id(): LONGINT;
+
 END Sys.

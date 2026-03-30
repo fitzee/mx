@@ -50,9 +50,9 @@ Design choices:
   order. This makes tests reliable and diff output stable.
 - **String values escaped** using backslash sequences: `\"`, `\\`, `\n`, `\t`,
   `\r`. Other control characters below space are dropped.
-- **No timestamps** in the core formatter. Timestamps are environment-dependent
-  (wall clock, monotonic, structured). A timestamp sink or wrapper can prepend
-  them.
+- **Timestamps** included by default via `m2sys_format_time` (ISO 8601 with
+  millisecond precision). Can be disabled via `FormatOptions.showTimestamp`.
+  Thread ID is also available via `FormatOptions.showThread`.
 
 ## Memory model
 
@@ -111,7 +111,7 @@ The fix was to merge all formatting code into Log.mod. This eliminates the
 cycle and keeps the dependency graph acyclic:
 
 ```
-Log (core + formatting)
+Log (core + formatting + timestamps via Sys)
   ^           ^
   |           |
 LogSinkMemory LogSinkFile
@@ -157,7 +157,7 @@ with substring searches (Contains) and positional checks (Pos). Tests cover:
 - String escaping (quotes, backslash, control characters)
 - Ring buffer capture (GetCount, GetTotal, GetLine, Clear)
 - Recursion guard (sink triggers log call)
-- Field constructor correctness (KVStr, KVInt, KVBool)
+- Field constructor correctness (KVStr, KVInt, KVBool, KVCard)
 - Structured logging via LogKV
 - Category propagation and WithCategory
 - Multiple sinks receiving the same message

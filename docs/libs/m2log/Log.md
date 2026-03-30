@@ -14,13 +14,19 @@ Traditional `WriteString`-based debugging is fine for small programs, but falls 
 
 ## Output format
 
-Every log line is deterministic and single-line:
+Every log line is deterministic and single-line. The default format includes a millisecond-precision timestamp:
 
 ```
-LEVEL msg="message text" category="cat" key1=val1 key2="string val"
+2026-03-30T14:23:45.123 INFO msg="request handled" category="http" method="GET" status=200
 ```
 
-Rules: level name first (uppercase), message always as `msg="..."`, category next if non-empty, then fields sorted lexicographically by key. String values are quoted and escaped. Integers and booleans are unquoted.
+The format is controlled by `FormatOptions`. By default: timestamp on, level on, category on, thread ID off. With all options enabled:
+
+```
+2026-03-30T14:23:45.123 INFO tid=12345 msg="request handled" category="http" method="GET"
+```
+
+Rules: timestamp first (ISO 8601 with millis), level name (uppercase), optional thread ID, message always as `msg="..."`, category next if non-empty, then fields sorted lexicographically by key. String values are quoted and escaped. Integers and booleans are unquoted.
 
 ## Types
 
@@ -31,6 +37,19 @@ TYPE Level = (TRACE, DEBUG, INFO, WARN, ERROR, FATAL);
 ```
 
 Severity levels in ascending order. Compared via `ORD` -- `ORD(INFO) > ORD(DEBUG)`, so setting minimum level to INFO discards TRACE and DEBUG messages.
+
+### FormatOptions
+
+```modula2
+TYPE FormatOptions = RECORD
+  showTimestamp: BOOLEAN;  (* %d -- ISO 8601 with millis *)
+  showLevel:    BOOLEAN;  (* %p -- level name *)
+  showCategory: BOOLEAN;  (* %c -- category *)
+  showThread:   BOOLEAN;  (* %t -- OS thread ID *)
+END;
+```
+
+Controls which fields appear in formatted log output. Analogous to log4j pattern layout tokens. Defaults: timestamp=TRUE, level=TRUE, category=TRUE, thread=FALSE. Set globally via `SetFormatOptions`.
 
 ### Field
 
@@ -44,7 +63,7 @@ TYPE Field = RECORD
 END;
 ```
 
-A single key/value pair. Fixed-size and stack-allocatable -- no heap allocation. Construct fields using `KVStr`, `KVInt`, or `KVBool` rather than filling the record manually.
+A single key/value pair. Fixed-size and stack-allocatable -- no heap allocation. Construct fields using `KVStr`, `KVInt`, `KVBool`, or `KVCard` rather than filling the record manually.
 
 ### Record
 
@@ -127,6 +146,43 @@ PROCEDURE SetLevel(VAR l: Logger; level: Level);
 
 Set the minimum severity level. Messages below this level are discarded immediately without formatting. This is the primary performance knob -- set to WARN in production to eliminate the cost of DEBUG/INFO messages entirely.
 
+### SetDefaultLevel
+
+```modula2
+PROCEDURE SetDefaultLevel(level: Level);
+```
+
+Set the minimum level on the module-level default logger. Useful for adding `--debug` or `--verbose` flags to CLI programs. Calls `InitDefault` automatically if needed.
+
+```modula2
+IF HasFlag("debug") = 1 THEN
+  Log.SetDefaultLevel(Log.DEBUG)
+END;
+```
+
+### InitFormatOptions
+
+```modula2
+PROCEDURE InitFormatOptions(VAR opts: FormatOptions);
+```
+
+Initialize a `FormatOptions` record to defaults: timestamp=TRUE, level=TRUE, category=TRUE, thread=FALSE.
+
+### SetFormatOptions
+
+```modula2
+PROCEDURE SetFormatOptions(opts: FormatOptions);
+```
+
+Set the global format options used by all `Format` calls. Affects all loggers and sinks that use the built-in formatter.
+
+```modula2
+VAR opts: Log.FormatOptions;
+Log.InitFormatOptions(opts);
+opts.showThread := TRUE;
+Log.SetFormatOptions(opts);
+```
+
 ### AddSink
 
 ```modula2
@@ -200,6 +256,23 @@ PROCEDURE Fatal(VAR l: Logger; msg: ARRAY OF CHAR);
 
 Shorthand for `LogMsg(l, LEVEL, msg)`. Use these when you don't need structured fields.
 
+### LogKVD
+
+```modula2
+PROCEDURE LogKVD(level: Level; msg: ARRAY OF CHAR;
+                 fields: ARRAY OF Field; nFields: INTEGER);
+```
+
+Log a structured message with key/value fields using the module-level default logger. This is the default-logger equivalent of `LogKV`. Calls `InitDefault` on first use.
+
+```modula2
+VAR fs: ARRAY [0..1] OF Log.Field;
+Log.KVStr("path", "/data/lmdb", fs[0]);
+Log.KVCard("size_mb", 1024, fs[1]);
+Log.LogKVD(Log.INFO, "store opened", fs, 2);
+(* Output: 2026-03-30T14:23:45.123 INFO msg="store opened" path="/data/lmdb" size_mb="1024" *)
+```
+
 ### TraceD, DebugD, InfoD, WarnD, ErrorD, FatalD
 
 ```modula2
@@ -232,6 +305,14 @@ PROCEDURE KVBool(key: ARRAY OF CHAR; val: BOOLEAN; VAR out: Field);
 ```
 
 Build a boolean field. Formatted as `true` or `false` (unquoted) in the output.
+
+### KVCard
+
+```modula2
+PROCEDURE KVCard(key: ARRAY OF CHAR; val: LONGCARD; VAR dst: Field);
+```
+
+Build a cardinal field from a LONGCARD value. The value is formatted as a decimal string internally (stored as FkStr), so it renders as a quoted string in output. Use this for unsigned values that don't fit in INTEGER (e.g., byte counts, map sizes).
 
 ### Format
 
@@ -279,11 +360,11 @@ BEGIN
   SetCategory(lg, "app");
 
   Info(lg, "started");
-  (* Output: INFO msg="started" category="app" *)
+  (* Output: 2026-03-30T14:23:45.123 INFO msg="started" category="app" *)
 
   KVStr("user", "alice", fs[0]);
   KVInt("latency", 42, fs[1]);
   LogKV(lg, DEBUG, "login", fs, 2);
-  (* Output: DEBUG msg="login" category="app" latency=42 user="alice" *)
+  (* Output: 2026-03-30T14:23:45.124 DEBUG msg="login" category="app" latency=42 user="alice" *)
 END LogDemo.
 ```

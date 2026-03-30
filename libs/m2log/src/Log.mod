@@ -118,6 +118,29 @@ BEGIN
   END
 END FmtLongInt;
 
+PROCEDURE FmtLongCard(VAR buf: LineBuf; VAR pos: INTEGER; n: LONGCARD);
+VAR
+  digits: ARRAY [0..19] OF CHAR;
+  dpos: INTEGER;
+  val: LONGCARD;
+BEGIN
+  IF n = 0 THEN
+    FmtChar(buf, pos, '0');
+    RETURN
+  END;
+  val := n;
+  dpos := 0;
+  WHILE val > 0 DO
+    digits[dpos] := CHR(ORD('0') + INTEGER(val MOD 10));
+    INC(dpos);
+    val := val DIV 10
+  END;
+  WHILE dpos > 0 DO
+    DEC(dpos);
+    FmtChar(buf, pos, digits[dpos])
+  END
+END FmtLongCard;
+
 PROCEDURE FmtLevel(level: Level; VAR buf: LineBuf; VAR pos: INTEGER);
 BEGIN
   IF level = TRACE THEN FmtStr(buf, pos, "TRACE")
@@ -424,6 +447,13 @@ PROCEDURE EnsureDefault;
 BEGIN IF NOT defaultReady THEN InitDefault END
 END EnsureDefault;
 
+PROCEDURE LogKVD(level: Level; msg: ARRAY OF CHAR;
+                 fields: ARRAY OF Field; nFields: INTEGER);
+BEGIN
+  EnsureDefault;
+  LogKV(defaultLogger, level, msg, fields, nFields)
+END LogKVD;
+
 PROCEDURE TraceD(msg: ARRAY OF CHAR);
 BEGIN EnsureDefault; LogMsg(defaultLogger, TRACE, msg) END TraceD;
 PROCEDURE DebugD(msg: ARRAY OF CHAR);
@@ -468,6 +498,40 @@ BEGIN
   out.intVal := 0;
   out.strVal[0] := 0C
 END KVBool;
+
+PROCEDURE KVCard(key: ARRAY OF CHAR; val: LONGCARD;
+                 VAR dst: Field);
+VAR
+  digits: ARRAY [0..19] OF CHAR;
+  dpos, j: INTEGER;
+  v: LONGCARD;
+BEGIN
+  Assign(key, dst.key);
+  dst.kind := FkStr;
+  dst.intVal := 0;
+  dst.boolVal := FALSE;
+  IF val = 0 THEN
+    dst.strVal[0] := '0';
+    dst.strVal[1] := 0C;
+    RETURN
+  END;
+  v := val;
+  dpos := 0;
+  WHILE v > 0 DO
+    digits[dpos] := CHR(ORD('0') + INTEGER(v MOD 10));
+    INC(dpos);
+    v := v DIV 10
+  END;
+  j := 0;
+  WHILE dpos > 0 DO
+    DEC(dpos);
+    IF j <= HIGH(dst.strVal) THEN
+      dst.strVal[j] := digits[dpos];
+      INC(j)
+    END
+  END;
+  IF j <= HIGH(dst.strVal) THEN dst.strVal[j] := 0C END
+END KVCard;
 
 (* ── Diagnostics ─────────────────────────────────────── *)
 

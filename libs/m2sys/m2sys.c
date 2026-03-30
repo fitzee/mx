@@ -456,9 +456,30 @@ int32_t m2sys_rmdir_r(void *path) {
 /* ── Time ────────────────────────────────────────────────────────── */
 
 #include <time.h>
+#include <sys/time.h>
+#include <pthread.h>
 
 int64_t m2sys_unix_time(void) {
     return (int64_t)time(NULL);
+}
+
+void m2sys_format_time(void *buf, int32_t bufSize) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    struct tm tm;
+    localtime_r(&tv.tv_sec, &tm);
+    int ms = (int)(tv.tv_usec / 1000);
+    char *out = (char *)buf;
+    if (bufSize < 24) { out[0] = '\0'; return; }
+    snprintf(out, bufSize, "%04d-%02d-%02dT%02d:%02d:%02d.%03d",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
+}
+
+int64_t m2sys_thread_id(void) {
+    uint64_t tid;
+    pthread_threadid_np(NULL, &tid);
+    return (int64_t)tid;
 }
 
 /* ── File metadata ───────────────────────────────────────────────── */

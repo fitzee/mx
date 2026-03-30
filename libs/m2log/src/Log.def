@@ -164,6 +164,10 @@ PROCEDURE Fatal(VAR l: Logger; msg: ARRAY OF CHAR);
 
 (* ── Convenience (default logger) ────────────────────── *)
 
+(* Log a structured message with fields using the default logger. *)
+PROCEDURE LogKVD(level: Level; msg: ARRAY OF CHAR;
+                 fields: ARRAY OF Field; nFields: INTEGER);
+
 PROCEDURE TraceD(msg: ARRAY OF CHAR);
 PROCEDURE DebugD(msg: ARRAY OF CHAR);
 PROCEDURE InfoD(msg: ARRAY OF CHAR);
@@ -184,6 +188,10 @@ PROCEDURE KVInt(key: ARRAY OF CHAR; val: INTEGER;
 (* Build a boolean field. *)
 PROCEDURE KVBool(key: ARRAY OF CHAR; val: BOOLEAN;
                  VAR out: Field);
+
+(* Build a cardinal field. *)
+PROCEDURE KVCard(key: ARRAY OF CHAR; val: LONGCARD;
+                 VAR dst: Field);
 
 (* ── Diagnostics ─────────────────────────────────────── *)
 

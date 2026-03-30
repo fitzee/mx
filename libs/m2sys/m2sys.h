@@ -71,6 +71,8 @@ int32_t m2sys_rmdir_r(void *path);
 
 /* Time */
 int64_t m2sys_unix_time(void);
+void m2sys_format_time(void *buf, int32_t bufSize);
+int64_t m2sys_thread_id(void);
 
 /* File metadata */
 int64_t m2sys_file_mtime(void *path);

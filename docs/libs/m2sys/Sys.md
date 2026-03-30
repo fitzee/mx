@@ -213,7 +213,17 @@ Advisory POSIX file locking. Pass `exclusive=1` for exclusive lock, `0` for shar
 ```c
 int64_t m2sys_unix_time(void);           /* seconds since epoch */
 int64_t m2sys_file_mtime(void *path);    /* file modification time */
+void m2sys_format_time(void *buf, int32_t bufSize);  /* ISO 8601 with millis */
+int64_t m2sys_thread_id(void);           /* OS thread ID */
 ```
+
+### m2sys_format_time
+
+Writes the current wall-clock time as an ISO 8601 string with millisecond precision into `buf`: `"2026-03-30T14:23:45.123"`. Requires at least 24 bytes. Uses `gettimeofday` + `localtime_r`.
+
+### m2sys_thread_id
+
+Returns the current thread's OS thread ID. On macOS, uses `pthread_threadid_np`. Useful for log output in multi-threaded programs.
 
 ## Example (from Modula-2)
 
@@ -223,6 +233,8 @@ FROM SYSTEM IMPORT ADDRESS;
 PROCEDURE m2sys_file_exists(path: ADDRESS): INTEGER;
 PROCEDURE m2sys_exec(cmdline: ADDRESS): INTEGER;
 PROCEDURE m2sys_sha256_str(data: ADDRESS; len: INTEGER; hexOut: ADDRESS);
+PROCEDURE m2sys_format_time(buf: ADDRESS; bufSize: INTEGER);
+PROCEDURE m2sys_thread_id(): LONGINT;
 END Sys.
 ```
 
