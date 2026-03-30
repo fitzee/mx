@@ -4,6 +4,7 @@ mod analyze;
 mod ast;
 mod build;
 mod builtins;
+mod cfg;
 mod codegen_c;
 mod codegen_llvm;
 mod driver;
