@@ -1166,6 +1166,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .arg(&runtime_c)
                 .args(["-g", "-O0"])
                 .arg("-w");
+            for flag in target.default_cflags() { rt_cmd.arg(flag); }
             let output = rt_cmd.output().map_err(|e| {
                 CompileError::driver(format!("failed to compile runtime: {}", e))
             })?;
@@ -1196,15 +1197,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             for flag in &opts.extra_cflags {
                 link_cmd.arg(flag);
             }
-            if target.is_darwin() {
-                link_cmd.arg("-Wl,-dead_strip");
-                for fw in &opts.frameworks {
-                    link_cmd.arg("-framework");
-                    link_cmd.arg(fw);
-                }
-            } else {
-                link_cmd.arg("-Wl,--gc-sections");
-                link_cmd.arg("-lpthread");
+            for flag in target.default_ldflags() { link_cmd.arg(flag); }
+            for fw in &opts.frameworks {
+                link_cmd.arg("-framework");
+                link_cmd.arg(fw);
             }
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, link_cmd);
@@ -1230,6 +1226,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             cmd.arg("-lm")
                 .arg("-w")
                 .args(["-ffunction-sections", "-fdata-sections"]);
+            for flag in target.default_cflags() { cmd.arg(flag); }
 
             if opts.opt_level > 0 {
                 cmd.arg(format!("-O{}", opts.opt_level));
@@ -1248,15 +1245,10 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 cmd.arg(flag);
             }
 
-            if target.is_darwin() {
-                cmd.arg("-Wl,-dead_strip");
-                for fw in &opts.frameworks {
-                    cmd.arg("-framework");
-                    cmd.arg(fw);
-                }
-            } else {
-                cmd.arg("-Wl,--gc-sections");
-                cmd.arg("-lpthread");
+            for flag in target.default_ldflags() { cmd.arg(flag); }
+            for fw in &opts.frameworks {
+                cmd.arg("-framework");
+                cmd.arg(fw);
             }
 
             if opts.verbose {
@@ -1358,6 +1350,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             .arg("-o")
             .arg(&obj_file)
             .arg(&c_file);
+        for flag in target.default_cflags() { cmd.arg(flag); }
 
         add_mx_home_includes(&mut cmd);
 
@@ -1417,6 +1410,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .args(["-g", "-O0", "-fno-omit-frame-pointer", "-fno-inline", "-gno-column-info"])
                 .args(["-ffunction-sections", "-fdata-sections"])
                 .arg("-w");
+            for flag in target.default_cflags() { compile_cmd.arg(flag); }
             add_mx_home_includes(&mut compile_cmd);
             for flag in &opts.extra_cflags {
                 compile_cmd.arg(flag);
@@ -1447,12 +1441,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
             link_cmd.arg("-g")
                 .arg("-lm");
-            if target.is_darwin() {
-                link_cmd.arg("-Wl,-dead_strip");
-            } else {
-                link_cmd.arg("-Wl,--gc-sections");
-                link_cmd.arg("-lpthread");
-            }
+            for flag in target.default_ldflags() { link_cmd.arg(flag); }
             for extra in &opts.extra_c_files {
                 link_cmd.arg(extra);
             }
@@ -1470,9 +1459,6 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
             if opts.m2plus {
                 if let Ok(c_src) = std::fs::read_to_string(&c_file) {
-                    if c_src.contains("#define M2_USE_THREADS 1") {
-                        link_cmd.arg("-lpthread");
-                    }
                     if c_src.contains("#define M2_USE_GC 1") {
                         if target.is_darwin() {
                             link_cmd.arg("-L/opt/homebrew/lib");
@@ -1514,6 +1500,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 cmd.arg(fmt_c);
             }
             cmd.arg("-lm");
+            for flag in target.default_cflags() { cmd.arg(flag); }
 
             add_mx_home_includes(&mut cmd);
 
@@ -1538,9 +1525,6 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
             if opts.m2plus {
                 if let Ok(c_src) = std::fs::read_to_string(&c_file) {
-                    if c_src.contains("#define M2_USE_THREADS 1") {
-                        cmd.arg("-lpthread");
-                    }
                     if c_src.contains("#define M2_USE_GC 1") {
                         if target.is_darwin() {
                             cmd.arg("-I/opt/homebrew/include");
@@ -1555,12 +1539,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 cmd.arg(format!("-O{}", opts.opt_level));
             }
             cmd.args(["-ffunction-sections", "-fdata-sections"]);
-            if target.is_darwin() {
-                cmd.arg("-Wl,-dead_strip");
-            } else {
-                cmd.arg("-Wl,--gc-sections");
-                cmd.arg("-lpthread");
-            }
+            for flag in target.default_ldflags() { cmd.arg(flag); }
             cmd.arg("-w");
 
             if opts.verbose {

@@ -240,6 +240,23 @@ impl TargetInfo {
         self.os == Os::Linux
     }
 
+    /// Default C compiler flags for this target.
+    /// Applied to every cc/clang invocation (compile and link).
+    pub fn default_cflags(&self) -> Vec<&'static str> {
+        match self.os {
+            Os::Linux => vec!["-D_GNU_SOURCE"],
+            Os::Darwin => vec![],
+        }
+    }
+
+    /// Default linker flags for this target.
+    pub fn default_ldflags(&self) -> Vec<&'static str> {
+        match self.os {
+            Os::Linux => vec!["-Wl,--gc-sections", "-lpthread"],
+            Os::Darwin => vec!["-Wl,-dead_strip"],
+        }
+    }
+
     /// Whether this is an x86_64 target.
     pub fn is_x86_64(&self) -> bool {
         self.arch == Arch::X86_64
