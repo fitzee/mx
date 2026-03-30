@@ -33,7 +33,10 @@ Add to your shell profile:
 export PATH="$HOME/.mx/bin:$PATH"
 ```
 
-OpenSSL 3 is required (`brew install openssl@3` on macOS, `sudo apt install libssl-dev` on Linux). Optional: SQLite3, zlib.
+**Dependencies:**
+- OpenSSL 3 — `brew install openssl@3` (macOS), `sudo apt install libssl-dev` (Debian/Ubuntu)
+- Optional: SQLite3 (`m2sqlite`), zlib (`m2zlib`)
+- Optional: clang 15+ for LLVM backend (`--llvm`). The C backend (default) works with any C compiler.
 
 ### Hello world
 

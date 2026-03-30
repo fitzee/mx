@@ -1062,6 +1062,29 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
     // ── LLVM IR backend ──────────────────────────────────────────────
     if opts.emit_llvm {
+        // Check clang version — opaque pointers (ptr) require clang 15+
+        if !opts.emit_c {
+            let clang_ok = std::process::Command::new("clang")
+                .arg("--version")
+                .output()
+                .ok()
+                .and_then(|out| {
+                    let ver = String::from_utf8_lossy(&out.stdout);
+                    ver.split("version ")
+                        .nth(1)
+                        .and_then(|v| v.split('.').next())
+                        .and_then(|major| major.trim().parse::<u32>().ok())
+                })
+                .map(|major| major >= 15)
+                .unwrap_or(false);
+            if !clang_ok {
+                return Err(CompileError::driver(
+                    "LLVM backend requires clang 15+ (for opaque pointer support). \
+                     Use the C backend (default) or install a newer clang."
+                    .to_string(),
+                ));
+            }
+        }
         let mut llvm_codegen = LLVMCodeGen::new(target.clone());
         llvm_codegen.set_m2plus(opts.m2plus);
         llvm_codegen.set_debug(opts.debug);

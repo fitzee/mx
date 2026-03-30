@@ -68,6 +68,17 @@ check-deps:
 		fi; \
 		exit 1; \
 	fi
+	@# ── clang for LLVM backend (optional) ──
+	@if command -v clang >/dev/null 2>&1; then \
+		CLANG_VER=$$(clang --version 2>&1 | head -1 | sed -n 's/.*version \([0-9]*\).*/\1/p'); \
+		if [ -n "$$CLANG_VER" ] && [ "$$CLANG_VER" -ge 15 ] 2>/dev/null; then \
+			echo "  clang:   $$(clang --version 2>&1 | head -1) (LLVM backend OK)"; \
+		else \
+			echo "  clang:   $$(clang --version 2>&1 | head -1) (LLVM backend requires clang 15+)"; \
+		fi; \
+	else \
+		echo "  clang:   not found (optional — needed for --llvm backend)"; \
+	fi
 	@# ── Optional deps ──
 	@command -v pkg-config >/dev/null 2>&1 && pkg-config --exists sqlite3 2>/dev/null \
 		&& echo "  sqlite3: found" \
