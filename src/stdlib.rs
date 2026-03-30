@@ -617,6 +617,9 @@ fn register_condition(symtab: &mut SymbolTable, _types: &mut TypeRegistry, scope
 /// Generate C runtime support code for stdlib modules
 pub fn generate_runtime_header() -> String {
     r#"/* Modula-2 Runtime Support */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
