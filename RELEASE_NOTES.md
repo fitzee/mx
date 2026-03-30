@@ -1,5 +1,18 @@
 # Release Notes
 
+## 1.7.1 (2026-03-30)
+
+### Bug fixes
+
+- **Linux: link pthreads** — Add `-lpthread` on Linux targets. The runtime uses pthreads for Thread/Mutex/Condition support.
+- **Linux: enable POSIX features** — Pass `-D_GNU_SOURCE` via `target.default_cflags()` on Linux. Enables `CLOCK_MONOTONIC`, `struct timespec`, and other POSIX features for all C files including extra-c sources.
+- **LLVM backend: require clang 15+** — Emit clear error when clang version is too old for opaque pointer (`ptr`) support. The C backend works with any C compiler.
+
+### Build system
+
+- **Platform flags centralized in TargetInfo** — `default_cflags()` and `default_ldflags()` replace scattered platform-specific flag logic in the driver.
+- **Makefile: clang version check** — `make install` reports clang version and LLVM backend compatibility during dependency check.
+
 ## 1.7.0 (2026-03-30)
 
 ### Features
