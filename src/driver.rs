@@ -52,6 +52,8 @@ pub struct CompileOptions {
     pub emit_llvm: bool,
     /// Full LLVM compilation to binary (--llvm)
     pub use_llvm: bool,
+    /// Emit CFG as DOT graph
+    pub emit_cfg: bool,
     /// Emit per-module C files for multi-TU compilation
     pub emit_per_module: bool,
     /// Output directory for per-module C files (required when emit_per_module is true)
@@ -65,6 +67,7 @@ impl Default for CompileOptions {
             output: None,
             compile_only: false,
             emit_c: false,
+            emit_cfg: false,
             emit_llvm: false,
             use_llvm: false,
             include_paths: Vec::new(),
@@ -975,7 +978,59 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             hir_module.init_body.as_ref().map_or(0, |b| b.len()));
     }
 
-    // ── Phase 5: Backend emission ───────────────────────────────────
+    // ── CFG emission (--cfg) ─────────────────────────────────────────
+    if opts.emit_cfg {
+        use crate::cfg;
+        let out_path = opts.output.clone()
+            .unwrap_or_else(|| {
+                let stem = opts.input.file_stem().unwrap_or_default().to_string_lossy();
+                PathBuf::from(format!("{}.dot", stem))
+            });
+        let mut dot = String::new();
+        dot.push_str("digraph CFG {\n");
+        dot.push_str("  rankdir=TB;\n");
+        dot.push_str("  node [shape=box, fontname=\"monospace\", fontsize=10];\n");
+        dot.push_str("  edge [fontname=\"monospace\", fontsize=9];\n\n");
+
+        // Module init body
+        if let Some(ref init) = hir_module.init_body {
+            let c = cfg::build_cfg(init);
+            dot.push_str(&cfg::dump_dot(&c, &hir_module.name));
+        }
+
+        // All procedures (top-level and nested)
+        fn emit_proc_cfgs(dot: &mut String, procs: &[crate::hir::HirProcDecl]) {
+            for pd in procs {
+                if let Some(ref body) = pd.body {
+                    let c = crate::cfg::build_cfg(body);
+                    dot.push_str(&crate::cfg::dump_dot(&c, &pd.sig.name));
+                }
+                emit_proc_cfgs(dot, &pd.nested_procs);
+            }
+        }
+        emit_proc_cfgs(&mut dot, &hir_module.proc_decls);
+
+        // Embedded module procs
+        for emb in &hir_module.embedded_modules {
+            if let Some(ref init) = emb.init_body {
+                let c = cfg::build_cfg(init);
+                dot.push_str(&cfg::dump_dot(&c, &format!("{}_init", emb.name)));
+            }
+            emit_proc_cfgs(&mut dot, &emb.procedures);
+        }
+
+        dot.push_str("}\n");
+        std::fs::write(&out_path, &dot).unwrap_or_else(|e| {
+            eprintln!("{}: error writing {}: {}", identity::COMPILER_NAME, out_path.display(), e);
+            std::process::exit(1);
+        });
+        if opts.verbose {
+            eprintln!("{}: wrote CFG to {}", identity::COMPILER_NAME, out_path.display());
+        }
+        return Ok(());
+    }
+
+    // ── Phase 5: Backend emission ──────���────────────────────────────
     // Both backends receive the same fully-populated sema + prebuilt HIR.
 
     // Generate C (always created — needed for C output or as a no-op when LLVM is selected)

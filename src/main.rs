@@ -55,6 +55,7 @@ fn main() {
         eprintln!("  -c             Compile only (produce .o, no linking)");
         eprintln!("  --emit-c       Output C code only (do not invoke C compiler)");
         eprintln!("  --emit-llvm    Output LLVM IR (.ll) instead of C");
+        eprintln!("  --cfg          Output control flow graph as DOT (.dot)");
         eprintln!("  --llvm         Use LLVM backend (compile via clang)");
         eprintln!("  -I <path>      Add module search path");
         eprintln!("  -O<n>          Optimization level (0-3)");
@@ -175,6 +176,7 @@ fn main() {
             "-c" => opts.compile_only = true,
             "--emit-c" => opts.emit_c = true,
             "--emit-llvm" => opts.emit_llvm = true,
+            "--cfg" => opts.emit_cfg = true,
             "--llvm" => { opts.use_llvm = true; opts.emit_llvm = true; },
             "-I" => {
                 i += 1;

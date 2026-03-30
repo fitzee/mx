@@ -513,6 +513,94 @@ pub fn build_cfg(body: &[HirStmt]) -> Cfg {
     cfg
 }
 
+// ── DOT output ──────────────────────────────────────────────────────
+
+/// Emit a DOT subgraph for one CFG, using `name` as the subgraph label.
+pub fn dump_dot(cfg: &Cfg, name: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let safe: String = name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    writeln!(out, "  subgraph cluster_{} {{", safe).unwrap();
+    writeln!(out, "    label=\"{}\";", name).unwrap();
+    writeln!(out, "    style=dashed;").unwrap();
+
+    for block in &cfg.blocks {
+        let mut label = format!("B{}", block.id);
+        for stmt in &block.stmts {
+            let desc = match &stmt.kind {
+                HirStmtKind::Assign { .. } => format!("L{}  assign", stmt.loc.line),
+                HirStmtKind::ProcCall { target, .. } => {
+                    let callee = match target {
+                        crate::hir::HirCallTarget::Direct(sid) => sid.source_name.as_str(),
+                        crate::hir::HirCallTarget::Indirect(_) => "(indirect)",
+                    };
+                    format!("L{}  call {}", stmt.loc.line, callee)
+                }
+                HirStmtKind::Empty => continue,
+                _ => format!("L{}  {}", stmt.loc.line, stmt_kind_name(&stmt.kind)),
+            };
+            label.push_str("\\l");
+            label.push_str(&dot_escape(&desc));
+        }
+        if let Some(ref term) = block.terminator {
+            let t = match term {
+                Terminator::Goto(id) => format!("goto B{}", id),
+                Terminator::Branch { on_true, on_false, .. } => {
+                    format!("br B{} / B{}", on_true, on_false)
+                }
+                Terminator::Return(None) => "return".into(),
+                Terminator::Return(Some(_)) => "return expr".into(),
+            };
+            label.push_str("\\l");
+            label.push_str(&dot_escape(&t));
+        }
+        label.push_str("\\l");
+        writeln!(out, "    {}_{} [label=\"{}\"];", safe, block.id, label).unwrap();
+
+        if let Some(ref term) = block.terminator {
+            match term {
+                Terminator::Goto(t) => {
+                    writeln!(out, "    {}_{} -> {}_{};", safe, block.id, safe, t).unwrap();
+                }
+                Terminator::Branch { on_true, on_false, .. } => {
+                    writeln!(out, "    {}_{} -> {}_{} [label=\"T\"];", safe, block.id, safe, on_true).unwrap();
+                    writeln!(out, "    {}_{} -> {}_{} [label=\"F\", style=dashed];", safe, block.id, safe, on_false).unwrap();
+                }
+                Terminator::Return(_) => {}
+            }
+        }
+    }
+    writeln!(out, "  }}").unwrap();
+    out
+}
+
+fn dot_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"").replace('<', "\\<").replace('>', "\\>")
+}
+
+fn stmt_kind_name(kind: &HirStmtKind) -> &'static str {
+    match kind {
+        HirStmtKind::Empty => "empty",
+        HirStmtKind::Assign { .. } => "assign",
+        HirStmtKind::ProcCall { .. } => "call",
+        HirStmtKind::If { .. } => "if",
+        HirStmtKind::Case { .. } => "case",
+        HirStmtKind::While { .. } => "while",
+        HirStmtKind::Repeat { .. } => "repeat",
+        HirStmtKind::For { .. } => "for",
+        HirStmtKind::Loop { .. } => "loop",
+        HirStmtKind::Return { .. } => "return",
+        HirStmtKind::Exit => "exit",
+        HirStmtKind::Raise { .. } => "raise",
+        HirStmtKind::Retry => "retry",
+        HirStmtKind::Try { .. } => "try",
+        HirStmtKind::Lock { .. } => "lock",
+        HirStmtKind::TypeCase { .. } => "typecase",
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
