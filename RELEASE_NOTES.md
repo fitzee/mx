@@ -1,5 +1,23 @@
 # Release Notes
 
+## 1.7.0 (2026-03-30)
+
+### Features
+
+- **Target abstraction (`--target`)** — New `TargetInfo` layer formalizes platform semantics (triple, arch, OS, pointer size, ABI, type layout, alignment). Constructed once at compile start; both backends use it for target-specific output. Supports `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`. C backend emits `_Static_assert` layout guards.
+- **Control flow graph (`--cfg`)** — New `src/cfg.rs` module builds CFGs from HIR. V1 supports linear statements, IF/ELSIF/ELSE, WHILE, LOOP, EXIT, RETURN, and short-circuit AND/OR/NOT. `mx --cfg program.mod -o program.dot` emits DOT graph with one subgraph per procedure.
+
+### Bug fixes
+
+- **Exception alias for .def module exceptions** — Emit `#define M2_EXC_Name Module_Name` for exceptions declared in definition modules. Fixes `make build` failure for mxpkg on fresh clone.
+- **Compiler warnings eliminated** — Remove duplicate Array match arm and unused `mut` binding.
+
+### Libraries
+
+- **m2log 1.1.0** — API changes to Log.def.
+- **m2sys 0.2.0** — API changes to Sys.def.
+- **m2cli 0.1.1** — Implementation fixes.
+
 ## 1.6.0 (2026-03-30)
 
 ### Features
