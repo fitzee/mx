@@ -141,6 +141,7 @@ pub struct BuildConfig {
     pub features: Vec<String>,
     pub debug: bool,
     pub use_llvm: bool,
+    pub target_triple: Option<String>,
 }
 
 // ── build_project ───────────────────────────────────────────────────
@@ -262,14 +263,20 @@ pub fn build_project(
     opts.debug = config.debug;
     opts.emit_llvm = config.use_llvm;
     opts.use_llvm = config.use_llvm;
+    opts.target_triple = config.target_triple.clone();
 
     // Auto-inject platform feature (MACOS or LINUX)
+    // When cross-compiling, use the target; otherwise fall back to host.
+    let target_is_darwin = config.target_triple.as_ref()
+        .and_then(|t| crate::target::TargetInfo::from_triple(t).ok())
+        .map(|t| t.is_darwin())
+        .unwrap_or(cfg!(target_os = "macos"));
     let mut features = config.features.clone();
-    if cfg!(target_os = "macos") {
+    if target_is_darwin {
         if !features.contains(&"MACOS".to_string()) {
             features.push("MACOS".to_string());
         }
-    } else if cfg!(target_os = "linux") {
+    } else {
         if !features.contains(&"LINUX".to_string()) {
             features.push("LINUX".to_string());
         }

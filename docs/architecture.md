@@ -6,6 +6,7 @@ This document covers the internal architecture of mx for contributors.
 
 ```
 Source (.mod/.def)
+  -> TargetInfo (src/target.rs)   detect/parse target triple, populate layout info
   -> Lexer (src/lexer.rs)         tokenize into TokenKind stream
   -> Parser (src/parser.rs)       recursive-descent -> AST
   -> Sema (src/sema.rs)           type checking, scope resolution, symbol table
@@ -134,6 +135,38 @@ Key design decisions:
 - **M2+ exception handling**: setjmp/longjmp-based `m2_ExcFrame` stack for TRY/EXCEPT/FINALLY, with callable runtime functions (`m2_exc_push`, `m2_exc_pop`, `m2_exc_get_id`, `m2_exc_reraise`). FINALLY handlers run on both normal and exception paths. ISO procedure-level EXCEPT uses M2_TRY/M2_CATCH macros (C) or SjLj (LLVM).
 - **RTTI**: `M2_TypeDesc` globals for REF/OBJECT types, `M2_RefHeader` prepended to allocations, `M2_ISA` for TYPECASE runtime type checking.
 - **DWARF debug info**: `DW_LANG_C99` (for lldb compatibility), `#dbg_declare` records (LLVM 19+ format), full DILocalVariable/DIGlobalVariable metadata.
+
+### Target abstraction
+
+`src/target.rs` defines `TargetInfo`, which formalizes platform semantics consumed by both backends, the driver, and the runtime. It is constructed once at the start of `driver::compile()` — either from the host platform or from an explicit `--target` triple — and passed by reference to both backends.
+
+```rust
+struct TargetInfo {
+    triple: String,            // e.g. "x86_64-unknown-linux-gnu"
+    arch: Arch,                // X86_64 | Aarch64
+    os: Os,                    // Linux | Darwin
+    pointer_bits: u32,         // 64 for all supported targets
+    endian: Endianness,        // Little (all supported targets)
+    c_abi: CAbi,               // SysV | Darwin
+    int_layout: IntLayout,     // sizes of INTEGER, LONGINT, REAL, etc.
+    alignments: AlignmentInfo, // struct + primitive alignment rules
+    supports_setjmp: bool,     // true for all POSIX targets
+}
+```
+
+Supported targets: `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`. All use LP64 data model.
+
+Key APIs:
+- `TargetInfo::from_host()` — detect from `std::env::consts::{ARCH, OS}`
+- `TargetInfo::from_triple(s)` — parse short (`x86_64-linux`), full (`x86_64-unknown-linux-gnu`), or LLVM canonical (`arm64-apple-macosx14.0.0`) triples
+- `llvm_triple()` / `llvm_datalayout()` — LLVM backend strings
+- `type_size(tid, types)` / `type_align(tid, types)` — size/alignment for any TypeId (primitives, records, arrays, variants)
+- `compute_record_layout(tid, types, target)` — field offsets with C ABI padding
+- `emit_c_layout_guards(target)` — `_Static_assert` guards emitted into generated C for compile-time validation
+
+The C backend emits layout guards after the runtime header to catch target mismatches at C compile time (e.g., cross-compiling with the wrong `--cc`). The LLVM backend uses `llvm_triple()` and `llvm_datalayout()` for the `.ll` header instead of detecting the host at codegen time.
+
+The driver uses `target.is_darwin()` instead of `cfg!(target_os)` for linker flag selection, so `--target` correctly selects linker flags for the target platform rather than the host.
 
 ### Driver
 
@@ -349,6 +382,7 @@ python3 tests/adversarial/run_adversarial.py --backend all  # adversarial tests 
 | `src/hir_build.rs` | HIR builder — shared designator/expr resolution for both backends |
 | `src/codegen_c/` | C code generation (9 modules) |
 | `src/codegen_llvm/` | LLVM IR code generation (10 modules, zero AST dependencies) |
+| `src/target.rs` | Target abstraction (TargetInfo, layout, ABI) |
 | `src/driver.rs` | Compilation orchestration |
 | `src/build.rs` | Project build system |
 | `src/analyze.rs` | Analysis-only path for LSP |

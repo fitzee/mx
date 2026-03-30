@@ -208,13 +208,35 @@ mx --feature threading --feature gc program.mod -o program
 
 ### Cross-compilation
 
-Since mx transpiles to C, cross-compile by pointing `--cc` at a cross compiler:
+Use `--target` to select the target platform:
 
 ```bash
-mx --cc aarch64-linux-gnu-gcc program.mod -o program-arm64
+# Explicit target (both backends)
+mx --target x86_64-linux program.mod -o program
+mx --target aarch64-darwin --llvm program.mod -o program
+
+# C backend: also set --cc to a cross compiler
+mx --target aarch64-linux --cc aarch64-linux-gnu-gcc program.mod -o program-arm64
 ```
 
-The generated C is portable; the cross compiler handles platform-specific codegen and linking.
+Supported target triples:
+
+| Triple | Arch | OS | C ABI |
+|--------|------|----|-------|
+| `x86_64-linux` | x86_64 | Linux | System V |
+| `aarch64-linux` | AArch64 | Linux | System V |
+| `x86_64-darwin` | x86_64 | macOS | Darwin |
+| `aarch64-darwin` | AArch64 | macOS | Darwin |
+
+Short forms (`x86_64-linux`) and full forms (`x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`) are both accepted.
+
+When `--target` is set:
+- The LLVM backend emits the correct `target triple` and `target datalayout` in `.ll` output
+- The driver selects target-appropriate linker flags (`-Wl,-dead_strip` on Darwin, `-Wl,--gc-sections` on Linux)
+- The C backend emits `_Static_assert` guards that validate pointer size and type layout at C compile time
+- Platform feature flags (`MACOS` / `LINUX`) are injected based on the target, not the host
+
+Without `--target`, the host platform is used.
 
 ### Batch builds
 
@@ -229,8 +251,9 @@ See [build plan schema](mxpkg-build-plan.md) for the JSON format.
 ### Other flags
 
 ```bash
-mx --version-json          # machine-readable version info
-mx --print-targets         # supported target triples
+mx --version-json          # machine-readable version info (includes target_info)
+mx --print-targets         # list supported target triples
+mx --target <triple>       # set target platform (e.g. x86_64-linux, aarch64-darwin)
 ```
 
 ---
@@ -242,7 +265,7 @@ Projects with an `m2.toml` manifest can use the built-in build subcommands.
 ### Subcommands
 
 ```bash
-mx build [--release] [-g] [-v] [--cc <cmd>] [--feature <name>]...
+mx build [--release] [-g] [-v] [--cc <cmd>] [--target <triple>] [--feature <name>]...
 mx run [--release] [-g] [-v] [-- <args>...]
 mx test [-v] [--feature <name>]...
 mx clean

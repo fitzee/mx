@@ -6,8 +6,12 @@ flowchart TB
         SRC["Source (.mod/.def)"]
     end
 
+    subgraph "Phase 0: Target detection"
+        SRC --> TARGET["TargetInfo\n(from --target or host)"]
+    end
+
     subgraph "Phase 1: Parse .def files"
-        SRC --> LEX1["Lexer"]
+        TARGET --> LEX1["Lexer"]
         LEX1 --> PAR1["Parser"]
         PAR1 --> DEFS["parsed_defs\nHashMap&lt;String, DefinitionModule&gt;"]
     end
@@ -45,18 +49,19 @@ flowchart TB
     end
 
     HIRMOD --> BACKEND{"Backend\nselection"}
+    TARGET -.->|"&TargetInfo"| BACKEND
 
     subgraph "C Backend"
         BACKEND -->|"default"| CHIR["Iterate HirModule\n(types, consts, globals,\nproc fwd decls)"]
-        CHIR --> CEMIT["hir_emit.rs\nHIR → C text"]
+        CHIR --> CEMIT["hir_emit.rs\nHIR → C text\n+ layout guards"]
         CEMIT --> CCODE[".c file"]
-        CCODE --> CC["cc / clang"]
+        CCODE --> CC["cc / clang\n(target-aware flags)"]
         CC --> BIN_C["Executable"]
     end
 
     subgraph "LLVM Backend"
         BACKEND -->|"--llvm"| LHIR["Iterate HirModule\n(types, consts, globals,\nexceptions, proc_decls,\nbody/except/finally)"]
-        LHIR --> LEMIT["decls.rs + stmts.rs + exprs.rs\nHIR → LLVM IR"]
+        LHIR --> LEMIT["decls.rs + stmts.rs + exprs.rs\nHIR → LLVM IR\n(target triple + datalayout)"]
         LEMIT --> LLCODE[".ll file"]
         LLCODE --> CLANG["clang"]
         CLANG --> BIN_L["Executable"]
@@ -79,6 +84,7 @@ flowchart TB
 
 ## Key Points
 
+- **Target-first.** `TargetInfo` is constructed before any compilation — from `--target` or host detection. Both backends receive `&TargetInfo` and use it for target-specific output (LLVM triple/datalayout, C layout guards, linker flags).
 - **Single sema, shared by both backends.** Sema runs once; both C and LLVM backends read the same symtab, types, and scope chain.
 - **Prebuilt HirModule is the primary data source.** `build_module()` constructs an `HirModule` after sema, containing structural declarations (types, consts, globals, proc signatures, embedded modules) and pre-lowered statement bodies. Both backends iterate from HirModule for structural emission.
 - **HIR is the single codegen path for all statement/expression bodies.** Statement and expression lowering resolves designators, expands open array arguments, desugars WITH, and registers TYPECASE bindings. No AST walking remains in body codegen for either backend.
@@ -93,6 +99,7 @@ flowchart TB
 
 ```
 src/
+  target.rs              Target abstraction (TargetInfo, layout computation, ABI)
   driver.rs              Pipeline orchestration (Phases 1-5, backend dispatch)
   lexer.rs               Tokenizer
   parser.rs              Recursive-descent → AST

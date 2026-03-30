@@ -9,7 +9,11 @@
 
 ## Libraries
 
-33 libraries ship with the toolchain. Add them to your project via `m2.toml` deps or `-I` paths.
+34 libraries ship with the toolchain. The standard library is compiled into the compiler; extension libraries are added via `m2.toml` deps or `-I` paths.
+
+### Standard Library
+
+- [m2stdlib](libs/m2stdlib/) — PIM4 + ISO standard library: InOut, Strings, Storage, MathLib, FileSystem, BinaryIO, Args, Terminal, RealInOut, STextIO, SWholeIO, SRealIO, SLongIO, SYSTEM
 
 ### Graphics
 

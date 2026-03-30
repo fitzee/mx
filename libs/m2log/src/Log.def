@@ -84,6 +84,15 @@ TYPE
     minLevel: Level;
   END;
 
+  (* Format options — controls which fields appear in log output.
+     Analogous to log4j pattern layout tokens. *)
+  FormatOptions = RECORD
+    showTimestamp: BOOLEAN;  (* %d — ISO 8601 with millis *)
+    showLevel:    BOOLEAN;  (* %p — level name *)
+    showCategory: BOOLEAN;  (* %c — category *)
+    showThread:   BOOLEAN;  (* %t — OS thread ID *)
+  END;
+
   (* Logger state.  Declare as a module-level or local variable.
      Always call Init or InitDefault before use. *)
   Logger = RECORD
@@ -109,6 +118,16 @@ PROCEDURE InitDefault;
 
 (* Set the minimum level.  Messages below this are discarded. *)
 PROCEDURE SetLevel(VAR l: Logger; level: Level);
+
+(* Set the minimum level on the default logger. *)
+PROCEDURE SetDefaultLevel(level: Level);
+
+(* Initialize format options to defaults:
+   timestamp=TRUE, level=TRUE, category=TRUE, thread=FALSE. *)
+PROCEDURE InitFormatOptions(VAR opts: FormatOptions);
+
+(* Set the global format options used by all Format calls. *)
+PROCEDURE SetFormatOptions(opts: FormatOptions);
 
 (* Add a sink.  Returns FALSE if the sink list is full. *)
 PROCEDURE AddSink(VAR l: Logger; s: Sink): BOOLEAN;

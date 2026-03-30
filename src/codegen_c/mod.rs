@@ -69,6 +69,7 @@ pub struct CodeGen {
     output: String,
     indent: usize,
     module_name: String,
+    pub(crate) target: crate::target::TargetInfo,
     pub(crate) sema: SemanticAnalyzer,
     /// Maps imported name (or alias) -> source module for stdlib resolution
     import_map: HashMap<String, String>,
@@ -268,11 +269,12 @@ static C_RESERVED: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 });
 
 impl CodeGen {
-    pub fn new() -> Self {
+    pub fn new(target: crate::target::TargetInfo) -> Self {
         Self {
             output: String::new(),
             indent: 0,
             module_name: String::new(),
+            target,
             sema: SemanticAnalyzer::new(),
             import_map: HashMap::new(),
             import_alias_map: HashMap::new(),
@@ -573,6 +575,7 @@ impl CodeGen {
         }
         if self.multi_tu { self.emit("/* MX_HEADER_BEGIN */\n"); }
         self.emit(&stdlib::generate_runtime_header());
+        self.emit(&crate::target::emit_c_layout_guards(&self.target));
         if self.multi_tu { self.emit("/* MX_HEADER_END */\n"); }
 
         if !matches!(kind, ModuleKind::Definition) {
@@ -641,7 +644,7 @@ mod tests {
 
     fn generate(input: &str, debug: bool) -> String {
         let unit = parse(input);
-        let mut cg = CodeGen::new();
+        let mut cg = CodeGen::new(crate::target::TargetInfo::from_host());
         cg.set_debug(debug);
         // Run sema + build HIR (required by the HIR-based codegen pipeline)
         cg.sema.analyze(&unit).unwrap();

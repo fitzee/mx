@@ -5,7 +5,10 @@
 # Only .md files whose stem starts with an uppercase letter
 # (matching a Modula-2 module name) become doc entries.
 #
-# category must be one of: Graphics, Transport, HTTP, Services, Async, Helpers
+# category must be one of: Graphics, Transport, HTTP, Services, Async, Helpers, Standard
+
+[m2stdlib]
+category = "Standard"
 
 [m2gfx]
 category = "Graphics"

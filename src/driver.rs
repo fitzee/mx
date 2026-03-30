@@ -58,6 +58,8 @@ pub struct CompileOptions {
     pub emit_per_module: bool,
     /// Output directory for per-module C files (required when emit_per_module is true)
     pub out_dir: Option<PathBuf>,
+    /// Explicit target triple override (e.g. "x86_64-linux")
+    pub target_triple: Option<String>,
 }
 
 impl Default for CompileOptions {
@@ -86,6 +88,7 @@ impl Default for CompileOptions {
             debug: false,
             emit_per_module: false,
             out_dir: None,
+            target_triple: None,
         }
     }
 }
@@ -651,6 +654,12 @@ fn ast_imports_to_hir(imports: &[crate::ast::Import]) -> Vec<crate::hir::HirImpo
 }
 
 pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
+    // ── Target detection ───────────────────────────────────────────
+    let target = match &opts.target_triple {
+        Some(triple) => crate::target::TargetInfo::from_triple(triple)?,
+        None => crate::target::TargetInfo::from_host(),
+    };
+
     let source = fs::read_to_string(&opts.input).map_err(|e| {
         let err = CompileError::driver(format!("cannot read '{}': {}", opts.input.display(), e));
         if opts.diagnostics_json {
@@ -662,7 +671,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     let filename = opts.input.to_string_lossy().to_string();
 
     if opts.verbose {
-        eprintln!("{}: compiling {}", identity::COMPILER_NAME, filename);
+        eprintln!("{}: compiling {} (target: {})", identity::COMPILER_NAME, filename, target);
     }
 
     // Lex
@@ -1034,7 +1043,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     // Both backends receive the same fully-populated sema + prebuilt HIR.
 
     // Generate C (always created — needed for C output or as a no-op when LLVM is selected)
-    let mut codegen = CodeGen::new();
+    let mut codegen = CodeGen::new(target.clone());
     codegen.set_m2plus(opts.m2plus);
     codegen.set_debug(opts.debug);
     codegen.multi_tu = opts.emit_per_module;
@@ -1053,7 +1062,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
     // ── LLVM IR backend ──────────────────────────────────────────────
     if opts.emit_llvm {
-        let mut llvm_codegen = LLVMCodeGen::new();
+        let mut llvm_codegen = LLVMCodeGen::new(target.clone());
         llvm_codegen.set_m2plus(opts.m2plus);
         llvm_codegen.set_debug(opts.debug);
 
@@ -1187,7 +1196,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             for flag in &opts.extra_cflags {
                 link_cmd.arg(flag);
             }
-            if cfg!(target_os = "macos") {
+            if target.is_darwin() {
                 link_cmd.arg("-Wl,-dead_strip");
                 for fw in &opts.frameworks {
                     link_cmd.arg("-framework");
@@ -1238,7 +1247,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 cmd.arg(flag);
             }
 
-            if cfg!(target_os = "macos") {
+            if target.is_darwin() {
                 cmd.arg("-Wl,-dead_strip");
                 for fw in &opts.frameworks {
                     cmd.arg("-framework");
@@ -1269,7 +1278,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         let _ = fs::remove_file(&runtime_c);
 
         // Generate dSYM bundle on macOS in debug mode
-        if opts.debug && cfg!(target_os = "macos") {
+        if opts.debug && target.is_darwin() {
             let mut dsym_cmd = Command::new("dsymutil");
             dsym_cmd.arg(&exe_file);
             if opts.verbose {
@@ -1412,7 +1421,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
             if opts.m2plus {
                 if let Ok(c_src) = std::fs::read_to_string(&c_file) {
-                    if c_src.contains("#define M2_USE_GC 1") && cfg!(target_os = "macos") {
+                    if c_src.contains("#define M2_USE_GC 1") && target.is_darwin() {
                         compile_cmd.arg("-I/opt/homebrew/include");
                     }
                 }
@@ -1436,7 +1445,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
             link_cmd.arg("-g")
                 .arg("-lm");
-            if cfg!(target_os = "macos") {
+            if target.is_darwin() {
                 link_cmd.arg("-Wl,-dead_strip");
             } else {
                 link_cmd.arg("-Wl,--gc-sections");
@@ -1450,7 +1459,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             for lib in &opts.link_libs {
                 link_cmd.arg(format!("-l{}", lib));
             }
-            if cfg!(target_os = "macos") {
+            if target.is_darwin() {
                 for fw in &opts.frameworks {
                     link_cmd.arg("-framework");
                     link_cmd.arg(fw);
@@ -1462,7 +1471,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         link_cmd.arg("-lpthread");
                     }
                     if c_src.contains("#define M2_USE_GC 1") {
-                        if cfg!(target_os = "macos") {
+                        if target.is_darwin() {
                             link_cmd.arg("-L/opt/homebrew/lib");
                         }
                         link_cmd.arg("-lgc");
@@ -1480,7 +1489,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
 
             // Step 3: dsymutil to create .dSYM bundle (macOS)
-            if cfg!(target_os = "macos") {
+            if target.is_darwin() {
                 let mut dsym_cmd = Command::new("dsymutil");
                 dsym_cmd.arg(&exe_file);
                 if opts.verbose {
@@ -1517,7 +1526,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             for flag in &opts.extra_cflags {
                 cmd.arg(flag);
             }
-            if cfg!(target_os = "macos") {
+            if target.is_darwin() {
                 for fw in &opts.frameworks {
                     cmd.arg("-framework");
                     cmd.arg(fw);
@@ -1530,7 +1539,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         cmd.arg("-lpthread");
                     }
                     if c_src.contains("#define M2_USE_GC 1") {
-                        if cfg!(target_os = "macos") {
+                        if target.is_darwin() {
                             cmd.arg("-I/opt/homebrew/include");
                             cmd.arg("-L/opt/homebrew/lib");
                         }
@@ -1543,7 +1552,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 cmd.arg(format!("-O{}", opts.opt_level));
             }
             cmd.args(["-ffunction-sections", "-fdata-sections"]);
-            if cfg!(target_os = "macos") {
+            if target.is_darwin() {
                 cmd.arg("-Wl,-dead_strip");
             } else {
                 cmd.arg("-Wl,--gc-sections");

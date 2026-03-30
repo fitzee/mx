@@ -20,6 +20,7 @@ mod project_resolver;
 mod sema;
 mod stdlib;
 mod symtab;
+mod target;
 mod token;
 mod types;
 mod identity;
@@ -69,6 +70,7 @@ fn main() {
         eprintln!("  -g, --debug    Compile with debug info (DWARF via #line mapping)");
         eprintln!("  -l <lib>       Link with library");
         eprintln!("  -L <path>      Add library search path");
+        eprintln!("  --target <triple>  Set target (e.g. x86_64-linux, aarch64-darwin)");
         eprintln!("  --cflag <arg>  Pass flag to C compiler");
         eprintln!("  file.c/.o/.a   Extra C/object/archive files to link");
         eprintln!();
@@ -82,20 +84,61 @@ fn main() {
 
     // --version-json: machine-readable version output
     if args.iter().any(|a| a == "--version-json") {
-        let target = current_target();
+        let ti = target::TargetInfo::from_host();
         let version_json = json::Json::obj(vec![
             ("name", json::Json::str_val(COMPILER_ID)),
             ("version", json::Json::str_val(VERSION)),
-            ("target", json::Json::str_val(&target)),
+            ("target", json::Json::str_val(&ti.triple)),
             ("plan_version", json::Json::int_val(1)),
+            ("target_info", json::Json::obj(vec![
+                ("triple", json::Json::str_val(&ti.triple)),
+                ("arch", json::Json::str_val(&ti.arch.to_string())),
+                ("os", json::Json::str_val(&ti.os.to_string())),
+                ("pointer_bits", json::Json::int_val(ti.pointer_bits as i64)),
+                ("endian", json::Json::str_val(match ti.endian {
+                    target::Endianness::Little => "little",
+                    target::Endianness::Big => "big",
+                })),
+                ("c_abi", json::Json::str_val(match ti.c_abi {
+                    target::CAbi::SysV => "sysv",
+                    target::CAbi::Darwin => "darwin",
+                })),
+                ("supports_setjmp", json::Json::bool_val(ti.supports_setjmp)),
+                ("int_layout", json::Json::obj(vec![
+                    ("integer_bytes", json::Json::int_val(ti.int_layout.integer_bytes as i64)),
+                    ("cardinal_bytes", json::Json::int_val(ti.int_layout.cardinal_bytes as i64)),
+                    ("longint_bytes", json::Json::int_val(ti.int_layout.longint_bytes as i64)),
+                    ("longcard_bytes", json::Json::int_val(ti.int_layout.longcard_bytes as i64)),
+                    ("real_bytes", json::Json::int_val(ti.int_layout.real_bytes as i64)),
+                    ("longreal_bytes", json::Json::int_val(ti.int_layout.longreal_bytes as i64)),
+                    ("bitset_bytes", json::Json::int_val(ti.int_layout.bitset_bytes as i64)),
+                ])),
+                ("alignments", json::Json::obj(vec![
+                    ("pointer", json::Json::int_val(ti.alignments.pointer_align as i64)),
+                    ("char", json::Json::int_val(ti.alignments.char_align as i64)),
+                    ("int", json::Json::int_val(ti.alignments.int_align as i64)),
+                    ("long", json::Json::int_val(ti.alignments.long_align as i64)),
+                    ("float", json::Json::int_val(ti.alignments.float_align as i64)),
+                    ("double", json::Json::int_val(ti.alignments.double_align as i64)),
+                ])),
+                ("supported_targets", json::Json::arr(
+                    target::supported_targets().iter()
+                        .map(|s| json::Json::str_val(s))
+                        .collect()
+                )),
+            ])),
             ("capabilities", json::Json::obj(vec![
                 ("emit_c", json::Json::bool_val(true)),
+                ("emit_llvm", json::Json::bool_val(true)),
+                ("llvm", json::Json::bool_val(true)),
                 ("compile_plan", json::Json::bool_val(true)),
                 ("m2plus", json::Json::bool_val(true)),
                 ("ffi_c", json::Json::bool_val(true)),
                 ("exportc", json::Json::bool_val(true)),
                 ("diagnostics_json", json::Json::bool_val(true)),
                 ("features", json::Json::bool_val(true)),
+                ("cfg", json::Json::bool_val(true)),
+                ("target", json::Json::bool_val(true)),
             ])),
             ("stdlib", json::Json::arr(
                 stdlib::stdlib_module_names().iter()
@@ -109,10 +152,14 @@ fn main() {
 
     // --print-targets: list supported targets
     if args.iter().any(|a| a == "--print-targets") {
-        // m2c transpiles to C, so it supports any target the system cc supports.
-        // We report the host as the default and note the cross-compile capability.
-        let target = current_target();
-        println!("{} (host, default)", target);
+        let host = target::TargetInfo::from_host();
+        for triple in target::supported_targets() {
+            if triple == host.triple || (host.triple.contains("apple") && triple.contains("apple") && triple.contains(&host.arch.to_string())) {
+                println!("{} (host, default)", triple);
+            } else {
+                println!("{}", triple);
+            }
+        }
         println!("# {} emits portable C; cross-compile by setting --cc to a cross compiler.", COMPILER_NAME);
         process::exit(0);
     }
@@ -240,6 +287,14 @@ fn main() {
                 }
                 opts.extra_cflags.push(args[i].clone());
             }
+            "--target" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("{}: --target requires an argument", COMPILER_NAME);
+                    process::exit(1);
+                }
+                opts.target_triple = Some(args[i].clone());
+            }
             "--emit-per-module" => {
                 opts.emit_per_module = true;
                 opts.emit_c = true;  // per-module implies emit-c (no linking by driver)
@@ -283,10 +338,7 @@ fn main() {
 }
 
 fn current_target() -> String {
-    let arch = std::env::consts::ARCH;
-    let os = std::env::consts::OS;
-    let env = if os == "linux" { "gnu" } else if os == "macos" { "darwin" } else { "unknown" };
-    format!("{}-{}-{}", arch, os, env)
+    target::TargetInfo::from_host().triple
 }
 
 fn run_init(args: &[String]) {
@@ -436,6 +488,7 @@ fn run_subcommand(args: &[String]) {
     let mut features: Vec<String> = Vec::new();
     let mut run_args: Vec<String> = Vec::new();
     let mut saw_dashdash = false;
+    let mut target_triple: Option<String> = None;
 
     let mut i = 2;
     while i < args.len() {
@@ -465,6 +518,14 @@ fn run_subcommand(args: &[String]) {
                     process::exit(1);
                 }
                 features.push(args[i].clone());
+            }
+            "--target" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("{}: --target requires an argument", COMPILER_NAME);
+                    process::exit(1);
+                }
+                target_triple = Some(args[i].clone());
             }
             arg if arg.starts_with('-') => {
                 eprintln!("{} {}: unknown option '{}'", COMPILER_NAME, subcmd, arg);
@@ -577,6 +638,7 @@ fn run_subcommand(args: &[String]) {
         features,
         debug,
         use_llvm: use_llvm || manifest_llvm,
+        target_triple,
     };
 
     match build::build_project(&config, is_run, &run_args) {

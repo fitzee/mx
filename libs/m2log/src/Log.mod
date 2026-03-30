@@ -3,12 +3,14 @@ IMPLEMENTATION MODULE Log;
 FROM SYSTEM IMPORT ADDRESS, ADR;
 FROM Strings IMPORT Assign, Length;
 FROM InOut IMPORT WriteString, WriteLn;
+FROM Sys IMPORT m2sys_format_time, m2sys_thread_id;
 
 (* ── Module state ────────────────────────────────────── *)
 
 VAR
   defaultLogger: Logger;
   defaultReady: BOOLEAN;
+  globalFmtOpts: FormatOptions;
 
 (* ── Format helpers (use LineBuf directly to avoid open-array codegen issues) *)
 
@@ -93,6 +95,29 @@ BEGIN
   END
 END FmtInt;
 
+PROCEDURE FmtLongInt(VAR buf: LineBuf; VAR pos: INTEGER; n: LONGINT);
+VAR
+  digits: ARRAY [0..19] OF CHAR;
+  dpos: INTEGER;
+  val: LONGINT;
+BEGIN
+  IF n = 0 THEN
+    FmtChar(buf, pos, '0');
+    RETURN
+  END;
+  val := n;
+  dpos := 0;
+  WHILE val > 0 DO
+    digits[dpos] := CHR(ORD('0') + INTEGER(val MOD 10));
+    INC(dpos);
+    val := val DIV 10
+  END;
+  WHILE dpos > 0 DO
+    DEC(dpos);
+    FmtChar(buf, pos, digits[dpos])
+  END
+END FmtLongInt;
+
 PROCEDURE FmtLevel(level: Level; VAR buf: LineBuf; VAR pos: INTEGER);
 BEGIN
   IF level = TRACE THEN FmtStr(buf, pos, "TRACE")
@@ -164,13 +189,36 @@ PROCEDURE Format(VAR rec: Record; VAR buf: LineBuf;
 VAR
   pos, i, nf: INTEGER;
   sorted: ARRAY [0..MaxFields-1] OF Field;
+  tsBuf: ARRAY [0..31] OF CHAR;
+  first: BOOLEAN;
 BEGIN
   pos := 0;
-  FmtLevel(rec.level, buf, pos);
-  FmtStr(buf, pos, " msg=");
+  first := TRUE;
+
+  IF globalFmtOpts.showTimestamp THEN
+    m2sys_format_time(ADR(tsBuf), 32);
+    FmtStr(buf, pos, tsBuf);
+    first := FALSE
+  END;
+
+  IF globalFmtOpts.showLevel THEN
+    IF NOT first THEN FmtChar(buf, pos, ' ') END;
+    FmtLevel(rec.level, buf, pos);
+    first := FALSE
+  END;
+
+  IF globalFmtOpts.showThread THEN
+    IF NOT first THEN FmtChar(buf, pos, ' ') END;
+    FmtStr(buf, pos, "tid=");
+    FmtLongInt(buf, pos, m2sys_thread_id());
+    first := FALSE
+  END;
+
+  IF NOT first THEN FmtChar(buf, pos, ' ') END;
+  FmtStr(buf, pos, "msg=");
   FmtEscaped(buf, pos, rec.msg);
 
-  IF rec.category[0] # 0C THEN
+  IF globalFmtOpts.showCategory AND (rec.category[0] # 0C) THEN
     FmtStr(buf, pos, " category=");
     FmtEscaped(buf, pos, rec.category)
   END;
@@ -251,6 +299,25 @@ END InitDefault;
 
 PROCEDURE SetLevel(VAR l: Logger; level: Level);
 BEGIN l.minLevel := level END SetLevel;
+
+PROCEDURE SetDefaultLevel(level: Level);
+BEGIN
+  IF NOT defaultReady THEN InitDefault END;
+  defaultLogger.minLevel := level
+END SetDefaultLevel;
+
+PROCEDURE InitFormatOptions(VAR opts: FormatOptions);
+BEGIN
+  opts.showTimestamp := TRUE;
+  opts.showLevel := TRUE;
+  opts.showCategory := TRUE;
+  opts.showThread := FALSE
+END InitFormatOptions;
+
+PROCEDURE SetFormatOptions(opts: FormatOptions);
+BEGIN
+  globalFmtOpts := opts
+END SetFormatOptions;
 
 PROCEDURE AddSink(VAR l: Logger; s: Sink): BOOLEAN;
 BEGIN
@@ -417,5 +484,9 @@ BEGIN
 END MakeConsoleSink;
 
 BEGIN
-  defaultReady := FALSE
+  defaultReady := FALSE;
+  globalFmtOpts.showTimestamp := TRUE;
+  globalFmtOpts.showLevel := TRUE;
+  globalFmtOpts.showCategory := TRUE;
+  globalFmtOpts.showThread := FALSE
 END Log.

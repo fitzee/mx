@@ -132,6 +132,7 @@ pub struct LLVMCodeGen {
     /// Function bodies section
     pub(crate) body: String,
 
+    pub(crate) target: crate::target::TargetInfo,
     pub(crate) sema: SemanticAnalyzer,
     pub(crate) module_name: String,
     pub(crate) m2plus: bool,
@@ -259,10 +260,11 @@ pub struct LLVMCodeGen {
 }
 
 impl LLVMCodeGen {
-    pub fn new() -> Self {
+    pub fn new(target: crate::target::TargetInfo) -> Self {
         Self {
             preamble: String::new(),
             body: String::new(),
+            target,
             sema: SemanticAnalyzer::new(),
             module_name: String::new(),
             m2plus: false,
@@ -495,12 +497,9 @@ impl LLVMCodeGen {
         out.push_str(&format!("; ModuleID = '{}'\n", self.module_name));
         out.push_str(&format!("source_filename = \"{}\"\n", self.source_file));
 
-        // Target triple
-        let triple = Self::host_triple();
-        // Use a generic datalayout for the host
-        let datalayout = Self::host_datalayout();
-        out.push_str(&format!("target datalayout = \"{}\"\n", datalayout));
-        out.push_str(&format!("target triple = \"{}\"\n", triple));
+        // Target triple and data layout from TargetInfo
+        out.push_str(&format!("target datalayout = \"{}\"\n", self.target.llvm_datalayout()));
+        out.push_str(&format!("target triple = \"{}\"\n", self.target.llvm_triple()));
         out.push('\n');
 
         // String constants
@@ -533,30 +532,6 @@ impl LLVMCodeGen {
         }
 
         out
-    }
-
-    fn host_triple() -> String {
-        let arch = std::env::consts::ARCH;
-        let os = std::env::consts::OS;
-        match (arch, os) {
-            ("aarch64", "macos") => "arm64-apple-macosx14.0.0".to_string(),
-            ("x86_64", "macos") => "x86_64-apple-macosx14.0.0".to_string(),
-            ("x86_64", "linux") => "x86_64-unknown-linux-gnu".to_string(),
-            ("aarch64", "linux") => "aarch64-unknown-linux-gnu".to_string(),
-            _ => format!("{}-unknown-{}", arch, os),
-        }
-    }
-
-    fn host_datalayout() -> String {
-        let arch = std::env::consts::ARCH;
-        let os = std::env::consts::OS;
-        match (arch, os) {
-            ("aarch64", "macos") => "e-m:o-i64:64-i128:128-n32:64-S128".to_string(),
-            ("x86_64", "macos") => "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128".to_string(),
-            ("x86_64", "linux") => "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128".to_string(),
-            ("aarch64", "linux") => "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128".to_string(),
-            _ => "e-m:e-i64:64-n32:64-S128".to_string(),
-        }
     }
 
     // ── Emission helpers ────────────────────────────────────────────
