@@ -148,8 +148,14 @@ impl CfgBuilder {
         id
     }
 
-    /// Set the current block. The target must be open (no terminator).
+    /// Set the current block. The target must be open (no terminator),
+    /// and there must be no existing open block (current must be None).
     fn start_block(&mut self, id: BlockId) {
+        debug_assert!(
+            self.current.is_none(),
+            "start_block: abandoning open block {}",
+            self.current.unwrap()
+        );
         debug_assert!(
             self.blocks[id].terminator.is_none(),
             "start_block: block {} is already sealed",
@@ -212,10 +218,11 @@ impl CfgBuilder {
 
         // Seal any unreachable blocks that were allocated but never
         // started (e.g., merge blocks when all paths terminated).
+        // These blocks have no predecessors and are genuinely unreachable —
+        // they must not be treated as valid return paths by future analyses.
+        // They are sealed only to satisfy the "all blocks sealed" invariant.
         for block in &mut self.blocks {
             if block.terminator.is_none() {
-                // This block was allocated but no path reached it.
-                // Seal with Return(None) to satisfy the "all sealed" invariant.
                 block.terminator = Some(Terminator::Return(None));
             }
         }
