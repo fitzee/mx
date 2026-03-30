@@ -28,7 +28,7 @@ impl super::CodeGen {
                 else { format!("{}.0", s) }
             }
             HirExprKind::StringLit(s) => {
-                if expr.ty == TY_CHAR {
+                if expr.ty == TY_CHAR && s.len() <= 1 {
                     if s.is_empty() {
                         "'\\0'".to_string()
                     } else {
@@ -561,8 +561,16 @@ impl super::CodeGen {
                         }
                         _ => None,
                     };
+                    // Check if target is a char array (need string, not char)
+                    let target_resolved = self.resolve_hir_alias(target.ty);
+                    let target_is_char_array = if let crate::types::Type::Array { elem_type, .. } = self.sema.types.get(target_resolved) {
+                        matches!(self.sema.types.get(*elem_type), crate::types::Type::Char)
+                    } else { false };
                     if let Some(s) = str_val {
-                        if s.is_empty() {
+                        if target_is_char_array {
+                            // Keep as string for char array assignment
+                            self.hir_expr_to_string(value)
+                        } else if s.is_empty() {
                             "'\\0'".to_string()
                         } else if s.len() == 1 {
                             format!("'{}'", super::escape_c_char(s.chars().next().unwrap()))
@@ -591,9 +599,14 @@ impl super::CodeGen {
                 };
                 if is_array && is_char_array && is_string_source {
                     // String-to-char-array: use m2_Strings_Assign to avoid overread
+                    // Always use string form (not char literal) for the source arg
+                    let str_src = match &value.kind {
+                        HirExprKind::StringLit(s) => format!("\"{}\"", super::escape_c_string(s)),
+                        _ => value_str.clone(),
+                    };
                     self.emit_indent();
                     self.emit(&format!("m2_Strings_Assign({}, {}, sizeof({}) - 1);\n",
-                        value_str, target_str, target_str));
+                        str_src, target_str, target_str));
                 } else if is_array {
                     self.emit_indent();
                     self.emit(&format!("memcpy({}, {}, sizeof({}));\n",
