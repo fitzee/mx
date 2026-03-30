@@ -1204,6 +1204,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 }
             } else {
                 link_cmd.arg("-Wl,--gc-sections");
+                link_cmd.arg("-lpthread");
             }
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, link_cmd);
@@ -1255,6 +1256,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 }
             } else {
                 cmd.arg("-Wl,--gc-sections");
+                cmd.arg("-lpthread");
             }
 
             if opts.verbose {
@@ -1449,6 +1451,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 link_cmd.arg("-Wl,-dead_strip");
             } else {
                 link_cmd.arg("-Wl,--gc-sections");
+                link_cmd.arg("-lpthread");
             }
             for extra in &opts.extra_c_files {
                 link_cmd.arg(extra);
@@ -1556,6 +1559,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 cmd.arg("-Wl,-dead_strip");
             } else {
                 cmd.arg("-Wl,--gc-sections");
+                cmd.arg("-lpthread");
             }
             cmd.arg("-w");
 
