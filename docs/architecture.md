@@ -59,11 +59,11 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 - Structural declarations: type_decls, const_decls, global_decls, exception_decls, proc_decls
 - Embedded modules: `HirEmbeddedModule` for each imported implementation module, with its own types/consts/globals/procs/init body
 - Module body: init_body, except_handler, finally_handler (all pre-lowered to `Vec<HirStmt>`)
-- Procedure bodies: prebuilt `HirProc` per procedure (body + params, looked up by name during codegen)
+- Procedure declarations: `HirProcDecl` per procedure with full signature, lowered body, locals, nested procs, closure captures, and except handler. Bodies are populated at arbitrary nesting depth via recursive `build_nested_recursive`.
 
 Both backends iterate structural declarations from `HirModule` for:
-- C backend: record forward decls, type decls, const decls, global var decls, proc forward decls, except/finally handlers
-- LLVM backend: const decls, exception decls, module body/except/finally
+- C backend: record forward decls, type decls, const decls, exception decls, global var decls, proc forward decls, except/finally handlers
+- LLVM backend: type decls, const decls, exception decls, global var decls, proc decls (via `gen_hir_proc_decl`), module body/except/finally
 
 **TypeId → C name resolver**: A `typeid_c_names` map (populated from HirModule type_decls, def-module registration, and gen_type_decl emission) allows `type_id_to_c()` to resolve TypeIds to their C typedef names. Only non-structural types (records, enums, arrays, aliases) are registered to avoid cross-module conflicts with pointer/set types.
 
@@ -109,14 +109,14 @@ Key design decisions:
 
 | File | Purpose |
 |------|---------|
-| `mod.rs` | Core struct, Val representation, semantic type queries |
-| `modules.rs` | Module-level codegen, `main()` entry, embedded impl modules |
-| `decls.rs` | Procedure and variable declarations, debug info |
-| `stmts.rs` | HIR statement emission, M2+ exception handling (setjmp/longjmp) |
-| `exprs.rs` | HIR expression emission, function calls, NEW/DISPOSE |
-| `designators.rs` | HIR Place → LLVM IR address/load with TypeId tracking |
-| `types.rs` | TypeNode → TypeId resolution, module-scoped lookup |
-| `type_lowering.rs` | M2 types → LLVM IR types |
+| `mod.rs` | Core struct, Val representation, semantic type queries, registration APIs |
+| `modules.rs` | Module-level codegen: `gen_program_module`, `gen_implementation_module`, `gen_embedded_impl_module_by_name`, topo sort, import maps — all HIR-driven |
+| `decls.rs` | HIR-based declaration emission: `gen_hir_type_decls_from`, `gen_hir_var_decls_global_from`, `gen_hir_const_decls_from`, `gen_hir_exception_decls_from`, `gen_hir_proc_decl` |
+| `stmts.rs` | HIR statement emission, M2+ exception handling (setjmp/longjmp), TRY/EXCEPT/FINALLY |
+| `exprs.rs` | HIR expression emission, function calls, short-circuit AND/OR, COMPLEX builtins (CMPLX/RE/IM), NEW/DISPOSE |
+| `designators.rs` | HIR Place → LLVM IR address/load, variant field offset computation, named array param handling |
+| `types.rs` | TypeId resolution, LLVM type strings, float coercion, type_lowering delegation |
+| `type_lowering.rs` | M2 types → LLVM IR types (variant record flattening, pseudo-field skip) |
 | `llvm_types.rs` | LLVM type representation and IR emission |
 | `stdlib_sigs.rs` | Standard library call signatures |
 | `debug_info.rs` | DWARF metadata (DICompileUnit, DISubprogram, DILocalVariable) |
@@ -126,7 +126,12 @@ Key design decisions:
 - **Val carries TypeId**: Every codegen result is `{name, ty, type_id}` where `type_id` tracks the semantic identity from sema, enabling correct aggregate handling and cross-module type disambiguation.
 - **Aggregate invariant**: Records and arrays stay as addresses (pointers) in `gen_designator_load`. Callers that need values (return, struct-by-value) load explicitly. This prevents invalid SSA loads of aggregate types.
 - **Sema-driven types**: All semantic questions (is this a pointer? what are the record fields?) are answered from the sema TypeRegistry, not LLVM type strings.
-- **M2+ exception handling**: setjmp/longjmp-based `m2_ExcFrame` stack for TRY/EXCEPT/FINALLY, with callable runtime functions (`m2_exc_push`, `m2_exc_pop`, `m2_exc_get_id`, `m2_exc_reraise`). ISO procedure-level EXCEPT uses a separate SjLj mechanism. The `m2_eh_personality` function handles LLVM-native exception propagation for ISO EXCEPT blocks.
+- **Zero AST dependencies**: All codegen reads from prebuilt HIR (`HirModule`, `HirProcDecl`, `HirEmbeddedModule`). The only AST import (`use crate::ast::*`) is for shared types (`BinaryOp`, `UnaryOp`, `ExprKind`) used by HIR expressions, plus `CompilationUnit` for entry-point dispatch.
+- **Closure captures**: `HirProcDecl.closure_captures` is populated by hir_build with transitive propagation — grandchild captures are forwarded through parent env structs. The LLVM backend promotes captured variables to globals.
+- **Short-circuit evaluation**: AND/OR emit conditional branches + phi nodes instead of eager LLVM `and`/`or` instructions.
+- **Floored DIV/MOD**: Calls `m2_div`/`m2_mod` runtime helpers for signed integer division (PIM4 requires floored, not truncated).
+- **COMPLEX arithmetic**: Delegates to `m2_complex_add`/`sub`/`mul`/`div`/`neg`/`eq` runtime helpers. CMPLX/RE/IM builtins use LLVM `insertvalue`/`extractvalue`.
+- **M2+ exception handling**: setjmp/longjmp-based `m2_ExcFrame` stack for TRY/EXCEPT/FINALLY, with callable runtime functions (`m2_exc_push`, `m2_exc_pop`, `m2_exc_get_id`, `m2_exc_reraise`). FINALLY handlers run on both normal and exception paths. ISO procedure-level EXCEPT uses M2_TRY/M2_CATCH macros (C) or SjLj (LLVM).
 - **RTTI**: `M2_TypeDesc` globals for REF/OBJECT types, `M2_RefHeader` prepended to allocations, `M2_ISA` for TYPECASE runtime type checking.
 - **DWARF debug info**: `DW_LANG_C99` (for lldb compatibility), `#dbg_declare` records (LLVM 19+ format), full DILocalVariable/DIGlobalVariable metadata.
 
@@ -309,7 +314,7 @@ Categorized `.mod` files in `examples/` compiled and executed. Each test has an 
 
 ### Adversarial tests (tests/adversarial/)
 
-1100+ tests across multiple compiler configurations (PIM4, M2+, optimized, with/without sanitizers, C/LLVM backends). Tests are defined in `tests/adversarial/tests.json` and run via `run_adversarial.py`. Use `--backend all` to test both C and LLVM backends.
+1150+ tests across multiple compiler configurations (PIM4, M2+, optimized, with/without sanitizers, C/LLVM backends). Tests are defined in `tests/adversarial/tests.json` and run via `run_adversarial.py`. Use `--backend all` to test both C and LLVM backends.
 
 ### Conformance tests (tests/conformance.sh)
 
@@ -342,8 +347,8 @@ python3 tests/adversarial/run_adversarial.py --backend all  # adversarial tests 
 | `src/sema.rs` | Semantic analysis |
 | `src/hir.rs` | HIR types (Place, Projection, HirExpr, HirStmt) |
 | `src/hir_build.rs` | HIR builder — shared designator/expr resolution for both backends |
-| `src/codegen_c/` | C code generation (8 modules) |
-| `src/codegen_llvm/` | LLVM IR code generation (11 modules) |
+| `src/codegen_c/` | C code generation (9 modules) |
+| `src/codegen_llvm/` | LLVM IR code generation (10 modules, zero AST dependencies) |
 | `src/driver.rs` | Compilation orchestration |
 | `src/build.rs` | Project build system |
 | `src/analyze.rs` | Analysis-only path for LSP |
