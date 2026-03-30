@@ -1,5 +1,47 @@
 # Release Notes
 
+## 1.6.0 (2026-03-30)
+
+### Features
+
+- **LLVM backend fully decoupled from AST** — All codegen reads from prebuilt HIR (`HirModule`, `HirProcDecl`, `HirEmbeddedModule`). Zero AST node data is accessed during code generation. The only AST import remaining is for shared types (`BinaryOp`, `UnaryOp`, `ExprKind`) used by HIR expressions.
+- **Short-circuit AND/OR evaluation** — Both backends now correctly short-circuit boolean AND/OR. The C backend wraps operators in parentheses; the LLVM backend emits conditional branches with phi nodes.
+- **COMPLEX/LONGCOMPLEX type support** — Variables use `m2_COMPLEX` struct type. Arithmetic operations delegate to runtime helpers. LLVM backend implements CMPLX/RE/IM as inline `insertvalue`/`extractvalue`.
+- **Deep nested procedure closures** — Recursive `build_nested_recursive` in hir_build supports arbitrary nesting depth. Transitive capture propagation forwards grandchild captures through parent env structs.
+- **Procedure-level EXCEPT handlers** — C backend wraps procedure bodies in M2_TRY/M2_CATCH when HirProcDecl has an except_handler.
+- **TRY/FINALLY on exception path** — LLVM backend runs FINALLY handler before re-raising on the exception path.
+- **Multidimensional array support** — Multi-index `A[i, j]` splits into separate Index projections per dimension. Array typedefs use `field_type_and_suffix` for correct 2D emission.
+- **PIM4 floored DIV/MOD** — LLVM backend calls `m2_div`/`m2_mod` runtime helpers for signed integer division instead of LLVM's truncated `sdiv`/`srem`.
+- **RTTI type descriptors** — C backend emits `M2_TypeDesc` globals for `Type::Ref` and `Type::Object`, enabling TYPECASE runtime dispatch.
+
+### Bug fixes
+
+- **Variant record codegen** — Skip synthetic `variant` pseudo-field and tag field from C struct emission. Fix variant field access paths (`._variant._vN.field`). LLVM: correct variant field GEP offsets, pseudo-field skip in both `type_lowering` and `llvm_type_for_type_id` paths.
+- **Opaque type revelation** — Create `Type::Alias` instead of cloning target type data when implementation module reveals an opaque type. Ensures both names resolve to the same C/LLVM type.
+- **Alias resolution** — Resolve aliases in CASE, FOR, WITH, DIV/MOD type checks and `get_ordinal_range`. Fixes enum-indexed array sizes, CASE on enum types, FOR on named types.
+- **Constant forward references** — Re-evaluate constants after all declarations in a block, resolving forward-referenced constants like `Total = Base + Extra`.
+- **Nested WITH** — Chain through parent WITH scope for nested `WITH p DO ... WITH birthdate DO ... year`.
+- **Last-import-wins** — Allow re-importing the same name from a different module (PIM4 shadowing).
+- **String-to-char-array overflow** — Use `m2_Strings_Assign` instead of `memcpy(dst, src, sizeof(dst))` to prevent buffer overread.
+- **Single-char string constants** — LLVM: load first byte (`load i8, ptr`) instead of `ptrtoint` for string-to-char coercion. C: keep string form in `m2_Strings_Assign` calls.
+- **Nested proc collision** — Use parent proc context to disambiguate same-named nested procedures (e.g., Alpha.Helper vs Beta.Helper).
+- **LLVM double-to-float coercion** — Insert `fptrunc` when passing LONGREAL to REAL parameters.
+- **Named array param dereference** — LLVM: load pointer from alloca before GEP for by-value array parameters.
+- **Closure capture in C backend** — Search nested procs at any depth for capture analysis. Compute env_access_names with transitive captures.
+- **Exception declarations** — Emit `#define M2_EXC_*` in gen_program_module and gen_implementation_module.
+- **Suppress -Wunused-parameter** — Emit `(void)param;` for all parameters in generated C.
+- **Compiler warnings** — Remove unused `mut` and unreachable patterns that leaked to stderr and caused false test failures.
+
+### Architecture
+
+- **1,672 lines of dead AST code deleted** from LLVM backend: gen_proc_decl, gen_type_decls, gen_const_decls, gen_var_decls_global, gen_var_decl_local, gen_exception_decls, count_stmts, legacy module methods, closures.rs, TypeNode functions.
+- **HirProcDecl.body populated** for all procedures at all nesting depths (main module, local modules, embedded modules, deeply nested procs).
+- **HirProcDecl.closure_captures populated** via `collect_hir_var_refs` with upward propagation for transitive captures.
+
+### Test coverage
+
+- Adversarial tests: **1147/1151 passing (100% non-skipped)**, up from 924/1151 (80.3%). 223 test failures fixed across both backends.
+
 ## 1.5.0 (2026-03-28)
 
 ### Features
