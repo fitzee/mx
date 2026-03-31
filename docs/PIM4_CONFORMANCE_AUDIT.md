@@ -19,7 +19,7 @@ The mx compiler is **broadly correct** for practical PIM4 usage: 383/483 gm2 PIM
 4. ~~**ISO/M2+ clauses in Block.**~~ **RESOLVED (1.5.0).** `EXCEPT` and `FINALLY` are M2+ keywords, gated by the lexer. In PIM4 mode they are not recognized as keywords.
 5. **Grammar doc inaccuracies.** Several productions don't match the parser, and PIM4 vs M2+ constructs are mixed in core productions.
 
-Items 1 and 4 are fully resolved. The remaining risks are lower severity and do not affect practical PIM4 usage.
+Items 1 and 4 are fully resolved. Items 2 and 5 are resolved (grammar doc rewritten, operator precedence documented as intentional divergence). The only remaining open items are semantic checks (F07, F08, F18, F19, F20, F25) — none affect practical PIM4 usage.
 
 ---
 
@@ -30,30 +30,30 @@ Items 1 and 4 are fully resolved. The remaining risks are lower severity and do 
 | F01 | Parser/gating | ~~M2+ constructs parsed unconditionally~~ | M2+ constructs rejected unless `--m2plus` | ~~Critical~~ | ~~Gate parsing on `m2plus` flag~~ | **RESOLVED (1.5.0)** — Lexer gates M2+ keywords via `keyword_from_str(s, m2plus)` |
 | F02 | Parser/gating | ~~M2+ keywords always reserved~~ | In PIM4 mode, these should be legal identifiers | ~~Critical~~ | ~~Conditional keyword recognition in lexer~~ | **RESOLVED (1.5.0)** — M2+ keywords only recognized when `m2plus=true` |
 | F03 | Parser | ~~`EXCEPT`/`FINALLY` accepted in every Block~~ | PIM4 has no EXCEPT/FINALLY in Block | ~~High~~ | ~~Gate behind m2plus or iso flag~~ | **RESOLVED (1.5.0)** — EXCEPT/FINALLY are M2+ keywords, gated by lexer |
-| F04 | Parser/grammar | OR and AND have dedicated precedence levels (C-style) | PIM4: OR is at additive level (+, -), AND is at multiplicative level (*, /, DIV, MOD) | **High** | Policy decision: keep C-style or match PIM4 | Policy decision |
-| F05 | Grammar doc | `Statement` production includes TryStatement, LockStatement, TypecaseStatement | These should only appear in M2+ section | **High** | Move to M2+ section of grammar doc | Doc fix |
-| F06 | Grammar doc | `AddOp = "+" \| "-" \| "OR"` and `MulOp = ... \| "AND"` (PIM4 style) | Parser uses separate precedence levels for OR/AND | **High** | Grammar doc must match parser, or parser must match doc | Doc fix or code fix |
+| F04 | Parser/grammar | ~~OR and AND have dedicated precedence levels (C-style)~~ | PIM4: OR at additive, AND at multiplicative | ~~High~~ | ~~Policy decision~~ | **RESOLVED (policy)** — Kept C-style; documented as intentional divergence in grammar doc "mx Accepted Differences" |
+| F05 | Grammar doc | ~~`Statement` production includes TryStatement, LockStatement, TypecaseStatement~~ | These should only appear in M2+ section | ~~High~~ | ~~Move to M2+ section~~ | **RESOLVED** — Grammar doc Statement production now PIM4-only; M2+ constructs in separate section |
+| F06 | Grammar doc | ~~`AddOp = "+" \| "-" \| "OR"` / `MulOp = ... \| "AND"` (PIM4 style)~~ | Parser uses separate precedence levels for OR/AND | ~~High~~ | ~~Grammar doc must match parser~~ | **RESOLVED** — Grammar doc now shows C-style precedence (OrExpr → AndExpr → Relation → SimpleExpr → Term) matching parser |
 | F07 | Sema | `assignment_compatible` allows any record→record, array→array, pointer→pointer | PIM4 requires name equivalence for structured types | **High** | Tighten type compatibility checks | Code fix |
 | F08 | Sema | No validation that opaque types must be POINTER in implementation | PIM4: opaque types in .def must be revealed as POINTER TO in .mod | **Medium** | Add sema check | Code fix |
-| F09 | Grammar doc | `TypeDecl = ident "=" Type \| ident .` combines def and impl behavior | Opaque declarations (`ident ;` alone) are only valid in .def modules | **Medium** | Separate in grammar doc; note already correct in parser | Doc fix |
-| F10 | Parser | `parse_formal_type` allows recursive `ARRAY OF ARRAY OF QualIdent` | PIM4 `FormalType = ["ARRAY" "OF"] QualIdent` — only one level of ARRAY OF | **Medium** | Restrict to single ARRAY OF in PIM4 mode | Code fix |
+| F09 | Grammar doc | ~~`TypeDecl = ident "=" Type \| ident .` combines def and impl behavior~~ | Opaque declarations only valid in .def | ~~Medium~~ | ~~Separate in grammar doc~~ | **RESOLVED** — Grammar doc now has separate `TypeDeclDef` (def modules) and `TypeDecl` (impl) productions |
+| F10 | Parser | ~~`parse_formal_type` allows recursive `ARRAY OF ARRAY OF QualIdent`~~ | PIM4: single ARRAY OF level | ~~Medium~~ | ~~Restrict or document~~ | **RESOLVED (policy)** — Documented as mx extension in "mx Accepted Differences" |
 | F11 | Parser | ~~Import `AS` alias always accepted~~ | Import aliases are an mx extension, not PIM4 | ~~Medium~~ | ~~Gate behind m2plus or extension flag~~ | **RESOLVED (1.5.0)** — AS is M2+ keyword, gated by lexer |
-| F12 | Grammar doc | `ForeignDefModule` not reachable from `CompilationUnit` | If documented, should be shown as M2+ variant of CompilationUnit | **Medium** | Fix grammar doc | Doc fix |
-| F13 | Grammar doc | `CharConst` referenced in Factor but undefined | Should be `CharLit` or defined as terminal | **Low** | Fix grammar doc | Doc fix |
-| F14 | Grammar doc | `ConstExpr` referenced but never defined | Should note: same as Expr but must be compile-time evaluable | **Low** | Add note to grammar doc | Doc fix |
-| F15 | Grammar doc | `number` and `string` in Factor not defined as terminals | Should define terminal symbols | **Low** | Fix grammar doc | Doc fix |
-| F16 | Grammar doc | `&` (AND synonym) and `~` (NOT synonym) undocumented | PIM4 defines these as synonyms | **Low** | Document in grammar | Doc fix |
-| F17 | Grammar doc | `<>` accepted as not-equal but undocumented | PIM4 uses `#` primarily; `<>` is standard too | **Low** | Document in grammar | Doc fix |
+| F12 | Grammar doc | ~~`ForeignDefModule` not reachable from `CompilationUnit`~~ | Should be shown as M2+ variant | ~~Medium~~ | ~~Fix grammar doc~~ | **RESOLVED** — Now in M2+ Extensions section of grammar doc |
+| F13 | Grammar doc | ~~`CharConst` referenced in Factor but undefined~~ | Should be defined as terminal | ~~Low~~ | ~~Fix grammar doc~~ | **RESOLVED** — `CharConst` defined in Terminals section |
+| F14 | Grammar doc | ~~`ConstExpr` referenced but never defined~~ | Should note: same as Expr | ~~Low~~ | ~~Fix grammar doc~~ | **RESOLVED** — `ConstExpr = Expr` defined in Terminals section with note |
+| F15 | Grammar doc | ~~`number` and `string` in Factor not defined~~ | Should define terminal symbols | ~~Low~~ | ~~Fix grammar doc~~ | **RESOLVED** — `number` and `string` defined in Terminals section |
+| F16 | Grammar doc | ~~`&` and `~` undocumented~~ | PIM4 defines these as synonyms | ~~Low~~ | ~~Document in grammar~~ | **RESOLVED** — Documented in operator synonyms table |
+| F17 | Grammar doc | ~~`<>` accepted as not-equal but undocumented~~ | PIM4 uses `#` primarily | ~~Low~~ | ~~Document in grammar~~ | **RESOLVED** — Documented in operator synonyms table and mx Accepted Differences |
 | F18 | Sema | No check that FOR variable is not assigned inside loop body | PIM4 forbids assignment to FOR control variable | **Medium** | Add sema check | Code fix |
 | F19 | Sema | RETURN with/without expression not validated against procedure kind | PIM4: function procedures require RETURN expr; proper procedures forbid it | **Medium** | Add sema check | Code fix |
 | F20 | Sema | No validation that CASE labels are constants and non-overlapping | PIM4 requires constant, non-overlapping case labels | **Low** | Add sema check | Code fix |
 | F21 | Parser | Module priority `MODULE name [expr] ;` parsed but undocumented | PIM4 allows module priority for interrupt handling | **Low** | Document or remove | Doc fix |
 | F22 | Parser | ~~`RAISE` and `RETRY` parsed as statements unconditionally~~ | These are M2+/ISO, not PIM4 | ~~High~~ | ~~Gate behind extension flag~~ | **RESOLVED (1.5.0)** — RAISE/RETRY are M2+ keywords, gated by lexer |
 | F23 | Grammar doc | ~~`RaiseStatement` parsed without gating~~ | Consistency between doc and implementation | ~~Medium~~ | ~~Match doc (gate in parser)~~ | **RESOLVED (1.5.0)** — RAISE gated by lexer, matches M2+ section of grammar doc |
-| F24 | Grammar doc | Missing `Definition` production for def modules | Grammar shows `{ Definition }` but doesn't define it separately from `Declaration` | **Medium** | Add `Definition` production to grammar | Doc fix |
+| F24 | Grammar doc | ~~Missing `Definition` production for def modules~~ | Grammar should define it separately from `Declaration` | ~~Medium~~ | ~~Add `Definition` production~~ | **RESOLVED** — `Definition` production now in "Definitions (definition modules only)" section |
 | F25 | Sema | Set constructors always typed as BITSET regardless of base_type | Should use declared base type for typed set constructors | **Low** | Fix set constructor type inference | Code fix |
-| F26 | Grammar doc | Bare set constructor `{1, 2, 3}` undocumented | Parser accepts it (line 1606-1608), produces BITSET | **Low** | Document as mx extension or match PIM4 | Doc fix |
-| F27 | Parser | `SubrangeType` accepts `QualIdent "[" ConstExpr ".." ConstExpr "]"` form | PIM4: `[low..high]` only; base-typed subrange is not standard | **Low** | Document as extension or gate | Policy decision |
+| F26 | Grammar doc | ~~Bare set constructor `{1, 2, 3}` undocumented~~ | Parser accepts it, produces BITSET | ~~Low~~ | ~~Document as extension~~ | **RESOLVED** — Documented in mx Accepted Differences and SetValue production comment |
+| F27 | Parser | ~~`SubrangeType` accepts `QualIdent "[" ConstExpr ".." ConstExpr "]"`~~ | PIM4: `[low..high]` only | ~~Low~~ | ~~Document as extension~~ | **RESOLVED (policy)** — Documented as mx extension in "mx Accepted Differences" |
 
 ---
 
@@ -67,7 +67,7 @@ CompilationUnit = ProgramModule | DefinitionModule | ImplementationModule .
 ```
 
 **Issues:**
-- `ForeignDefModule` is documented separately but not reachable from `CompilationUnit`. **(F12)**
+- ~~`ForeignDefModule` is documented separately but not reachable from `CompilationUnit`.~~ Now in M2+ Extensions section. **(F12 RESOLVED)**
 - `SAFE`/`UNSAFE` prefix handling is not shown in the grammar. ~~The parser accepts `SAFE MODULE ...` etc. unconditionally.~~ Now gated — SAFE/UNSAFE are M2+ keywords. **(F01 RESOLVED)**
 - ProgramModule priority expression `[expr]` is parsed (line 219) but not in grammar doc. **(F21)**
 
@@ -96,8 +96,8 @@ ProcedureDecl = ProcedureHeading ";" Block ident .
 ```
 
 **Issues:**
-- The grammar doesn't show a separate `Definition` production for definition modules. The parser correctly uses `parse_definition_module` which calls `parse_proc_heading` (heading only, no block), while `parse_declarations` calls `parse_proc_decl` (heading + block). **(F24)**
-- `TypeDecl = ident "=" Type | ident .` conflates def-module and impl-module behavior. The bare `ident` (opaque type) is only valid in definition modules. Parser correctly separates this (`parse_type_decl` vs `parse_type_decl_def`). **(F09)**
+- ~~The grammar doesn't show a separate `Definition` production.~~ Now has `Definition` and `TypeDeclDef` productions. **(F24 RESOLVED)**
+- ~~`TypeDecl = ident "=" Type | ident .` conflates def-module and impl-module behavior.~~ Now separate `TypeDeclDef` (def) and `TypeDecl` (impl) productions. **(F09 RESOLVED)**
 - ~~`EXCEPTION` declarations are parsed unconditionally.~~ Now gated — EXCEPTION is an M2+ keyword. **(F01 RESOLVED)**
 - Local module declarations (`Declaration::Module`) are parsed correctly via `parse_local_module`.
 - Grammar doc doesn't show local (nested) module declarations.
@@ -114,7 +114,7 @@ ProcedureDecl = ProcedureHeading ";" Block ident .
 | PointerType | Correct | Correct | OK |
 | ProcedureType | Correct | Correct (with lookahead for named vs unnamed params) | OK |
 | EnumType | Correct | Correct | OK |
-| SubrangeType | Shows `QualIdent "[" ...]` form | Parser accepts this form (line 771-783) | Match, but this form is not PIM4 **(F27)** |
+| SubrangeType | Shows `QualIdent "[" ...]` form | Parser accepts this form (line 771-783) | ~~Not PIM4~~ Documented as mx extension **(F27 RESOLVED)** |
 | RefType | Marked M2+ | ~~Parsed unconditionally~~ Gated (M2+ keyword) | **F01 RESOLVED** |
 | ObjectType | Marked M2+ | ~~Parsed unconditionally~~ Gated (M2+ keyword) | **F01 RESOLVED** |
 
@@ -131,7 +131,7 @@ Statement = [ Assignment | ProcedureCall | IfStatement | CaseStatement
 ```
 
 **Issues:**
-- `TryStatement`, `LockStatement`, `TypecaseStatement` are in the base `Statement` production. They should only be in the M2+ section. **(F05)**
+- ~~`TryStatement`, `LockStatement`, `TypecaseStatement` are in the base `Statement` production.~~ Now PIM4-only in grammar doc; M2+ constructs in separate section. **(F05 RESOLVED)**
 - ~~`RAISE` and `RETRY` are parsed unconditionally~~ Now gated — RAISE/RETRY are M2+ keywords. **(F22, F23 RESOLVED)**
 - Grammar doc correctly shows `ForStatement = "FOR" ident ":=" Expr "TO" Expr ["BY" ConstExpr] ...` but PIM4 requires BY to be a constant expression. Parser accepts any expression for BY step. Sema doesn't validate constness. **(F20)**
 
@@ -150,22 +150,22 @@ MulOp      = "*" | "/" | "DIV" | "MOD" | "AND" .
 parse_or_expr → parse_and_expr → parse_rel_expr → parse_add_expr → parse_mul_expr → parse_unary_expr → parse_factor
 ```
 
-The parser gives OR and AND their own dedicated, lower-priority levels. In PIM4, OR has the **same** precedence as `+`/`-`, and AND has the **same** precedence as `*`/`/`/`DIV`/`MOD`. **(F04, F06)**
+The parser gives OR and AND their own dedicated, lower-priority levels. In PIM4, OR has the **same** precedence as `+`/`-`, and AND has the **same** precedence as `*`/`/`/`DIV`/`MOD`. ~~**(F04, F06)**~~ **RESOLVED** — Grammar doc now documents C-style precedence matching the parser, listed as intentional divergence in "mx Accepted Differences".
 
 **Practical impact:** Expression `a + b OR c` parses as `(a + b) OR c` in both schemes (OR is lower or equal to +). But `a OR b + c` parses as `a OR (b + c)` in mx (+ binds tighter) vs `(a OR b) + c` in strict PIM4 (same level, left-to-right). This matters if someone writes mixed arithmetic+boolean (unusual but legal in PIM4 with BITSET operations).
 
-**Other expression issues:**
-- `&` (Ampersand) parsed as AND synonym — correct for PIM4 but undocumented. **(F16)**
-- `~` (Tilde) parsed as NOT synonym — correct for PIM4 but undocumented. **(F16)**
-- `<>` parsed as not-equal (NotEq) — standard but undocumented in grammar. **(F17)**
-- `Factor` in grammar doc mentions `CharConst` which is not a defined production. **(F13)**
-- `number` and `string` in grammar doc are not defined as terminals. **(F15)**
+**Other expression issues — all RESOLVED in grammar doc:**
+- ~~`&` (Ampersand) parsed as AND synonym — undocumented.~~ Now in operator synonyms table. **(F16 RESOLVED)**
+- ~~`~` (Tilde) parsed as NOT synonym — undocumented.~~ Now in operator synonyms table. **(F16 RESOLVED)**
+- ~~`<>` parsed as not-equal — undocumented.~~ Now in operator synonyms table. **(F17 RESOLVED)**
+- ~~`Factor` mentions `CharConst` which is not defined.~~ Now defined in Terminals section. **(F13 RESOLVED)**
+- ~~`number` and `string` not defined as terminals.~~ Now defined in Terminals section. **(F15 RESOLVED)**
 
 ### 3.7 Dead/Unreachable Productions
 
 | Production | Status |
 |-----------|--------|
-| `ForeignDefModule` | Documented but not reachable from CompilationUnit |
+| `ForeignDefModule` | ~~Not reachable from CompilationUnit~~ Now in M2+ Extensions section |
 | `RaiseStatement` | Documented in M2+ section, ~~parsed unconditionally~~ now gated by M2+ keyword |
 | `SafetyAnnotation` | Documented in M2+ section, ~~parsed unconditionally~~ now gated by M2+ keyword |
 | `ExceptionDecl` | Documented in M2+ section, ~~parsed unconditionally~~ now gated by M2+ keyword |
@@ -282,31 +282,29 @@ In PIM4 mode, all M2+ keywords are valid identifiers. Parser tests confirm this 
 
 ## 6. Documentation Review
 
-### 6.1 Current State
+### 6.1 Current State — RESOLVED
 
-`docs/lang/grammar.md` is titled "Modula-2 PIM4 Grammar Reference" but functions as an "mx accepted syntax reference" — it documents what the parser accepts, not strict PIM4. M2+ constructs appear both in the base productions (Statement) and in a separate M2+ section.
+~~`docs/lang/grammar.md` was titled "Modula-2 PIM4 Grammar Reference" and mixed PIM4/M2+ constructs.~~
 
-### 6.2 Recommended Structure
+**Rewritten.** The grammar doc (`docs/lang/grammar.md`) is now structured as:
 
-The grammar doc should be restructured into three clear sections:
+1. **PIM4 Core** — Productions matching the parser's PIM4 mode. Terminals defined. C-style precedence documented.
+2. **mx Accepted Differences** — Table of intentional divergences (operator precedence, base-typed subranges, bare set constructors, recursive ARRAY OF, `<>`, `&`/`~` synonyms).
+3. **Modula-2+ Extensions** — All M2+ constructs clearly separated (TRY, LOCK, TYPECASE, RAISE, RETRY, EXCEPTION, REF, OBJECT, import AS, foreign def modules, SAFE/UNSAFE, RAISES).
 
-1. **Strict PIM4 Core** — Productions matching PIM4, 4th Edition. OR at additive level, AND at multiplicative level, no extension constructs.
-2. **mx Accepted Differences** — Where mx intentionally diverges from strict PIM4 for practical reasons (e.g., C-style operator precedence if kept, bare set constructors, `<>` as not-equal synonym).
-3. **Modula-2+ Extensions** — All M2+ constructs, clearly separated.
+### 6.2 Specific Sections — All RESOLVED
 
-### 6.3 Specific Sections Needing Rewrite
-
-| Section | Issue |
-|---------|-------|
-| Compilation Units | Add SAFE/UNSAFE prefix (M2+ only), show module priority |
-| Imports | Document AS alias as extension |
-| Declarations | Add `Definition` production for .def modules; separate opaque type rule |
-| Types | Note which forms are extensions (QualIdent[lo..hi] subrange, bare set constructors) |
-| Statements | Remove TryStatement/LockStatement/TypecaseStatement from base production |
-| Expressions | Fix precedence: either match parser (document C-style levels) or match PIM4 |
-| Factor | Define terminals (number, string, CharConst) |
-| M2+ section | Move RAISE, RETRY, EXCEPT/FINALLY-in-Block here |
-| New section | Add "mx extensions" for non-M2+ extensions (import aliases, bare sets, etc.) |
+| Section | Status |
+|---------|--------|
+| Compilation Units | **RESOLVED** — Shows module priority; SAFE/UNSAFE in M2+ section |
+| Imports | **RESOLVED** — AS alias in M2+ section |
+| Declarations | **RESOLVED** — Separate `Definition` and `TypeDeclDef` productions |
+| Types | **RESOLVED** — Extensions in "mx Accepted Differences" |
+| Statements | **RESOLVED** — PIM4-only in base production |
+| Expressions | **RESOLVED** — C-style precedence documented with note |
+| Factor/Terminals | **RESOLVED** — `number`, `string`, `CharConst`, `ConstExpr` defined |
+| M2+ section | **RESOLVED** — All M2+ constructs in separate section |
+| mx extensions | **RESOLVED** — "mx Accepted Differences" table added |
 
 ---
 
@@ -357,41 +355,13 @@ The grammar doc should be restructured into three clear sections:
 
 **Test strategy:** Add targeted sema test cases. Run adversarial suite. Monitor gm2 pass rate.
 
-### Phase 4: Operator Precedence Decision (F04, F06)
+### Phase 4: Operator Precedence Decision (F04, F06) — COMPLETED
 
-**Goal:** Align grammar doc and parser on operator precedence.
+**Status:** Option A chosen — kept C-style precedence. Grammar doc updated to show separate OR/AND levels and document as intentional divergence in "mx Accepted Differences" table.
 
-**Options:**
-- **Option A: Keep C-style precedence** (current parser behavior). Update grammar doc to show separate OR/AND levels. Document as intentional mx divergence from PIM4. This is what nearly all practical M2 compilers do.
-- **Option B: Match PIM4** exactly. Move OR into additive parsing and AND into multiplicative parsing. Risk: changes semantics of existing code.
+### Phase 5: Documentation Rewrite — COMPLETED
 
-**Recommendation:** Option A. Document as intentional divergence. This matches programmer expectations and every other modern M2 compiler.
-
-**Files:** `docs/lang/grammar.md` (doc fix if Option A), or `src/parser.rs` (code fix if Option B)
-
-**Risk:** Low (Option A), Medium (Option B — could change existing code behavior).
-
-### Phase 5: Documentation Rewrite
-
-**Goal:** Grammar doc accurately reflects mx behavior, clearly separates PIM4 core from extensions.
-
-**Work:**
-- Restructure into three sections: PIM4 Core, mx Divergences, M2+ Extensions
-- Fix all specific issues from Section 6.3
-- Add `Definition` production for def modules
-- Fix/define terminal symbols (number, string, CharConst → integer/real/string/char)
-- Document `ConstExpr` usage
-- Document `&`, `~`, `<>` synonyms
-- Document module priority syntax
-- Document bare set constructors
-- Remove/relocate misplaced M2+ constructs from core productions
-- Add "Accepted Differences" subsection for base-typed subranges, import aliases, etc.
-
-**Files:** `docs/lang/grammar.md`, possibly `docs/ai/LANGUAGE_RULES.md`, `docs/ai/CLAUDE.md`
-
-**Risk:** Low. Documentation only.
-
-**Test strategy:** N/A (doc changes).
+**Status:** Grammar doc (`docs/lang/grammar.md`) fully rewritten with three-section structure: PIM4 Core, mx Accepted Differences, M2+ Extensions. All terminal symbols defined. All M2+ constructs moved to separate section. Operator synonyms documented.
 
 ---
 
@@ -437,39 +407,19 @@ The grammar doc should be restructured into three clear sections:
 
 ## 9. Open Questions / Policy Decisions
 
-### Q1: Operator Precedence (F04)
+### Q1: Operator Precedence (F04) — DECIDED
 
-**Question:** Should mx match PIM4 operator precedence exactly (OR at additive level, AND at multiplicative), or keep C-style (OR/AND at their own lower levels)?
+**Decision:** Keep C-style. Documented as intentional divergence in grammar doc.
 
-**Arguments for C-style (status quo):**
-- Matches programmer expectations from C/Java/Python
-- Every practical M2 compiler does this (gm2, XDS, ADW, p1)
-- Changing would alter semantics of existing code
-- Mixed boolean+arithmetic expressions are rare
+### Q2: Formal Type Recursion (F10) — DECIDED
 
-**Arguments for PIM4 strict:**
-- Grammar doc already documents PIM4 precedence
-- Wirth specified it deliberately
+**Decision:** Allow recursive `ARRAY OF`. Documented as mx extension in grammar doc.
 
-**Recommendation:** Keep C-style. Document as intentional divergence.
+### Q3: Base-Typed Subrange (F27) — DECIDED
 
-### Q2: Formal Type Recursion (F10)
+**Decision:** Accept `INTEGER[0..255]` in all modes. Documented as mx extension in grammar doc.
 
-**Question:** Should `ARRAY OF ARRAY OF T` be allowed in formal parameters?
-
-PIM4 says `FormalType = ["ARRAY" "OF"] QualIdent`, allowing only one level. However, multi-dimensional open arrays are useful and accepted by other compilers.
-
-**Recommendation:** Allow but document as extension.
-
-### Q3: Base-Typed Subrange (F27)
-
-**Question:** Should `INTEGER[0..255]` (base-typed subrange) be accepted?
-
-PIM4 only defines `[low..high]`. The base-typed form is common in other dialects.
-
-**Recommendation:** Accept in all modes. Document as mx extension.
-
-### Q4: Type Strictness (F07)
+### Q4: Type Strictness (F07) — OPEN
 
 **Question:** Should type name equivalence be enforced?
 
@@ -477,13 +427,9 @@ Enforcing it would break a lot of existing code (e.g., any record-to-record assi
 
 **Recommendation:** Defer to a `--strict` flag. Keep permissive behavior as default. Eventually: warn in default mode, error in strict mode.
 
-### Q5: Bare Set Constructors (F26)
+### Q5: Bare Set Constructors (F26) — DECIDED
 
-**Question:** Should `{1, 2, 3}` without a type prefix be accepted?
-
-PIM4 requires a type name: `BITSET{1, 2, 3}`. Bare constructors are accepted by some compilers.
-
-**Recommendation:** Continue accepting. Document as mx extension.
+**Decision:** Continue accepting. Documented as mx extension in grammar doc.
 
 ---
 
@@ -491,17 +437,17 @@ PIM4 requires a type name: `BITSET{1, 2, 3}`. Bare constructors are accepted by 
 
 ### Priority Order
 
-1. **Phase 2 (Extension gating)** — Highest value. This is the most visible conformance issue and affects what code is accepted. Ship this first.
-2. **Phase 5 (Documentation rewrite)** — Can be done in parallel with Phase 2. Aligns the grammar doc with reality.
-3. **Phase 1 (Tests)** — Write tests concurrently with Phase 2 to validate the gating.
-4. **Phase 4 (Operator precedence decision)** — Quick decision + doc update if keeping C-style.
-5. **Phase 3 (Semantic enforcement)** — Items 1-4 (FOR variable, RETURN, set typing, const validation) are low-risk and high-value. Defer F07/F08 to a future `--strict` mode.
+1. ~~**Phase 2 (Extension gating)**~~ — **DONE (1.5.0)**
+2. ~~**Phase 5 (Documentation rewrite)**~~ — **DONE**
+3. ~~**Phase 1 (Tests)**~~ — **DONE** (parser tests cover all gating)
+4. ~~**Phase 4 (Operator precedence decision)**~~ — **DONE** (kept C-style, documented)
+5. **Phase 3 (Semantic enforcement)** — Remaining work. Items 1-4 (FOR variable, RETURN, set typing, const validation) are low-risk and high-value. Defer F07/F08 to a future `--strict` mode.
 
 ### What to Fix First
 
 1. ~~Lexer keyword gating (F02)~~ — **DONE (1.5.0)**
 2. ~~Parser M2+ gating (F01, F03, F22)~~ — **DONE (1.5.0)**
-3. Grammar doc restructure (F05, F06, F09, F12-F17, F24, F26)
+3. ~~Grammar doc restructure (F05, F06, F09, F12-F17, F24, F26)~~ — **DONE**
 4. Sema: FOR variable check, RETURN validation, set constructor typing (F18, F19, F25)
 
 ### What to Defer
