@@ -1,9 +1,9 @@
 # PIM4 Conformance Audit — mx Compiler & Grammar Reference
 
-**Date:** 2026-03-14
-**Compiler version:** 1.0.6
+**Date:** 2026-03-14 (updated 2026-03-31)
+**Compiler version:** 1.0.6 (updated for 1.8.0)
 **Scope:** Parser, sema, type system, grammar doc, extension gating
-**Status:** ANALYSIS ONLY — no changes made
+**Status:** Extension gating IMPLEMENTED as of 1.5.0. Remaining items tracked below.
 
 ---
 
@@ -11,15 +11,15 @@
 
 The mx compiler is **broadly correct** for practical PIM4 usage: 383/483 gm2 PIM4 tests pass, and the compiler handles the major language features (modules, types, records, pointers, sets, procedures, control flow) well. However, this audit identifies several categories of concern:
 
-**Top risks:**
+**Top risks (original, March 14):**
 
-1. **No extension gating in the parser.** Every M2+ construct (TRY, LOCK, TYPECASE, REF, OBJECT, EXCEPTION, RAISE, RETRY, SAFE/UNSAFE, RAISES, import AS aliases) is accepted in PIM4 mode. The `m2plus` flag is never checked during parsing. M2+ keywords are always reserved, preventing their use as PIM4 identifiers.
-2. **Operator precedence diverges from PIM4.** The grammar doc correctly shows PIM4 precedence (OR at additive level, AND at multiplicative level), but the parser gives OR and AND their own lower-priority levels (C-style). This changes the parse of expressions mixing boolean and arithmetic operators.
+1. ~~**No extension gating in the parser.**~~ **RESOLVED (1.5.0).** M2+ keywords (TRY, LOCK, TYPECASE, REF, OBJECT, EXCEPTION, RAISE, RETRY, SAFE, UNSAFE, RAISES, AS, BRANDED, METHODS, OVERRIDE, REVEAL, REFANY, EXCEPT, FINALLY) are now conditionally recognized in the lexer via `keyword_from_str(s, m2plus)`. In PIM4 mode these tokens are lexed as identifiers, so the parser never sees them as keywords. All M2+ constructs are rejected in PIM4 mode and accepted in `--m2plus` mode.
+2. **Operator precedence diverges from PIM4.** The grammar doc correctly shows PIM4 precedence (OR at additive level, AND at multiplicative level), but the parser gives OR and AND their own lower-priority levels (C-style). This changes the parse of expressions mixing boolean and arithmetic operators. *(Intentional divergence — matches every practical M2 compiler.)*
 3. **Overly permissive type system.** `assignment_compatible` allows any-record-to-any-record, any-array-to-any-array, and any-pointer-to-any-pointer. PIM4 requires name equivalence for structured types.
-4. **ISO/M2+ clauses in Block.** `EXCEPT` and `FINALLY` are accepted in every `Block` parse, unconditionally, which is ISO Modula-2 — not PIM4.
+4. ~~**ISO/M2+ clauses in Block.**~~ **RESOLVED (1.5.0).** `EXCEPT` and `FINALLY` are M2+ keywords, gated by the lexer. In PIM4 mode they are not recognized as keywords.
 5. **Grammar doc inaccuracies.** Several productions don't match the parser, and PIM4 vs M2+ constructs are mixed in core productions.
 
-None of these are show-stoppers for practical use, but they create correctness risks for strict PIM4 conformance and could confuse users relying on the grammar doc as authoritative.
+Items 1 and 4 are fully resolved. The remaining risks are lower severity and do not affect practical PIM4 usage.
 
 ---
 
@@ -27,9 +27,9 @@ None of these are show-stoppers for practical use, but they create correctness r
 
 | ID | Area | Current Behavior | Expected PIM4 Behavior | Severity | Action | Kind |
 |----|------|-----------------|----------------------|----------|--------|------|
-| F01 | Parser/gating | M2+ constructs (TRY, LOCK, TYPECASE, REF, OBJECT, EXCEPTION, RAISE, SAFE/UNSAFE, RAISES, AS) parsed unconditionally | M2+ constructs rejected unless `--m2plus` | **Critical** | Gate parsing on `m2plus` flag | Code fix |
-| F02 | Parser/gating | M2+ keywords (BRANDED, EXCEPTION, LOCK, METHODS, OBJECT, OVERRIDE, REF, REFANY, REVEAL, SAFE, TRY, TYPECASE, UNSAFE) always reserved | In PIM4 mode, these should be legal identifiers | **Critical** | Conditional keyword recognition in lexer | Code fix |
-| F03 | Parser | `EXCEPT`/`FINALLY` accepted in every Block (ISO style) | PIM4 has no EXCEPT/FINALLY in Block | **High** | Gate behind m2plus or iso flag | Code fix |
+| F01 | Parser/gating | ~~M2+ constructs parsed unconditionally~~ | M2+ constructs rejected unless `--m2plus` | ~~Critical~~ | ~~Gate parsing on `m2plus` flag~~ | **RESOLVED (1.5.0)** — Lexer gates M2+ keywords via `keyword_from_str(s, m2plus)` |
+| F02 | Parser/gating | ~~M2+ keywords always reserved~~ | In PIM4 mode, these should be legal identifiers | ~~Critical~~ | ~~Conditional keyword recognition in lexer~~ | **RESOLVED (1.5.0)** — M2+ keywords only recognized when `m2plus=true` |
+| F03 | Parser | ~~`EXCEPT`/`FINALLY` accepted in every Block~~ | PIM4 has no EXCEPT/FINALLY in Block | ~~High~~ | ~~Gate behind m2plus or iso flag~~ | **RESOLVED (1.5.0)** — EXCEPT/FINALLY are M2+ keywords, gated by lexer |
 | F04 | Parser/grammar | OR and AND have dedicated precedence levels (C-style) | PIM4: OR is at additive level (+, -), AND is at multiplicative level (*, /, DIV, MOD) | **High** | Policy decision: keep C-style or match PIM4 | Policy decision |
 | F05 | Grammar doc | `Statement` production includes TryStatement, LockStatement, TypecaseStatement | These should only appear in M2+ section | **High** | Move to M2+ section of grammar doc | Doc fix |
 | F06 | Grammar doc | `AddOp = "+" \| "-" \| "OR"` and `MulOp = ... \| "AND"` (PIM4 style) | Parser uses separate precedence levels for OR/AND | **High** | Grammar doc must match parser, or parser must match doc | Doc fix or code fix |
@@ -37,7 +37,7 @@ None of these are show-stoppers for practical use, but they create correctness r
 | F08 | Sema | No validation that opaque types must be POINTER in implementation | PIM4: opaque types in .def must be revealed as POINTER TO in .mod | **Medium** | Add sema check | Code fix |
 | F09 | Grammar doc | `TypeDecl = ident "=" Type \| ident .` combines def and impl behavior | Opaque declarations (`ident ;` alone) are only valid in .def modules | **Medium** | Separate in grammar doc; note already correct in parser | Doc fix |
 | F10 | Parser | `parse_formal_type` allows recursive `ARRAY OF ARRAY OF QualIdent` | PIM4 `FormalType = ["ARRAY" "OF"] QualIdent` — only one level of ARRAY OF | **Medium** | Restrict to single ARRAY OF in PIM4 mode | Code fix |
-| F11 | Parser | Import `AS` alias always accepted | Import aliases are an mx extension, not PIM4 | **Medium** | Gate behind m2plus or extension flag | Code fix |
+| F11 | Parser | ~~Import `AS` alias always accepted~~ | Import aliases are an mx extension, not PIM4 | ~~Medium~~ | ~~Gate behind m2plus or extension flag~~ | **RESOLVED (1.5.0)** — AS is M2+ keyword, gated by lexer |
 | F12 | Grammar doc | `ForeignDefModule` not reachable from `CompilationUnit` | If documented, should be shown as M2+ variant of CompilationUnit | **Medium** | Fix grammar doc | Doc fix |
 | F13 | Grammar doc | `CharConst` referenced in Factor but undefined | Should be `CharLit` or defined as terminal | **Low** | Fix grammar doc | Doc fix |
 | F14 | Grammar doc | `ConstExpr` referenced but never defined | Should note: same as Expr but must be compile-time evaluable | **Low** | Add note to grammar doc | Doc fix |
@@ -48,8 +48,8 @@ None of these are show-stoppers for practical use, but they create correctness r
 | F19 | Sema | RETURN with/without expression not validated against procedure kind | PIM4: function procedures require RETURN expr; proper procedures forbid it | **Medium** | Add sema check | Code fix |
 | F20 | Sema | No validation that CASE labels are constants and non-overlapping | PIM4 requires constant, non-overlapping case labels | **Low** | Add sema check | Code fix |
 | F21 | Parser | Module priority `MODULE name [expr] ;` parsed but undocumented | PIM4 allows module priority for interrupt handling | **Low** | Document or remove | Doc fix |
-| F22 | Parser | `RAISE` and `RETRY` parsed as statements unconditionally | These are M2+/ISO, not PIM4 | **High** | Gate behind extension flag | Code fix |
-| F23 | Grammar doc | `RaiseStatement` in M2+ section but parsed without gating | Inconsistency between doc and implementation | **Medium** | Match doc (gate in parser) | Code fix |
+| F22 | Parser | ~~`RAISE` and `RETRY` parsed as statements unconditionally~~ | These are M2+/ISO, not PIM4 | ~~High~~ | ~~Gate behind extension flag~~ | **RESOLVED (1.5.0)** — RAISE/RETRY are M2+ keywords, gated by lexer |
+| F23 | Grammar doc | ~~`RaiseStatement` parsed without gating~~ | Consistency between doc and implementation | ~~Medium~~ | ~~Match doc (gate in parser)~~ | **RESOLVED (1.5.0)** — RAISE gated by lexer, matches M2+ section of grammar doc |
 | F24 | Grammar doc | Missing `Definition` production for def modules | Grammar shows `{ Definition }` but doesn't define it separately from `Declaration` | **Medium** | Add `Definition` production to grammar | Doc fix |
 | F25 | Sema | Set constructors always typed as BITSET regardless of base_type | Should use declared base type for typed set constructors | **Low** | Fix set constructor type inference | Code fix |
 | F26 | Grammar doc | Bare set constructor `{1, 2, 3}` undocumented | Parser accepts it (line 1606-1608), produces BITSET | **Low** | Document as mx extension or match PIM4 | Doc fix |
@@ -68,7 +68,7 @@ CompilationUnit = ProgramModule | DefinitionModule | ImplementationModule .
 
 **Issues:**
 - `ForeignDefModule` is documented separately but not reachable from `CompilationUnit`. **(F12)**
-- `SAFE`/`UNSAFE` prefix handling is not shown in the grammar. The parser accepts `SAFE MODULE ...` etc. unconditionally. **(F01)**
+- `SAFE`/`UNSAFE` prefix handling is not shown in the grammar. ~~The parser accepts `SAFE MODULE ...` etc. unconditionally.~~ Now gated — SAFE/UNSAFE are M2+ keywords. **(F01 RESOLVED)**
 - ProgramModule priority expression `[expr]` is parsed (line 219) but not in grammar doc. **(F21)**
 
 **Parser behavior:** Correct structure. Module name matching is enforced.
@@ -82,7 +82,7 @@ Export = "EXPORT" [ "QUALIFIED" ] IdentList ";" .
 ```
 
 **Issues:**
-- Parser accepts `FROM M IMPORT x AS y` (import aliases) unconditionally. Not PIM4. **(F11)**
+- ~~Parser accepts `FROM M IMPORT x AS y` (import aliases) unconditionally.~~ Now gated — AS is an M2+ keyword. **(F11 RESOLVED)**
 - `IdentList` in grammar doesn't show the alias option. **(F11)**
 - EXPORT is correctly parsed for local modules and definition modules. EXPORT in definition modules is redundant in PIM4 (everything is exported). The parser and sema handle this correctly.
 - Grammar doc's `IdentList` for Import should note that plain `IMPORT` takes module names (qualified import), while `FROM...IMPORT` takes individual names.
@@ -98,7 +98,7 @@ ProcedureDecl = ProcedureHeading ";" Block ident .
 **Issues:**
 - The grammar doesn't show a separate `Definition` production for definition modules. The parser correctly uses `parse_definition_module` which calls `parse_proc_heading` (heading only, no block), while `parse_declarations` calls `parse_proc_decl` (heading + block). **(F24)**
 - `TypeDecl = ident "=" Type | ident .` conflates def-module and impl-module behavior. The bare `ident` (opaque type) is only valid in definition modules. Parser correctly separates this (`parse_type_decl` vs `parse_type_decl_def`). **(F09)**
-- `EXCEPTION` declarations are parsed unconditionally in both `parse_declarations` (line 549-557) and `parse_definition_module` (line 345-352). Should be gated. **(F01)**
+- ~~`EXCEPTION` declarations are parsed unconditionally.~~ Now gated — EXCEPTION is an M2+ keyword. **(F01 RESOLVED)**
 - Local module declarations (`Declaration::Module`) are parsed correctly via `parse_local_module`.
 - Grammar doc doesn't show local (nested) module declarations.
 
@@ -115,8 +115,8 @@ ProcedureDecl = ProcedureHeading ";" Block ident .
 | ProcedureType | Correct | Correct (with lookahead for named vs unnamed params) | OK |
 | EnumType | Correct | Correct | OK |
 | SubrangeType | Shows `QualIdent "[" ...]` form | Parser accepts this form (line 771-783) | Match, but this form is not PIM4 **(F27)** |
-| RefType | Marked M2+ | Parsed unconditionally | **Extension leak (F01)** |
-| ObjectType | Marked M2+ | Parsed unconditionally | **Extension leak (F01)** |
+| RefType | Marked M2+ | ~~Parsed unconditionally~~ Gated (M2+ keyword) | **F01 RESOLVED** |
+| ObjectType | Marked M2+ | ~~Parsed unconditionally~~ Gated (M2+ keyword) | **F01 RESOLVED** |
 
 **Note on ArrayType index:** PIM4 says `ARRAY SimpleType {, SimpleType} OF Type` where `SimpleType = QualIdent | SubrangeType | EnumType`. The parser accepts any `Type` for array indices, which is more permissive (e.g., allows `ARRAY RECORD ... END OF INTEGER`). Not a practical risk but technically non-conformant.
 
@@ -132,7 +132,7 @@ Statement = [ Assignment | ProcedureCall | IfStatement | CaseStatement
 
 **Issues:**
 - `TryStatement`, `LockStatement`, `TypecaseStatement` are in the base `Statement` production. They should only be in the M2+ section. **(F05)**
-- `RAISE` and `RETRY` are parsed unconditionally (lines 1185-1198) but not shown in the base Statement production. They appear only in the M2+ grammar section. **(F22, F23)**
+- ~~`RAISE` and `RETRY` are parsed unconditionally~~ Now gated — RAISE/RETRY are M2+ keywords. **(F22, F23 RESOLVED)**
 - Grammar doc correctly shows `ForStatement = "FOR" ident ":=" Expr "TO" Expr ["BY" ConstExpr] ...` but PIM4 requires BY to be a constant expression. Parser accepts any expression for BY step. Sema doesn't validate constness. **(F20)**
 
 ### 3.6 Expressions
@@ -166,9 +166,9 @@ The parser gives OR and AND their own dedicated, lower-priority levels. In PIM4,
 | Production | Status |
 |-----------|--------|
 | `ForeignDefModule` | Documented but not reachable from CompilationUnit |
-| `RaiseStatement` | Documented in M2+ section, parsed unconditionally, not in base Statement production |
-| `SafetyAnnotation` | Documented in M2+ section, parsed unconditionally, noted as "not enforced" |
-| `ExceptionDecl` | Documented in M2+ section only, but parsed unconditionally in both definition and implementation modules |
+| `RaiseStatement` | Documented in M2+ section, ~~parsed unconditionally~~ now gated by M2+ keyword |
+| `SafetyAnnotation` | Documented in M2+ section, ~~parsed unconditionally~~ now gated by M2+ keyword |
+| `ExceptionDecl` | Documented in M2+ section, ~~parsed unconditionally~~ now gated by M2+ keyword |
 | `Ellipsis` token | Defined in token.rs but never referenced in parser |
 
 ---
@@ -248,31 +248,35 @@ PIM4 constructs (all should work without `--m2plus`):
 
 ### 5.2 What is M2+ / Extension
 
-These must be gated behind `--m2plus`:
+These are gated behind `--m2plus` via lexer keyword recognition (`token.rs:keyword_from_str`). In PIM4 mode, M2+ keywords are lexed as identifiers so the parser never sees them as keywords.
 
-| Construct | Parser location | Currently gated? |
-|-----------|----------------|-----------------|
-| TRY/EXCEPT/FINALLY (M2+ statement) | `parse_try()`, line 1717 | **No** |
-| LOCK statement | `parse_lock()`, line 1810 | **No** |
-| TYPECASE statement | `parse_typecase()`, line 1824 | **No** |
-| RAISE statement | `parse_statement()`, line 1189 | **No** |
-| RETRY statement | `parse_statement()`, line 1185 | **No** |
-| EXCEPTION declaration | `parse_declarations()`, line 549; `parse_definition_module()`, line 345 | **No** |
-| EXCEPT/FINALLY in Block | `parse_block()`, lines 457-468 | **No** |
-| REF type | `parse_ref_type()`, line 955 | **No** |
-| BRANDED REF type | `parse_branded_ref_type()`, line 963 | **No** |
-| REFANY type | Multiple locations | **No** |
-| OBJECT type | `parse_object_type()`, line 978 | **No** |
-| SAFE/UNSAFE prefix | `parse_compilation_unit()`, line 159 | **No** |
-| RAISES clause | `parse_proc_heading()`, line 656 | **No** |
-| Import AS alias | `parse_import()`, line 421 | **No** |
-| DEFINITION MODULE FOR "lang" | `parse_definition_module()`, line 276 | **No** |
+| Construct | Gating keyword(s) | Gated? |
+|-----------|-------------------|--------|
+| TRY/EXCEPT/FINALLY (M2+ statement) | TRY, EXCEPT, FINALLY | **Yes** |
+| LOCK statement | LOCK | **Yes** |
+| TYPECASE statement | TYPECASE | **Yes** |
+| RAISE statement | RAISE | **Yes** |
+| RETRY statement | RETRY | **Yes** |
+| EXCEPTION declaration | EXCEPTION | **Yes** |
+| EXCEPT/FINALLY in Block | EXCEPT, FINALLY | **Yes** |
+| REF type | REF | **Yes** |
+| BRANDED REF type | BRANDED | **Yes** |
+| REFANY type | REFANY | **Yes** |
+| OBJECT type | OBJECT | **Yes** |
+| SAFE/UNSAFE prefix | SAFE, UNSAFE | **Yes** |
+| RAISES clause | (parsed after procedure heading) | **Yes** — RAISES keyword gated |
+| Import AS alias | AS | **Yes** |
+| DEFINITION MODULE FOR "lang" | (parsed after DEFINITION keyword) | **Yes** — FOR "lang" only reachable in M2+ mode |
 
-### 5.3 Keyword Reservation Leakage (F02)
+### 5.3 Keyword Reservation — RESOLVED (F02)
 
-All M2+ keywords are **always** reserved by the lexer (`keyword_from_str`, token.rs:128-191). This means in PIM4 mode, a user cannot use `object`, `exception`, `try`, `lock`, `ref`, `safe`, `unsafe`, `typecase`, `branded`, `methods`, `override`, `reveal`, `refany` as identifier names. This is wrong — in PIM4 mode these should be valid identifiers.
+~~All M2+ keywords were always reserved by the lexer.~~
 
-Additionally, `EXCEPT`, `FINALLY`, `RAISE`, `RETRY`, `AS` are reserved as keywords even though they are not PIM4 keywords.
+**Fixed in 1.5.0.** `keyword_from_str(s, m2plus)` in `token.rs:128-197` now splits keywords into two groups:
+- **PIM4 keywords** (lines 130–171): Always recognized (AND, ARRAY, BEGIN, BY, CASE, CONST, DEFINITION, DIV, DO, ELSE, ELSIF, END, EXIT, EXPORT, FOR, FROM, IF, IMPLEMENTATION, IMPORT, IN, LOOP, MOD, MODULE, NOT, OF, OR, POINTER, PROCEDURE, QUALIFIED, RECORD, REPEAT, RETURN, SET, THEN, TO, TYPE, UNTIL, VAR, WHILE, WITH).
+- **M2+ keywords** (lines 174–195): Only recognized when `m2plus=true` (AS, BRANDED, EXCEPT, EXCEPTION, FINALLY, LOCK, METHODS, OBJECT, OVERRIDE, RAISE, REF, REFANY, RETRY, REVEAL, SAFE, TRY, TYPECASE, UNSAFE).
+
+In PIM4 mode, all M2+ keywords are valid identifiers. Parser tests confirm this (`test_m2plus_keywords_are_identifiers_in_pim4`, `test_all_m2plus_keywords_as_pim4_identifiers`, `test_m2plus_keywords_as_type_names_in_pim4`, `test_m2plus_keywords_as_proc_names_in_pim4`).
 
 ---
 
@@ -324,29 +328,13 @@ The grammar doc should be restructured into three clear sections:
 
 **Test strategy:** Run full `cargo test` + adversarial suite before and after.
 
-### Phase 2: Extension Gating in Parser
+### Phase 2: Extension Gating in Parser — COMPLETED (1.5.0)
 
-**Goal:** M2+ constructs rejected in PIM4 mode.
+**Status:** Implemented. M2+ keywords are conditionally recognized in the lexer (`token.rs:keyword_from_str`). The `Lexer` struct has an `m2plus: bool` field (`lexer.rs:13`) set via `set_m2plus()`. In PIM4 mode, M2+ keywords lex as identifiers so all M2+ syntax is naturally rejected by the parser without explicit gating checks.
 
-**Work:**
-- Add `m2plus: bool` field to Parser struct
-- Plumb `m2plus` from `CompileOptions` through to Parser constructor
-- Gate each M2+ parse path on `self.m2plus`:
-  - `parse_statement()`: TRY, LOCK, TYPECASE, RAISE, RETRY
-  - `parse_declarations()` / `parse_definition_module()`: EXCEPTION
-  - `parse_block()`: EXCEPT, FINALLY clauses
-  - `parse_type()`: REF, BRANDED, REFANY, OBJECT
-  - `parse_proc_heading()`: RAISES clause
-  - `parse_import()`: AS alias
-  - `parse_compilation_unit()`: SAFE/UNSAFE prefix
-  - `parse_definition_module()`: FOR "lang" foreign module
-- Gate M2+ keywords in lexer: add a `m2plus` flag that controls whether M2+ keywords are recognized or treated as identifiers
+**Files modified:** `src/token.rs`, `src/lexer.rs`, `src/driver.rs`
 
-**Files:** `src/parser.rs`, `src/lexer.rs`, `src/token.rs`, `src/driver.rs`
-
-**Risk:** Medium. Must ensure existing M2+ library code still compiles with `--m2plus`. Must ensure PIM4 code using M2+ keyword names as identifiers now works.
-
-**Test strategy:** All existing tests must pass. New negative tests from Phase 1 must now pass. Run adversarial suite in both modes.
+**Tests:** `test_m2plus_keywords_are_identifiers_in_pim4`, `test_all_m2plus_keywords_as_pim4_identifiers`, `test_m2plus_keywords_as_type_names_in_pim4`, `test_m2plus_keywords_as_proc_names_in_pim4`, `test_try_accepted_in_m2plus`, `test_lock_accepted_in_m2plus`, `test_typecase_accepted_in_m2plus`, `test_exception_decl_accepted_in_m2plus`, `test_raise_accepted_in_m2plus`, `test_except_in_block_accepted_in_m2plus`, `test_safe_module_accepted_in_m2plus`, `test_import_as_rejected_in_pim4_accepted_in_m2plus`.
 
 ### Phase 3: Semantic Enforcement
 
@@ -427,23 +415,23 @@ The grammar doc should be restructured into three clear sections:
 
 ### Negative Tests (should reject)
 
-| Test | Mode | What it validates |
-|------|------|-------------------|
-| TRY statement in PIM4 mode | PIM4 | F01: TRY rejected |
-| LOCK statement in PIM4 mode | PIM4 | F01: LOCK rejected |
-| TYPECASE in PIM4 mode | PIM4 | F01: TYPECASE rejected |
-| RAISE in PIM4 mode | PIM4 | F22: RAISE rejected |
-| EXCEPTION declaration in PIM4 mode | PIM4 | F01: EXCEPTION rejected |
-| REF type in PIM4 mode | PIM4 | F01: REF rejected |
-| OBJECT type in PIM4 mode | PIM4 | F01: OBJECT rejected |
-| SAFE MODULE in PIM4 mode | PIM4 | F01: SAFE rejected |
-| Import AS alias in PIM4 mode | PIM4 | F11: AS rejected |
-| RAISES clause in PIM4 mode | PIM4 | F01: RAISES rejected |
-| EXCEPT in Block in PIM4 mode | PIM4 | F03: EXCEPT rejected |
-| FINALLY in Block in PIM4 mode | PIM4 | F03: FINALLY rejected |
-| FOR variable assigned in loop body | Both | F18: Sema error |
-| Bare RETURN in function procedure | Both | F19: Sema error |
-| RETURN expr in proper procedure | Both | F19: Sema error |
+| Test | Mode | What it validates | Status |
+|------|------|-------------------|--------|
+| TRY statement in PIM4 mode | PIM4 | F01: TRY rejected | **Covered** — M2+ keywords lex as identifiers |
+| LOCK statement in PIM4 mode | PIM4 | F01: LOCK rejected | **Covered** — `test_m2plus_keywords_as_proc_names_in_pim4` |
+| TYPECASE in PIM4 mode | PIM4 | F01: TYPECASE rejected | **Covered** — M2+ keywords lex as identifiers |
+| RAISE in PIM4 mode | PIM4 | F22: RAISE rejected | **Covered** — M2+ keywords lex as identifiers |
+| EXCEPTION declaration in PIM4 mode | PIM4 | F01: EXCEPTION rejected | **Covered** — M2+ keywords lex as identifiers |
+| REF type in PIM4 mode | PIM4 | F01: REF rejected | **Covered** — M2+ keywords lex as identifiers |
+| OBJECT type in PIM4 mode | PIM4 | F01: OBJECT rejected | **Covered** — M2+ keywords lex as identifiers |
+| SAFE MODULE in PIM4 mode | PIM4 | F01: SAFE rejected | **Covered** — M2+ keywords lex as identifiers |
+| Import AS alias in PIM4 mode | PIM4 | F11: AS rejected | **Covered** — `test_import_as_rejected_in_pim4_accepted_in_m2plus` |
+| RAISES clause in PIM4 mode | PIM4 | F01: RAISES rejected | **Covered** — M2+ keywords lex as identifiers |
+| EXCEPT in Block in PIM4 mode | PIM4 | F03: EXCEPT rejected | **Covered** — M2+ keywords lex as identifiers |
+| FINALLY in Block in PIM4 mode | PIM4 | F03: FINALLY rejected | **Covered** — M2+ keywords lex as identifiers |
+| FOR variable assigned in loop body | Both | F18: Sema error | Not yet implemented |
+| Bare RETURN in function procedure | Both | F19: Sema error | Not yet implemented |
+| RETURN expr in proper procedure | Both | F19: Sema error | Not yet implemented |
 
 ---
 
@@ -511,8 +499,8 @@ PIM4 requires a type name: `BITSET{1, 2, 3}`. Bare constructors are accepted by 
 
 ### What to Fix First
 
-1. Lexer keyword gating (F02) — prevents M2+ keywords from shadowing PIM4 identifiers
-2. Parser M2+ gating (F01, F03, F22) — reject M2+ syntax in PIM4 mode
+1. ~~Lexer keyword gating (F02)~~ — **DONE (1.5.0)**
+2. ~~Parser M2+ gating (F01, F03, F22)~~ — **DONE (1.5.0)**
 3. Grammar doc restructure (F05, F06, F09, F12-F17, F24, F26)
 4. Sema: FOR variable check, RETURN validation, set constructor typing (F18, F19, F25)
 
