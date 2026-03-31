@@ -102,10 +102,16 @@ impl LLVMCodeGen {
                     return Val { name: addr.name, ty: "ptr".into(), type_id: addr.type_id };
                 }
 
-                // Load the value
+                // Load the value — use type_id when available, but fall back
+                // to addr.ty for CFG-generated locals where type_id may not resolve
                 let load_ty = if let Some(tid) = addr.type_id {
                     let s = self.tl_type_str(tid);
-                    if s == "void" { addr.ty.clone() } else { s }
+                    if s == "void" || s == "i32" && addr.ty == "i8" {
+                        // type_id didn't resolve properly — trust the alloca type
+                        addr.ty.clone()
+                    } else {
+                        s
+                    }
                 } else {
                     addr.ty.clone()
                 };

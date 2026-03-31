@@ -382,6 +382,12 @@ pub struct HirModule {
     pub except_handler: Option<Vec<HirStmt>>,
     /// ISO module-level FINALLY handler (rare).
     pub finally_handler: Option<Vec<HirStmt>>,
+    /// Pre-built CFG for module init body (populated by driver).
+    pub init_cfg: Option<crate::cfg::Cfg>,
+    /// Pre-built CFGs for local module init bodies.
+    pub local_module_cfgs: Vec<(String, crate::cfg::Cfg)>,
+    /// Pre-built CFG for module finally handler (emitted as separate function).
+    pub finally_cfg: Option<crate::cfg::Cfg>,
 
     // ── Embedded modules ────────────────────────────────────────
     /// Per-embedded-module structural declarations.
@@ -487,6 +493,8 @@ pub struct HirProcDecl {
     pub nested_procs: Vec<HirProcDecl>,
     pub closure_captures: Vec<CapturedVar>,
     pub except_handler: Option<Vec<HirStmt>>,
+    /// Pre-built CFG for this procedure's body (populated by driver).
+    pub cfg: Option<crate::cfg::Cfg>,
     pub loc: crate::errors::SourceLoc,
 }
 
@@ -553,6 +561,8 @@ pub struct HirEmbeddedModule {
     pub exception_decls: Vec<HirExceptionDecl>,
     pub procedures: Vec<HirProcDecl>,
     pub init_body: Option<Vec<HirStmt>>,
+    /// Pre-built CFG for embedded module init body.
+    pub init_cfg: Option<crate::cfg::Cfg>,
 }
 
 // ── Legacy types (backward compat during migration) ─────────────────

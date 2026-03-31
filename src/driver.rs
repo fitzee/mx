@@ -973,7 +973,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
     // ── Phase 4: HIR construction ──────────────────────────────────
     // Build complete HirModule from AST + sema (read-only).
-    let hir_module = crate::hir_build::build_module(&unit, &all_impl_mods, &sema);
+    let mut hir_module = crate::hir_build::build_module(&unit, &all_impl_mods, &sema);
     if opts.verbose {
         eprintln!("{}: HIR: {} procs ({} sigs), {} types, {} consts, {} globals, {} exceptions, {} embedded, {} init stmts",
             identity::COMPILER_NAME,
@@ -985,6 +985,84 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             hir_module.exception_decls.len(),
             hir_module.embedded_modules.len(),
             hir_module.init_body.as_ref().map_or(0, |b| b.len()));
+    }
+
+    // ── Phase 4b: Build CFGs for all bodies ────────────────────────
+    {
+        use crate::cfg;
+        use crate::hir::{HirExceptClause, HirStmt, HirStmtKind};
+
+        /// Build a CFG from body statements, optionally wrapping in a synthetic
+        /// TRY if the body has an except handler and/or finally handler.
+        fn build_body_cfg(
+            body: &[HirStmt],
+            except: Option<&[HirStmt]>,
+            finally: Option<&[HirStmt]>,
+        ) -> cfg::Cfg {
+            if except.is_some() || finally.is_some() {
+                // Wrap in synthetic TRY
+                let excepts = match except {
+                    Some(stmts) => vec![HirExceptClause {
+                        exception: None,
+                        var: None,
+                        body: stmts.to_vec(),
+                    }],
+                    None => Vec::new(),
+                };
+                let finally_body = finally.map(|s| s.to_vec());
+                let wrapper = HirStmt {
+                    kind: HirStmtKind::Try {
+                        body: body.to_vec(),
+                        excepts,
+                        finally_body,
+                    },
+                    loc: crate::errors::SourceLoc::new("<cfg>", 0, 0),
+                };
+                cfg::build_cfg(&[wrapper])
+            } else {
+                cfg::build_cfg(body)
+            }
+        }
+
+        /// Recursively build CFGs for all procs (including nested).
+        fn build_proc_cfgs(procs: &mut [crate::hir::HirProcDecl]) {
+            for pd in procs.iter_mut() {
+                if let Some(ref body) = pd.body {
+                    let except = pd.except_handler.as_deref();
+                    pd.cfg = Some(build_body_cfg(body, except, None));
+                }
+                build_proc_cfgs(&mut pd.nested_procs);
+            }
+        }
+
+        // Build CFGs for all procedures
+        build_proc_cfgs(&mut hir_module.proc_decls);
+
+        // Build CFGs for embedded module procedures and init bodies
+        for emb in &mut hir_module.embedded_modules {
+            build_proc_cfgs(&mut emb.procedures);
+            if let Some(ref init) = emb.init_body {
+                emb.init_cfg = Some(cfg::build_cfg(init));
+            }
+        }
+
+        // Build CFG for module init body (with except/finally wrapping)
+        // Build CFG for module init body with except and finally folded in.
+        if let Some(ref init) = hir_module.init_body {
+            let except = hir_module.except_handler.as_deref();
+            let finally = hir_module.finally_handler.as_deref();
+            hir_module.init_cfg = Some(build_body_cfg(init, except, finally));
+        }
+
+        // Build CFGs for local module init bodies
+        hir_module.local_module_cfgs = hir_module.local_module_inits.iter()
+            .map(|(name, stmts)| (name.clone(), cfg::build_cfg(stmts)))
+            .collect();
+
+        // Build CFG for finally handler (emitted as separate function in C backend)
+        if let Some(ref finally) = hir_module.finally_handler {
+            hir_module.finally_cfg = Some(cfg::build_cfg(finally));
+        }
     }
 
     // ── CFG emission (--cfg) ─────────────────────────────────────────
@@ -1164,8 +1242,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             // Debug mode: two-step compile+link so .o stays for DWARF
             let obj_file = ll_file.with_extension("o");
 
-            // Step 1: compile .ll → .o
-            let mut compile_cmd = Command::new("clang");
+            // Step 1: compile .ll → .o (use opts.cc so both backends use the same compiler)
+            let mut compile_cmd = Command::new(&opts.cc);
             compile_cmd.arg("-c").arg("-o").arg(&obj_file)
                 .arg(&ll_file)
                 .args(["-g", "-O0"])
@@ -1184,7 +1262,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
             // Step 2: compile runtime .c → .o
             let rt_obj = runtime_c.with_extension("o");
-            let mut rt_cmd = Command::new("clang");
+            let mut rt_cmd = Command::new(&opts.cc);
             rt_cmd.arg("-c").arg("-o").arg(&rt_obj)
                 .arg(&runtime_c)
                 .args(["-g", "-O0"])
@@ -1199,7 +1277,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             }
 
             // Step 3: link .o files → executable
-            let mut link_cmd = Command::new("clang");
+            let mut link_cmd = Command::new(&opts.cc);
             link_cmd.arg("-o").arg(&exe_file)
                 .arg(&obj_file)
                 .arg(&rt_obj);
@@ -1239,7 +1317,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             let _ = fs::remove_file(&rt_obj);
         } else {
             // Release mode: single-step compile+link
-            let mut cmd = Command::new("clang");
+            let mut cmd = Command::new(&opts.cc);
             cmd.arg("-o").arg(&exe_file)
                 .arg(&ll_file)
                 .arg(&runtime_c);

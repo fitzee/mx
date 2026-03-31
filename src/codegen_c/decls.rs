@@ -567,6 +567,39 @@ impl CodeGen {
         })
     }
 
+    /// Find the pre-built CFG for a procedure (searches at any nesting depth).
+    fn find_nested_proc_cfg(&self, proc_name: &str, parent_name: Option<&str>) -> Option<crate::cfg::Cfg> {
+        self.prebuilt_hir.as_ref().and_then(|hir| {
+            fn search_cfg(procs: &[crate::hir::HirProcDecl], name: &str) -> Option<crate::cfg::Cfg> {
+                for pd in procs {
+                    if pd.sig.name == name { return pd.cfg.clone(); }
+                    if let Some(cfg) = search_cfg(&pd.nested_procs, name) { return Some(cfg); }
+                }
+                None
+            }
+            let mod_name = &self.module_name;
+            hir.proc_decls.iter()
+                .find(|pd| pd.sig.name == proc_name && pd.sig.module == *mod_name)
+                .and_then(|pd| pd.cfg.clone())
+                .or_else(|| if let Some(parent) = parent_name {
+                    hir.proc_decls.iter()
+                        .find(|pd| pd.sig.name == parent)
+                        .and_then(|pd| search_cfg(&pd.nested_procs, proc_name))
+                } else { None })
+                .or_else(|| hir.proc_decls.iter()
+                    .flat_map(|pd| search_cfg(&pd.nested_procs, proc_name))
+                    .next())
+                .or_else(|| hir.embedded_modules.iter()
+                    .find(|e| e.name == *mod_name)
+                    .and_then(|e| e.procedures.iter()
+                        .find(|pd| pd.sig.name == proc_name)
+                        .and_then(|pd| pd.cfg.clone())
+                        .or_else(|| e.procedures.iter()
+                            .flat_map(|pd| search_cfg(&pd.nested_procs, proc_name))
+                            .next())))
+        })
+    }
+
     pub(crate) fn gen_proc_by_name(&mut self, proc_name: &str) {
         let current_module = self.module_name.clone();
         let early_sig = self.find_nested_proc_sig(proc_name, &current_module);
@@ -973,55 +1006,23 @@ impl CodeGen {
         self.child_env_type_stack.push(if has_any_captures { Some(env_type_name.clone()) } else { None });
         self.child_captures_stack.push(child_capture_info);
 
-        // Body from HIR — search at any nesting depth
+        // Body from CFG — search at any nesting depth
         let parent_proc_name = if self.parent_proc_stack.len() >= 2 {
             let parent = &self.parent_proc_stack[self.parent_proc_stack.len() - 2];
             Some(parent.rsplit('_').next().unwrap_or(parent).to_string())
         } else {
             None
         };
-        let prebuilt_body = self.find_nested_proc_body(proc_name, parent_proc_name.as_deref());
-        // Check for procedure-level EXCEPT handler
-        let except_body = self.prebuilt_hir.as_ref().and_then(|hir| {
-            let mod_name = self.module_name.clone();
-            // Search proc_decls for the except handler
-            hir.proc_decls.iter()
-                .find(|pd| pd.sig.name == proc_name && pd.sig.module == mod_name)
-                .and_then(|pd| pd.except_handler.clone())
-                .or_else(|| hir.proc_decls.iter()
-                    .flat_map(|pd| pd.nested_procs.iter())
-                    .find(|np| np.sig.name == proc_name && np.sig.module == mod_name)
-                    .and_then(|np| np.except_handler.clone()))
-                .or_else(|| hir.embedded_modules.iter()
-                    .find(|e| e.name == mod_name)
-                    .and_then(|e| e.procedures.iter()
-                        .find(|pd| pd.sig.name == proc_name)
-                        .and_then(|pd| pd.except_handler.clone())))
-        });
-
-        if let Some(ref except_stmts) = except_body {
-            // Procedure-level EXCEPT: wrap body in M2_TRY/M2_CATCH
-            self.emitln("m2_ExcFrame _ef;");
-            self.emitln("M2_TRY(_ef) {");
-            self.indent += 1;
-            if let Some(body) = prebuilt_body {
-                for stmt in &body {
-                    self.emit_hir_stmt(stmt);
-                }
-            }
-            self.emitln("M2_ENDTRY(_ef);");
-            self.indent -= 1;
-            self.emitln("} M2_CATCH {");
-            self.indent += 1;
-            self.emitln("M2_ENDTRY(_ef);");
-            for stmt in except_stmts {
-                self.emit_hir_stmt(stmt);
-            }
-            self.indent -= 1;
-            self.emitln("}");
-        } else if let Some(body) = prebuilt_body {
-            for stmt in &body {
-                self.emit_hir_stmt(stmt);
+        // Proc-level EXCEPT is already folded into the CFG via synthetic TRY
+        if let Some(cfg) = self.find_nested_proc_cfg(proc_name, parent_proc_name.as_deref()) {
+            // For non-void functions, Return(None) should emit "return 0;" (or typed zero)
+            let current_mod = self.module_name.clone();
+            let sig = self.find_nested_proc_sig(proc_name, &current_mod);
+            let is_void = sig.map_or(true, |s| s.return_type.is_none());
+            if is_void {
+                self.emit_cfg_body(&cfg);
+            } else {
+                self.emit_cfg_body_with_return(&cfg, "0");
             }
         }
 

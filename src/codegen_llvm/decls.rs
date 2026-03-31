@@ -514,59 +514,10 @@ impl LLVMCodeGen {
             nested_procs.push(nested.clone());
         }
 
-        // Body with EXCEPT support
-        let has_proc_except = proc.except_handler.is_some();
-        if has_proc_except {
-            self.declare_exc_runtime();
-            let frame = self.next_tmp();
-            self.emitln(&format!("  {} = alloca [256 x i8]", frame));
-            self.emitln(&format!("  call void @m2_exc_push(ptr {})", frame));
-            let sjret = self.next_tmp();
-            self.emitln(&format!("  {} = call i32 @setjmp(ptr {})", sjret, frame));
-            let caught = self.next_tmp();
-            self.emitln(&format!("  {} = icmp ne i32 {}, 0", caught, sjret));
-            let body_label = self.next_label("proc.body");
-            let except_label = self.next_label("proc.except");
-            self.emitln(&format!("  br i1 {}, label %{}, label %{}",
-                caught, except_label, body_label));
-
-            self.emitln(&format!("{}:", body_label));
-            self.in_sjlj_context = true;
-            if let Some(ref body) = proc.body {
-                self.gen_hir_statements(body);
-            }
-            self.in_sjlj_context = false;
-            self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
-            if let Some(ref sf) = self.stack_frame_alloca.clone() {
-                self.emitln(&format!("  call void @m2_stack_pop(ptr {})", sf));
-            }
-            if ret_ty == "void" {
-                self.emitln("  ret void");
-            } else {
-                let zero = self.llvm_zero_initializer(&ret_ty);
-                self.emitln(&format!("  ret {} {}", ret_ty, zero));
-            }
-
-            self.emitln(&format!("{}:", except_label));
-            self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
-            if let Some(ref except_stmts) = proc.except_handler {
-                self.gen_hir_statements(except_stmts);
-            }
-        } else {
-            if let Some(ref body) = proc.body {
-                self.gen_hir_statements(body);
-            }
-        }
-
-        // Pop stack frame and return
-        if let Some(ref frame) = self.stack_frame_alloca.clone() {
-            self.emitln(&format!("  call void @m2_stack_pop(ptr {})", frame));
-        }
-        if ret_ty == "void" {
-            self.emitln("  ret void");
-        } else {
-            let zero = self.llvm_zero_initializer(&ret_ty);
-            self.emitln(&format!("  ret {} {}", ret_ty, zero));
+        // Body from CFG — proc-level EXCEPT already folded into CFG via synthetic TRY
+        let is_void = ret_ty == "void";
+        if let Some(ref cfg) = proc.cfg {
+            self.emit_cfg_body(cfg, is_void);
         }
 
         self.stack_frame_alloca = None;

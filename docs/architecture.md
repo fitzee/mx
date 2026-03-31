@@ -10,17 +10,18 @@ Source (.mod/.def)
   -> Lexer (src/lexer.rs)         tokenize into TokenKind stream
   -> Parser (src/parser.rs)       recursive-descent -> AST
   -> Sema (src/sema.rs)           type checking, scope resolution, symbol table
-  -> HIR (src/hir_build.rs)       build_module: prebuilt HirModule with structural
+  -> HIR (src/hir_build/)         build_module: prebuilt HirModule with structural
                                   decls, lowered statements, procedure bodies
+  -> CFG (src/cfg/)               build_cfg: control flow graph from HIR bodies
   -> CodeGen:
-       C backend (src/codegen_c/)       HirModule -> C source string
-       LLVM backend (src/codegen_llvm/) HirModule -> LLVM IR text (.ll)
+       C backend (src/codegen_c/)       CFG blocks -> C source (goto-based)
+       LLVM backend (src/codegen_llvm/) CFG blocks -> LLVM IR basic blocks
   -> Driver (src/driver.rs)       invoke cc/clang, link
 ```
 
 The compiler has two backends selected at compile time:
 
-- **C backend** (default): emits C source with `#line` directives for debugging. Invokes the system C compiler.
+- **C backend** (default): emits goto-based C source with `#line` directives for debugging. Invokes the system C compiler.
 - **LLVM backend** (`--llvm`): emits LLVM IR text (`.ll`), compiled by clang. Produces native DWARF debug info, LLVM-native exception handling, and RTTI for TYPECASE/REF/OBJECT types.
 
 ### Lexer
@@ -54,7 +55,7 @@ The symbol table (`src/symtab.rs`) uses a scope stack (`Vec<usize>`) for nested 
 
 ### HIR (High-level IR)
 
-`src/hir.rs` defines a typed intermediate representation for designators, expressions, statements, and module structure. `src/hir_build.rs` provides `HirBuilder` for statement/expression lowering and `build_module()` for constructing a complete `HirModule` as a prebuilt compilation phase.
+`src/hir.rs` defines a typed intermediate representation for designators, expressions, statements, and module structure. `src/hir_build/` provides `HirBuilder` for statement/expression lowering and `build_module()` for constructing a complete `HirModule` as a prebuilt compilation phase.
 
 **Prebuilt HIR** (`build_module`): Runs after sema, before backend codegen. Constructs an `HirModule` containing:
 - Structural declarations: type_decls, const_decls, global_decls, exception_decls, proc_decls
@@ -77,17 +78,57 @@ Key statement/expression lowering responsibilities:
 - **TYPECASE binding**: Registers branch variables with the correct REF type before lowering the body.
 - **Scope-aware lookup**: Uses `current_scope` from sema, with `var_types_owned` checked before context-provided var_types (so dynamically registered variables like TYPECASE bindings are visible).
 
+### Control Flow Graph (CFG)
+
+`src/cfg/` constructs a verified control flow graph from HIR statement bodies. The CFG is the **single source of truth for control flow** in both backends — no structured IF/WHILE/CASE/LOOP constructs survive past this stage.
+
+**Construction**: `build_cfg(body: &[HirStmt]) -> Cfg` lowers all HIR control flow statements into basic blocks with terminators. The driver calls this for every procedure body, module init body, embedded module init, and local module init after HIR construction (Phase 4b).
+
+**Data model**:
+- `BasicBlock`: sequential statements (`Vec<HirStmt>` — only Assign/ProcCall/Empty) + one `Terminator`
+- `Terminator`: `Goto(BlockId)`, `Branch { cond, on_true, on_false }`, `Switch { expr, arms, default }`, `Return(Option<HirExpr>)`, `Raise(Option<HirExpr>)`
+- `SwitchArm`: labels (`Vec<CaseLabel>`) + target block. `CaseLabel` is `Single(expr)`, `Range(lo, hi)`, or `Type(SymbolId, Option<binding_var>)`
+- `handler: Option<BlockId>` per block — exception handler region annotation for TRY/EXCEPT
+
+**Lowering**:
+- IF/ELSIF/ELSE → Branch chains with merge block
+- WHILE → Branch + Goto back-edge
+- REPEAT → Goto body + Branch back-edge (condition reversed)
+- FOR → init assign + cond Branch + body + latch (Add step) + Goto back
+- LOOP/EXIT → Goto body + Goto back / Goto exit block
+- CASE → Switch terminator with Single/Range labels
+- TYPECASE → Switch terminator with Type labels + binding variable assignment
+- TRY/EXCEPT/FINALLY → handler-annotated body blocks + catch dispatch (Branch chain) + finally blocks + Raise(None) for reraise
+- LOCK → desugared to ProcCall(Lock) + body + ProcCall(Unlock)
+- AND/OR → short-circuit Branch chains (real control flow, not eager evaluation)
+
+**Proc-level EXCEPT**: The driver wraps procedure bodies that have `except_handler` in a synthetic `HirStmtKind::Try` before building the CFG, so exception dispatch is part of the CFG rather than a backend concern.
+
+**Module-level FINALLY**: Folded into the module init body CFG via synthetic TRY wrapping. Both backends execute finally inline (no atexit).
+
+**Invariants** (verified by `Cfg::verify()`):
+- Entry block is always block 0
+- All block IDs are sequential
+- Every block has exactly one terminator
+- All terminator targets are valid block IDs
+- Handler targets are valid block IDs
+
+**Post-construction passes**:
+- `compute_preds()` — materializes predecessor lists from terminators
+- `cleanup()` — `remove_unreachable()` (BFS from entry + handler roots) + `collapse_trivial_gotos()` (merge single-predecessor blocks)
+
 ### Code generation — C backend
 
-`src/codegen_c/` emits C code from HIR, split across 9 modules:
+`src/codegen_c/` emits C code from CFG and HIR, split across 10 modules:
 
 | File | Purpose |
 |------|---------|
 | `mod.rs` | Core struct, state management, output buffer |
+| `cfg_emit.rs` | CFG-driven body emission: block labels, terminators, SJLJ handler regions |
 | `modules.rs` | Module-level codegen, imports, embedded impl modules |
 | `decls.rs` | Procedure and variable declarations |
 | `stmts.rs` | Statement dispatch (all statements route through HIR) |
-| `hir_emit.rs` | HIR → C emission for all statements and expressions |
+| `hir_emit.rs` | HIR → C emission for statements (Assign/ProcCall only) and expressions |
 | `exprs.rs` | Legacy AST expression helpers (escape functions, etc.) |
 | `designators.rs` | HIR Place → C designator strings, name mangling |
 | `types.rs` | TypeNode → C type strings, type name resolution |
@@ -102,7 +143,8 @@ Key design decisions:
 - **Record types**: Emitted as `struct` with `typedef struct X X;` forward declarations.
 - **Open arrays**: Passed as pointer + high-bound pair.
 - **VAR parameters**: Passed as pointers.
-- **Exception handling**: setjmp/longjmp for both ISO EXCEPT and m2plus TRY/EXCEPT.
+- **CFG-driven control flow**: All control flow (IF/WHILE/FOR/CASE/etc.) is emitted from CFG terminators as `goto L<n>;`, `if (cond) goto L<t>; else goto L<f>;`, and `return`. No structured C control flow constructs are generated.
+- **Exception handling**: setjmp/longjmp via raw `m2_ExcFrame` fields. Handler regions are detected from CFG `block.handler` annotations. The backend sets up setjmp at handler region entry and pops the frame at region exit. Exception dispatch uses `frame.exception_id == M2_EXC_Name` comparisons.
 
 ### Code generation — LLVM backend
 
@@ -111,9 +153,10 @@ Key design decisions:
 | File | Purpose |
 |------|---------|
 | `mod.rs` | Core struct, Val representation, semantic type queries, registration APIs |
+| `cfg_emit.rs` | CFG-driven body emission: LLVM basic blocks, terminators, SJLJ handler regions |
 | `modules.rs` | Module-level codegen: `gen_program_module`, `gen_implementation_module`, `gen_embedded_impl_module_by_name`, topo sort, import maps — all HIR-driven |
 | `decls.rs` | HIR-based declaration emission: `gen_hir_type_decls_from`, `gen_hir_var_decls_global_from`, `gen_hir_const_decls_from`, `gen_hir_exception_decls_from`, `gen_hir_proc_decl` |
-| `stmts.rs` | HIR statement emission, M2+ exception handling (setjmp/longjmp), TRY/EXCEPT/FINALLY |
+| `stmts.rs` | HIR statement emission (Assign/ProcCall only), builtin procedure expansion |
 | `exprs.rs` | HIR expression emission, function calls, short-circuit AND/OR, COMPLEX builtins (CMPLX/RE/IM), NEW/DISPOSE |
 | `designators.rs` | HIR Place → LLVM IR address/load, variant field offset computation, named array param handling |
 | `types.rs` | TypeId resolution, LLVM type strings, float coercion, type_lowering delegation |
@@ -129,10 +172,11 @@ Key design decisions:
 - **Sema-driven types**: All semantic questions (is this a pointer? what are the record fields?) are answered from the sema TypeRegistry, not LLVM type strings.
 - **Zero AST dependencies**: All codegen reads from prebuilt HIR (`HirModule`, `HirProcDecl`, `HirEmbeddedModule`). The only AST import (`use crate::ast::*`) is for shared types (`BinaryOp`, `UnaryOp`, `ExprKind`) used by HIR expressions, plus `CompilationUnit` for entry-point dispatch.
 - **Closure captures**: `HirProcDecl.closure_captures` is populated by hir_build with transitive propagation — grandchild captures are forwarded through parent env structs. The LLVM backend promotes captured variables to globals.
-- **Short-circuit evaluation**: AND/OR emit conditional branches + phi nodes instead of eager LLVM `and`/`or` instructions.
+- **CFG-driven control flow**: All control flow is emitted from CFG terminators as `br label %B<n>`, `br i1 %cond, label %B<t>, label %B<f>`, and `ret`. Each CFG block maps to an LLVM basic block. No structured control flow reconstruction occurs.
+- **Short-circuit evaluation**: AND/OR are lowered to Branch chains in the CFG (real control flow, not eager LLVM `and`/`or` instructions).
 - **Floored DIV/MOD**: Calls `m2_div`/`m2_mod` runtime helpers for signed integer division (PIM4 requires floored, not truncated).
 - **COMPLEX arithmetic**: Delegates to `m2_complex_add`/`sub`/`mul`/`div`/`neg`/`eq` runtime helpers. CMPLX/RE/IM builtins use LLVM `insertvalue`/`extractvalue`.
-- **M2+ exception handling**: setjmp/longjmp-based `m2_ExcFrame` stack for TRY/EXCEPT/FINALLY, with callable runtime functions (`m2_exc_push`, `m2_exc_pop`, `m2_exc_get_id`, `m2_exc_reraise`). FINALLY handlers run on both normal and exception paths. ISO procedure-level EXCEPT uses M2_TRY/M2_CATCH macros (C) or SjLj (LLVM).
+- **M2+ exception handling**: setjmp/longjmp-based `m2_ExcFrame` stack. The CFG annotates blocks with `handler: Option<BlockId>` for exception regions; the backend emits SJLJ frame setup/teardown inline based on handler transitions. TRY/EXCEPT/FINALLY and procedure-level EXCEPT are all lowered in the CFG; the backend handles only the SJLJ mechanism.
 - **RTTI**: `M2_TypeDesc` globals for REF/OBJECT types, `M2_RefHeader` prepended to allocations, `M2_ISA` for TYPECASE runtime type checking.
 - **DWARF debug info**: `DW_LANG_C99` (for lldb compatibility), `#dbg_declare` records (LLVM 19+ format), full DILocalVariable/DIGlobalVariable metadata.
 
@@ -170,12 +214,13 @@ The driver uses `target.is_darwin()` instead of `cfg!(target_os)` for linker fla
 
 ### Driver
 
-`driver::compile()` orchestrates the full pipeline in four phases:
+`driver::compile()` orchestrates the full pipeline in five phases:
 
 1. **Phase 1 — Parse `.def` files**: Starting from the main module's imports, transitively discover and parse all `.def` files into a `parsed_defs` map.
 2. **Phase 2 — Topological sort and register `.def` files**: Topologically sort the parsed `.def` files by their import dependencies, then register each with sema in order. Pre-registers type names first (as opaques) so cross-module type references resolve during full registration.
 3. **Phase 3 — Load `.mod` files**: For each implementation module, find and parse its `.mod` file. Recursively discover and register any `.def` files referenced by the `.mod` that weren't found in Phase 1 (ensures transitive dependencies like `URI.def` for `HTTPClient.mod` are registered in correct order before the module that needs them). Register implementation module types with sema.
-4. **Phase 4 — Analyze, build HIR, and codegen**: Run sema on the main compilation unit. Build prebuilt `HirModule` via `build_module()` (structural declarations, lowered statements, procedure bodies, embedded modules). Pass the `HirModule` to the selected backend (C or LLVM) which iterates structural declarations from HIR. Write `.c` or `.ll`, invoke the system compiler, link.
+4. **Phase 4 — Analyze, build HIR, build CFGs**: Run sema on the main compilation unit. Build prebuilt `HirModule` via `build_module()`. Then build CFGs for all bodies: procedure bodies (with proc-level EXCEPT folded into synthetic TRY), module init body (with EXCEPT/FINALLY folded in), embedded module inits, and local module inits. CFGs are stored on `HirProcDecl.cfg`, `HirModule.init_cfg`, and `HirEmbeddedModule.init_cfg`.
+5. **Phase 5 — Backend emission**: Pass the `HirModule` (with pre-built CFGs) to the selected backend. Both backends iterate structural declarations from HIR for types/consts/globals/protos, then emit procedure and init bodies by walking CFG blocks — emitting labels, statements, and terminators. Write `.c` or `.ll`, invoke the system compiler, link.
 
 The driver handles include path resolution, finding `.def`/`.mod` files, and constructing the compiler command line. The LLVM backend is selected with `--llvm` (full compilation) or `--emit-llvm` (emit `.ll` text only).
 
@@ -379,9 +424,10 @@ python3 tests/adversarial/run_adversarial.py --backend all  # adversarial tests 
 | `src/ast.rs` | AST node types |
 | `src/sema.rs` | Semantic analysis |
 | `src/hir.rs` | HIR types (Place, Projection, HirExpr, HirStmt) |
-| `src/hir_build.rs` | HIR builder — shared designator/expr resolution for both backends |
-| `src/codegen_c/` | C code generation (9 modules) |
-| `src/codegen_llvm/` | LLVM IR code generation (10 modules, zero AST dependencies) |
+| `src/hir_build/` | HIR builder: `mod.rs` (build_module, struct defs, tests) + `lower.rs` (HirBuilder impl) |
+| `src/cfg/` | CFG: `mod.rs` (data model, verify, cleanup, DOT) + `build.rs` (CfgBuilder, lowering) |
+| `src/codegen_c/` | C code generation (10 modules, CFG-driven control flow) |
+| `src/codegen_llvm/` | LLVM IR code generation (12 modules, CFG-driven control flow, zero AST dependencies) |
 | `src/target.rs` | Target abstraction (TargetInfo, layout, ABI) |
 | `src/driver.rs` | Compilation orchestration |
 | `src/build.rs` | Project build system |

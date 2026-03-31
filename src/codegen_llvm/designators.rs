@@ -96,6 +96,14 @@ impl LLVMCodeGen {
             PlaceBase::Local(sid) => {
                 let (addr, ty) = if let Some((a, t)) = self.lookup_local(&sid.source_name) {
                     (a.clone(), t.clone())
+                } else if let Some((a, t)) = self.globals.get(&sid.source_name)
+                    .or_else(|| self.globals.get(&sid.mangled))
+                    .or_else(|| self.globals.get(&self.mangle(&sid.source_name)))
+                {
+                    // CFG-generated places may use PlaceBase::Local for variables
+                    // that are actually globals (e.g. FOR loop variables). Fall back
+                    // to globals lookup.
+                    (a.clone(), t.clone())
                 } else {
                     (sid.mangled.clone(), self.tl_type_str(sid.ty))
                 };

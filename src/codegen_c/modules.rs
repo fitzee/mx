@@ -40,29 +40,8 @@ impl CodeGen {
             self.gen_proc_by_name(name);
         }
 
-        // ISO Modula-2: generate FINALLY handler from prebuilt HIR
-        let finally_body = self.prebuilt_hir.as_ref().and_then(|h| h.finally_handler.clone());
-        if let Some(stmts) = finally_body {
-            self.emitln("static void m2_finally_handler(void) {");
-            self.indent += 1;
-            for stmt in &stmts { self.emit_hir_stmt(stmt); }
-            self.indent -= 1;
-            self.emitln("}");
-            self.newline();
-        }
-
-        // ISO Modula-2: generate EXCEPT handler from prebuilt HIR
-        let except_body = self.prebuilt_hir.as_ref().and_then(|h| h.except_handler.clone());
-        if let Some(stmts) = except_body {
-            self.emitln("static void m2_except_handler(void) {");
-            self.indent += 1;
-            for stmt in &stmts { self.emit_hir_stmt(stmt); }
-            self.indent -= 1;
-            self.emitln("}");
-            self.newline();
-        }
-
         // Generate main function
+        // (FINALLY is folded into init_cfg via synthetic TRY — no atexit needed)
         self.emitln("int main(int _m2_argc, char **_m2_argv) {");
         self.indent += 1;
         self.emitln("m2_argc = _m2_argc; m2_argv = _m2_argv;");
@@ -70,38 +49,30 @@ impl CodeGen {
             self.emitln("setvbuf(stdout, NULL, _IONBF, 0);");
         }
 
-        // Register FINALLY handler with atexit
-        let has_finally = self.prebuilt_hir.as_ref()
-            .and_then(|h| h.finally_handler.as_ref()).is_some();
-        if has_finally {
-            self.emitln("atexit(m2_finally_handler);");
-        }
-
         // Call embedded module init functions (in dependency order)
         for mod_name in &self.embedded_init_modules.clone() {
             self.emitln(&format!("{}_init();", mod_name));
         }
 
-        // Initialize local (nested) modules — run their BEGIN bodies from HIR
-        let local_inits = self.prebuilt_hir.as_ref()
-            .map(|h| h.local_module_inits.clone())
+        // Initialize local (nested) modules from their CFGs
+        let local_cfgs = self.prebuilt_hir.as_ref()
+            .map(|h| h.local_module_cfgs.clone())
             .unwrap_or_default();
-        for (mod_name, stmts) in &local_inits {
+        for (mod_name, cfg) in &local_cfgs {
             self.emitln(&format!("/* Init local module {} */", mod_name));
-            for stmt in stmts { self.emit_hir_stmt(stmt); }
+            self.emit_cfg_body(cfg);
         }
 
         self.in_module_body = true;
-        // Use prebuilt HIR init body
-        let prebuilt_init = self.prebuilt_hir.as_ref()
-            .and_then(|hir| hir.init_body.clone());
-        if let Some(body) = prebuilt_init {
-            for stmt in &body {
-                self.emit_hir_stmt(stmt);
-            }
+        // Module init body from CFG (except/finally already folded in)
+        let init_cfg = self.prebuilt_hir.as_ref().and_then(|h| h.init_cfg.clone());
+        if let Some(ref cfg) = init_cfg {
+            self.emit_cfg_body_with_return(cfg, "0");
         }
         self.in_module_body = false;
-        self.emitln("return 0;");
+        if init_cfg.is_none() {
+            self.emitln("return 0;");
+        }
         self.indent -= 1;
         self.emitln("}");
         if self.multi_tu {
@@ -329,15 +300,11 @@ impl CodeGen {
         }
 
         // Module body = initialization function
-        let has_init = self.prebuilt_hir.as_ref()
-            .and_then(|h| h.init_body.as_ref()).is_some();
-        if has_init {
+        let init_cfg = self.prebuilt_hir.as_ref().and_then(|h| h.init_cfg.clone());
+        if let Some(ref cfg) = init_cfg {
             self.emitln(&format!("void {}_init(void) {{", self.mangle(&mod_name)));
             self.indent += 1;
-            // Use prebuilt HIR init body
-            if let Some(body) = self.prebuilt_hir.as_ref().and_then(|h| h.init_body.clone()) {
-                for stmt in &body { self.emit_hir_stmt(stmt); }
-            }
+            self.emit_cfg_body(cfg);
             self.indent -= 1;
             self.emitln("}");
         }
@@ -843,16 +810,19 @@ impl CodeGen {
                     }
                 }
 
-                // Body statements — use prebuilt HIR
-                let prebuilt_body = self.prebuilt_hir.as_ref().and_then(|hir| {
-                    hir.procedures.iter()
-                        .find(|hp| hp.name.source_name == sig.name
-                            && hp.name.module.as_deref() == Some(&self.module_name))
-                        .and_then(|hp| hp.body.clone())
+                // Body from CFG — search embedded module procs
+                let proc_info = self.prebuilt_hir.as_ref().and_then(|hir| {
+                    hir.embedded_modules.iter()
+                        .find(|e| e.name == self.module_name)
+                        .and_then(|e| e.procedures.iter()
+                            .find(|pd| pd.sig.name == sig.name)
+                            .map(|pd| (pd.cfg.clone(), pd.sig.return_type.is_none())))
                 });
-                if let Some(body) = prebuilt_body {
-                    for s in &body {
-                        self.emit_hir_stmt(s);
+                if let Some((Some(ref cfg), is_void)) = proc_info {
+                    if is_void {
+                        self.emit_cfg_body(cfg);
+                    } else {
+                        self.emit_cfg_body_with_return(cfg, "0");
                     }
                 }
 
@@ -867,26 +837,20 @@ impl CodeGen {
             }
         }
 
-        // Module initialization body from HIR
-        let init_body = if let Some(ref emb) = hir_emb {
-            emb.init_body.clone()
+        // Module initialization body from CFG
+        let emb_init_cfg = if let Some(ref emb) = hir_emb {
+            emb.init_cfg.clone()
         } else {
-            self.prebuilt_hir.as_ref().and_then(|hir| {
-                hir.embedded_init_bodies.iter()
-                    .find(|(name, _)| name == &imp.name)
-                    .map(|(_, body)| body.clone())
-            })
+            None
         };
-        if let Some(body) = init_body {
+        if let Some(ref cfg) = emb_init_cfg {
             if self.multi_tu {
                 self.emitln(&format!("void {}_init(void) {{", imp.name));
             } else {
                 self.emitln(&format!("static void {}_init(void) {{", imp.name));
             }
             self.indent += 1;
-            for stmt in &body {
-                self.emit_hir_stmt(stmt);
-            }
+            self.emit_cfg_body(cfg);
             self.indent -= 1;
             self.emitln("}");
             self.newline();

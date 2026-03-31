@@ -136,58 +136,25 @@ impl LLVMCodeGen {
             self.emitln(&format!("  call void @{}_init()", mod_name));
         }
 
-        // Module body (with ISO EXCEPT/FINALLY support) from prebuilt HIR
-        let hir_init = self.prebuilt_hir.as_ref().and_then(|h| h.init_body.clone());
-        let hir_except = self.prebuilt_hir.as_ref().and_then(|h| h.except_handler.clone());
-        let hir_finally = self.prebuilt_hir.as_ref().and_then(|h| h.finally_handler.clone());
-
-        if hir_except.is_some() || hir_finally.is_some() {
-            self.declare_exc_runtime();
-            let frame = self.next_tmp();
-            self.emitln(&format!("  {} = alloca [256 x i8]", frame));
-            self.emitln(&format!("  call void @m2_exc_push(ptr {})", frame));
-            let sjret = self.next_tmp();
-            self.emitln(&format!("  {} = call i32 @setjmp(ptr {})", sjret, frame));
-            let caught = self.next_tmp();
-            self.emitln(&format!("  {} = icmp ne i32 {}, 0", caught, sjret));
-            let body_label = self.next_label("mod.body");
-            let except_label = self.next_label("mod.except");
-            self.emitln(&format!("  br i1 {}, label %{}, label %{}",
-                caught, except_label, body_label));
-
-            self.emitln(&format!("{}:", body_label));
-            self.in_sjlj_context = true;
-            if let Some(ref stmts) = hir_init {
-                self.gen_hir_statements(stmts);
+        // Module init body from CFG (except/finally already folded in)
+        let init_cfg = self.prebuilt_hir.as_ref().and_then(|h| h.init_cfg.clone());
+        if let Some(ref cfg) = init_cfg {
+            // Set debug location for module body
+            if let Some(ref mut di) = self.di {
+                di.set_location(1, 0, &source_file);
             }
-            self.in_sjlj_context = false;
-            self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
-            let end_label = self.next_label("mod.end");
-            self.emitln(&format!("  br label %{}", end_label));
-
-            self.emitln(&format!("{}:", except_label));
-            self.emitln(&format!("  call void @m2_exc_pop(ptr {})", frame));
-            if let Some(ref stmts) = hir_except {
-                self.gen_hir_statements(stmts);
-            }
-            self.emitln(&format!("  br label %{}", end_label));
-
-            self.emitln(&format!("{}:", end_label));
-            if let Some(ref stmts) = hir_finally {
-                self.gen_hir_statements(stmts);
-            }
+            // main returns i32 — CFG Return(None) should emit "ret i32 0"
+            self.current_return_type = Some("i32".to_string());
+            self.emit_cfg_body(cfg, false);
+            self.current_return_type = None;
         } else {
-            if let Some(ref stmts) = hir_init {
-                self.gen_hir_statements(stmts);
+            // No init body — just return 0
+            if let Some(ref frame) = self.stack_frame_alloca.clone() {
+                self.emitln(&format!("  call void @m2_stack_pop(ptr {})", frame));
             }
-        }
-
-        // Pop stack frame and return
-        if let Some(ref frame) = self.stack_frame_alloca.clone() {
-            self.emitln(&format!("  call void @m2_stack_pop(ptr {})", frame));
+            self.emitln("  ret i32 0");
         }
         self.stack_frame_alloca = None;
-        self.emitln("  ret i32 0");
         self.emitln("}");
 
         self.locals.pop();
@@ -248,24 +215,21 @@ impl LLVMCodeGen {
             }
         }
 
-        // Init function for this module
-        let hir_init = self.prebuilt_hir.as_ref().and_then(|h| h.init_body.clone());
-        if let Some(ref stmts) = hir_init {
-            if !stmts.is_empty() {
-                let init_name = format!("{}_init", mod_name);
-                self.emitln(&format!("define void @{}() {{", init_name));
-                self.emitln("bb.entry:");
-                self.in_function = true;
-                self.tmp_counter = 0;
-                self.locals.push(HashMap::new());
+        // Init function for this module from CFG
+        let init_cfg = self.prebuilt_hir.as_ref().and_then(|h| h.init_cfg.clone());
+        if let Some(ref cfg) = init_cfg {
+            let init_name = format!("{}_init", mod_name);
+            self.emitln(&format!("define void @{}() {{", init_name));
+            self.emitln("bb.entry:");
+            self.in_function = true;
+            self.tmp_counter = 0;
+            self.locals.push(HashMap::new());
 
-                self.gen_hir_statements(stmts);
+            self.emit_cfg_body(cfg, true);
 
-                self.emitln("  ret void");
-                self.emitln("}");
-                self.locals.pop();
-                self.in_function = false;
-            }
+            self.emitln("}");
+            self.locals.pop();
+            self.in_function = false;
         }
 
         Ok(())
@@ -337,24 +301,21 @@ impl LLVMCodeGen {
                 self.gen_hir_proc_decl(pd)?;
             }
 
-            // Generate init function if there's a module body
-            if let Some(ref stmts) = emb.init_body {
-                if !stmts.is_empty() {
-                    let init_name = format!("{}_init", imp_name);
-                    self.emitln(&format!("define void @{}() {{", init_name));
-                    self.emitln("bb.entry:");
-                    self.in_function = true;
-                    self.tmp_counter = 0;
-                    self.locals.push(HashMap::new());
+            // Generate init function from CFG
+            if let Some(ref cfg) = emb.init_cfg {
+                let init_name = format!("{}_init", imp_name);
+                self.emitln(&format!("define void @{}() {{", init_name));
+                self.emitln("bb.entry:");
+                self.in_function = true;
+                self.tmp_counter = 0;
+                self.locals.push(HashMap::new());
 
-                    self.gen_hir_statements(stmts);
+                self.emit_cfg_body(cfg, true);
 
-                    self.emitln("  ret void");
-                    self.emitln("}");
-                    self.locals.pop();
-                    self.in_function = false;
-                    self.embedded_init_modules.push(imp_name.to_string());
-                }
+                self.emitln("}");
+                self.locals.pop();
+                self.in_function = false;
+                self.embedded_init_modules.push(imp_name.to_string());
             }
         }
 

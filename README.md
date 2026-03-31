@@ -11,7 +11,7 @@ mx compiles Modula-2 to native executables via two backends: a **C backend** (tr
 
 ## Why mx?
 
-- **Two backends** — C backend for portability and inspectable output; LLVM backend for native DWARF debug info, LLVM-native exception handling, and RTTI.
+- **Two backends** — both driven by a verified control flow graph (CFG). C backend for portability; LLVM backend for native DWARF debug info and RTTI.
 - **Source-level debugging** — C backend uses `#line` directives; LLVM backend emits full DWARF metadata. Both support breakpoints and stepping in LLDB/GDB.
 - **C FFI** — bind to any C library with `DEFINITION MODULE FOR "C"`.
 - **Cross-compilation** — set `--target` to select the target platform (e.g. `--target x86_64-linux`). C backend: also set `--cc` to a cross compiler. Supported targets: `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`.
@@ -86,7 +86,7 @@ Language reference, library APIs, LSP configuration, and contributor guides are 
 ## Project Layout
 
 ```
-src/           Compiler (Rust) — C and LLVM backends, HIR, sema
+src/           Compiler (Rust) — C and LLVM backends, CFG, HIR, sema
 libs/          34 libraries (Modula-2)
 tools/m2dap/   Debug adapter server (Modula-2+)
 tools/mxpkg/   Package manager (Modula-2+)

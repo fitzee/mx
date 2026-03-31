@@ -1,3 +1,4 @@
+mod cfg_emit;
 mod types;
 mod modules;
 mod decls;
@@ -190,7 +191,7 @@ pub struct LLVMCodeGen {
 
     // ── Control flow stacks ─────────────────────────────────────────
     /// Loop exit labels for EXIT statements
-    pub(crate) loop_exit_stack: Vec<String>,
+    // loop_exit_stack removed — EXIT is resolved to Goto by CFG builder
 
     // ── Current function context ────────────────────────────────────
     pub(crate) current_return_type: Option<String>,
@@ -294,7 +295,6 @@ impl LLVMCodeGen {
             open_array_params: vec![HashSet::new()],
             named_array_params: vec![HashSet::new()],
             declared_fns: HashSet::new(),
-            loop_exit_stack: Vec::new(),
             current_return_type: None,
             stack_frame_alloca: None,
             in_function: false,
@@ -563,8 +563,9 @@ impl LLVMCodeGen {
                             || trimmed.starts_with("store")
                             || trimmed.starts_with("call")
                             || trimmed.starts_with("ret")
-                            || trimmed.starts_with("br i1")  // conditional branch
-                            || trimmed.starts_with("switch"));
+                            || trimmed.starts_with("br ")    // br label / br i1
+                            || trimmed.starts_with("switch")
+                            || trimmed.starts_with("unreachable"));
                     if is_instruction {
                         self.body.push_str(s);
                         self.body.push_str(&format!(", !dbg !{}", loc_id));

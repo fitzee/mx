@@ -1,3 +1,4 @@
+mod cfg_emit;
 mod designators;
 mod stmts;
 mod exprs;
@@ -648,7 +649,31 @@ mod tests {
         cg.set_debug(debug);
         // Run sema + build HIR (required by the HIR-based codegen pipeline)
         cg.sema.analyze(&unit).unwrap();
-        let hir = crate::hir_build::build_module(&unit, &[], &cg.sema);
+        let mut hir = crate::hir_build::build_module(&unit, &[], &cg.sema);
+        // Build CFGs for all bodies (mirrors driver Phase 4b)
+        {
+            fn build_proc_cfgs(procs: &mut [crate::hir::HirProcDecl]) {
+                for pd in procs.iter_mut() {
+                    if let Some(ref body) = pd.body {
+                        pd.cfg = Some(crate::cfg::build_cfg(body));
+                    }
+                    build_proc_cfgs(&mut pd.nested_procs);
+                }
+            }
+            build_proc_cfgs(&mut hir.proc_decls);
+            for emb in &mut hir.embedded_modules {
+                build_proc_cfgs(&mut emb.procedures);
+                if let Some(ref init) = emb.init_body {
+                    emb.init_cfg = Some(crate::cfg::build_cfg(init));
+                }
+            }
+            if let Some(ref init) = hir.init_body {
+                hir.init_cfg = Some(crate::cfg::build_cfg(init));
+            }
+            hir.local_module_cfgs = hir.local_module_inits.iter()
+                .map(|(name, stmts)| (name.clone(), crate::cfg::build_cfg(stmts)))
+                .collect();
+        }
         cg.prebuilt_hir = Some(hir);
         let kind = match &unit {
             crate::ast::CompilationUnit::ProgramModule(_) => ModuleKind::Program,

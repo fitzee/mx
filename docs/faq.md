@@ -8,9 +8,9 @@ Modula-2 is a systems programming language designed by Niklaus Wirth. It has str
 
 mx has a **C backend** (default) and an **LLVM backend** (`--llvm`).
 
-The C backend transpiles to C, inheriting every platform's C compiler and optimizer, cross-compilation (just set `--cc`), easy FFI, and readable output. Debug builds use `#line` directives for source-level debugging.
+Both backends are **CFG-driven** — all control flow (IF, WHILE, FOR, CASE, TRY/EXCEPT, etc.) is lowered to a control flow graph before code generation. Backends iterate basic blocks and emit terminators (goto/branch/switch/return). No structured control flow is reconstructed from HIR.
 
-The LLVM backend emits LLVM IR, compiled by clang. It provides native DWARF debug info (variables visible in lldb with M2 type names), LLVM-native exception handling for TRY/EXCEPT, and RTTI for TYPECASE/REF/OBJECT. Use it when you need full IDE debugging with m2dap.
+The C backend emits goto-based C with `#line` directives, inheriting every platform's C compiler and optimizer, cross-compilation (just set `--cc`), and easy FFI. The LLVM backend emits LLVM IR basic blocks, compiled by clang. It provides native DWARF debug info (variables visible in lldb with M2 type names) and RTTI for TYPECASE/REF/OBJECT. Use it when you need full IDE debugging with m2dap.
 
 ## Why no async runtime?
 
