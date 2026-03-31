@@ -1,5 +1,20 @@
 # Release Notes
 
+## 1.8.0 (2026-03-31)
+
+### Features
+
+- **CFG v2: CFG-driven code emission** — Both C and LLVM backends now emit procedure and init bodies by iterating CFG basic blocks and terminators instead of reconstructing structured control flow. The CFG builder handles all control flow constructs including FOR, REPEAT, CASE, TRY, LOCK, and short-circuit booleans.
+- **CFG construction in driver** — CFGs are built in a new driver Phase 4b and stored on HIR nodes (`HirProcDecl.cfg`, `HirModule.init_cfg`), separating control flow analysis from code emission.
+
+### Build system
+
+- **Module splits** — `cfg.rs` split into `cfg/mod.rs` + `cfg/build.rs`; `hir_build.rs` split into `hir_build/mod.rs` + `hir_build/lower.rs`. Both backends gain `cfg_emit.rs` for CFG-driven emission.
+
+### Test coverage
+
+- **FOR char literal** — Adversarial codegen test for FOR loops over character literals.
+
 ## 1.7.1 (2026-03-30)
 
 ### Bug fixes
