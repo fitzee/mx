@@ -1,5 +1,19 @@
 # Release Notes
 
+## 1.8.2 (2026-04-01)
+
+### Features
+
+- **Procedure call argument type checking** — The semantic analyzer now verifies that actual parameter types are compatible with formal parameter types in procedure and function calls. Previously only argument count was checked.
+  - Open array parameters require matching element types (e.g., `ARRAY OF INTEGER` rejected for `ARRAY OF CHAR`)
+  - VAR parameters require type-identical arguments
+  - Value parameters use assignment compatibility rules
+  - Errors are reported both at compile time and in the LSP (real-time squiggles in VS Code)
+
+### Bug fixes
+
+- **StringLit assignment compatibility** — String literals are now mutually compatible in `assignment_compatible`, fixing false positives when passing string literals to stdlib procedures with `TY_STRING` formal parameters.
+
 ## vscode-m2plus 0.3.0 (2026-04-01)
 
 ### Features

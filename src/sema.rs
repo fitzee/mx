@@ -1462,9 +1462,7 @@ impl SemanticAnalyzer {
                 if builtins::is_builtin_proc(name) {
                     self.check_builtin_call(name, args, &stmt.loc);
                 } else {
-                    for arg in args {
-                        self.analyze_expr(arg);
-                    }
+                    self.check_call_arg_types(name, args);
                 }
             }
             StatementKind::If {
@@ -1709,9 +1707,7 @@ impl SemanticAnalyzer {
                     TY_ERROR
                 };
 
-                for arg in args {
-                    self.analyze_expr(arg);
-                }
+                self.check_call_arg_types(name, args);
                 ret
             }
             ExprKind::UnaryOp { op, operand } => {
@@ -1957,6 +1953,89 @@ impl SemanticAnalyzer {
             }
         }
         current_type
+    }
+
+    /// Check argument types against parameter types for a procedure/function call.
+    fn check_call_arg_types(&mut self, name: &str, args: &[Expr]) {
+        let param_list: Vec<ParamInfo> = if let Some(sym) = self.symtab.lookup(name) {
+            if let SymbolKind::Procedure { params, .. } = &sym.kind {
+                params.clone()
+            } else { vec![] }
+        } else { vec![] };
+
+        for (i, arg) in args.iter().enumerate() {
+            let arg_type = self.analyze_expr(arg);
+            if arg_type == TY_ERROR || arg_type == TY_VOID { continue; }
+            if i >= param_list.len() { continue; }
+            let param = &param_list[i];
+            let param_type = param.typ;
+            if param_type == TY_ERROR || param_type == TY_VOID { continue; }
+
+            let resolved_param = self.resolve_alias(param_type);
+            let resolved_arg = self.resolve_alias(arg_type);
+            let pt = self.types.get(resolved_param);
+            let at = self.types.get(resolved_arg);
+
+            // Open array parameter: actual must be an array with matching element type
+            if let Type::OpenArray { elem_type: expected_elem } = pt {
+                let ok = match at {
+                    Type::Array { elem_type: actual_elem, .. } => {
+                        self.resolve_alias(*actual_elem) == self.resolve_alias(*expected_elem)
+                    }
+                    Type::OpenArray { elem_type: actual_elem } => {
+                        self.resolve_alias(*actual_elem) == self.resolve_alias(*expected_elem)
+                    }
+                    // String literal compatible with ARRAY OF CHAR
+                    Type::StringLit(_) => *expected_elem == TY_CHAR,
+                    _ => false,
+                };
+                if !ok {
+                    self.error(
+                        &arg.loc,
+                        format!(
+                            "incompatible type for parameter '{}': expected ARRAY OF compatible type",
+                            param.name
+                        ),
+                    );
+                }
+            } else if param.is_var {
+                // VAR parameter: actual type must match formal type exactly
+                // (or both be arrays with matching element types)
+                if resolved_arg != resolved_param {
+                    let structurally_ok = match (pt, at) {
+                        (Type::Array { elem_type: pe, .. }, Type::Array { elem_type: ae, .. }) => {
+                            self.resolve_alias(*pe) == self.resolve_alias(*ae)
+                        }
+                        // TY_STRING formal accepts ARRAY OF CHAR actual (stdlib convention)
+                        (Type::StringLit(_), Type::Array { elem_type, .. }) |
+                        (Type::StringLit(_), Type::OpenArray { elem_type }) => {
+                            self.resolve_alias(*elem_type) == TY_CHAR
+                        }
+                        _ => false,
+                    };
+                    if !structurally_ok {
+                        self.error(
+                            &arg.loc,
+                            format!(
+                                "incompatible type for VAR parameter '{}'",
+                                param.name
+                            ),
+                        );
+                    }
+                }
+            } else {
+                // Value parameter: check assignment compatibility
+                if !crate::types::assignment_compatible(&self.types, resolved_param, resolved_arg) {
+                    self.error(
+                        &arg.loc,
+                        format!(
+                            "incompatible type for parameter '{}'",
+                            param.name
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     fn check_builtin_call(&mut self, name: &str, args: &[Expr], loc: &SourceLoc) {

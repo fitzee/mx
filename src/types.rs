@@ -369,6 +369,10 @@ pub fn assignment_compatible(reg: &TypeRegistry, dst: TypeId, src: TypeId) -> bo
     if matches!(dt, Type::Ref { .. }) && matches!(st, Type::RefAny) {
         return true; // unsafe narrowing, checked at runtime via TYPECASE
     }
+    // String literals are mutually compatible (TY_STRING formal accepts any string literal)
+    if matches!(dt, Type::StringLit(_)) && st.is_string_like() {
+        return true;
+    }
     // String literal to ARRAY OF CHAR
     if let Type::Array { elem_type, .. } = dt {
         if *elem_type == TY_CHAR && st.is_string_like() {
