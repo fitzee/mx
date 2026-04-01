@@ -46,10 +46,17 @@ impl LLVMCodeGen {
                 // Aggregate assignment: memcpy
                 if addr.ty.starts_with('{') || addr.ty.starts_with('[')
                 {
-                    // If val is a by-value struct (e.g. from a function call), spill to alloca first
-                    let src = if val.ty.starts_with('{') || val.ty.starts_with('[') {
+                    // If val is a by-value aggregate or scalar (not a pointer), spill to alloca first
+                    let src = if val.ty != "ptr" {
+                        let spill_ty = if val.ty.starts_with('{') || val.ty.starts_with('[') {
+                            val.ty.clone()
+                        } else {
+                            // Scalar assigned to aggregate (e.g. single-char string "0" → ARRAY)
+                            // Spill using the target's aggregate type
+                            addr.ty.clone()
+                        };
                         let tmp_alloca = self.next_tmp();
-                        self.emitln(&format!("  {} = alloca {}", tmp_alloca, val.ty));
+                        self.emitln(&format!("  {} = alloca {}", tmp_alloca, spill_ty));
                         self.emitln(&format!("  store {} {}, ptr {}", val.ty, val.name, tmp_alloca));
                         tmp_alloca
                     } else {

@@ -1337,6 +1337,17 @@ impl<'a> HirBuilder<'a> {
                     }
                 }
             }
+            // CHR(expr), ORD(expr), VAL(Type, expr) — builtin type transfers
+            ExprKind::FuncCall { desig, args } if desig.selectors.is_empty() && desig.ident.module.is_none() => {
+                match desig.ident.name.as_str() {
+                    "CHR" | "CHAR" if args.len() == 1 => self.try_eval_const_int(&args[0]),
+                    "ORD" if args.len() == 1 => self.try_eval_const_int(&args[0]),
+                    "INTEGER" | "INT" | "CARDINAL" | "LONGINT" | "LONGCARD"
+                        if args.len() == 1 => self.try_eval_const_int(&args[0]),
+                    "VAL" if args.len() >= 2 => self.try_eval_const_int(&args[1]),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
@@ -2052,7 +2063,12 @@ impl<'a> HirBuilder<'a> {
                     .map(|s| s.typ)
                     .unwrap_or(TY_INTEGER);
                 let value = if let Some(val) = self.try_eval_const_int(&cd.expr) {
-                    ConstVal::Integer(val)
+                    // Preserve CHAR type for character constants (CHR, char literals)
+                    if tid == TY_CHAR {
+                        ConstVal::Char(val as u8 as char)
+                    } else {
+                        ConstVal::Integer(val)
+                    }
                 } else {
                     match &cd.expr.kind {
                         ExprKind::RealLit(v) => ConstVal::Real(*v),

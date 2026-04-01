@@ -264,10 +264,12 @@ impl LspServer {
         let m2plus = self.m2plus;
         let inc_paths = dirs.clone();
 
+        self.send_index_status("indexing");
         let token = self.progress_begin("Indexing workspace...");
         let count = self.workspace_index.index_directories(&dirs, m2plus, &inc_paths, &mut self.def_cache);
         self.workspace_index.rebuild_if_dirty();
         self.progress_end(&token, &format!("Indexed {} files ({} symbols)", count, self.workspace_index.symbol_count()));
+        self.send_index_status("ready");
     }
 
     fn reindex_workspace(&mut self, force: bool) {
@@ -278,6 +280,7 @@ impl LspServer {
         let m2plus = self.m2plus;
         let inc_paths = dirs.clone();
 
+        self.send_index_status("indexing");
         let token = self.progress_begin("Reindexing workspace...");
         let count = self.workspace_index.index_directories(&dirs, m2plus, &inc_paths, &mut self.def_cache);
 
@@ -294,6 +297,17 @@ impl LspServer {
 
         self.workspace_index.rebuild_if_dirty();
         self.progress_end(&token, &format!("Indexed {} files ({} symbols)", count + open_uris.len(), self.workspace_index.symbol_count()));
+        self.send_index_status("ready");
+    }
+
+    /// Send `m2/indexStatus` notification to client with current index state.
+    fn send_index_status(&self, state: &str) {
+        transport::send_notification("m2/indexStatus", Json::obj(vec![
+            ("state", Json::str_val(state)),
+            ("files", Json::int_val(self.workspace_index.file_count() as i64)),
+            ("symbols", Json::int_val(self.workspace_index.symbol_count() as i64)),
+            ("dirty", Json::Bool(self.workspace_index.is_dirty())),
+        ]));
     }
 
     // ── workDoneProgress ────────────────────────────────────────────
@@ -408,6 +422,7 @@ impl LspServer {
 
         if !ready.is_empty() {
             self.workspace_index.rebuild_if_dirty();
+            self.send_index_status("ready");
         }
     }
 
@@ -670,6 +685,14 @@ impl LspServer {
                 if let Some(id) = id {
                     if self.is_canceled(id) { self.send_canceled(id); self.retire_cancel(id); }
                     else { self.handle_reindex(id); }
+                }
+            }
+
+            // ── Custom: diagnoseWorkspace ──────────────────
+            "m2/diagnoseWorkspace" => {
+                if let Some(id) = id {
+                    if self.is_canceled(id) { self.send_canceled(id); self.retire_cancel(id); }
+                    else { self.handle_diagnose_workspace(id); }
                 }
             }
 
@@ -1357,6 +1380,147 @@ impl LspServer {
         transport::send_response(id, Json::obj(vec![
             ("files", Json::int_val(self.workspace_index.file_count() as i64)),
             ("symbols", Json::int_val(self.workspace_index.symbol_count() as i64)),
+        ]));
+    }
+
+    fn handle_diagnose_workspace(&mut self, id: &Json) {
+        let mut checks: Vec<Json> = Vec::new();
+
+        // 1. mx compiler path & version
+        let exe = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "(unknown)".to_string());
+        checks.push(Json::obj(vec![
+            ("name", Json::str_val("compiler")),
+            ("status", Json::str_val("ok")),
+            ("detail", Json::str_val(&format!("{} {}", exe, crate::identity::VERSION))),
+        ]));
+
+        // 2. Workspace roots
+        if self.workspace_roots.is_empty() {
+            checks.push(Json::obj(vec![
+                ("name", Json::str_val("workspace")),
+                ("status", Json::str_val("warn")),
+                ("detail", Json::str_val("No workspace folders detected")),
+            ]));
+        } else {
+            let roots_str: Vec<String> = self.workspace_roots.iter()
+                .map(|r| r.display().to_string()).collect();
+            checks.push(Json::obj(vec![
+                ("name", Json::str_val("workspace")),
+                ("status", Json::str_val("ok")),
+                ("detail", Json::str_val(&roots_str.join(", "))),
+            ]));
+        }
+
+        // 3. m2.toml for each workspace root
+        for root in &self.workspace_roots.clone() {
+            let manifest_path = root.join("m2.toml");
+            let root_display = root.display().to_string();
+            if manifest_path.exists() {
+                match std::fs::read_to_string(&manifest_path) {
+                    Ok(content) => {
+                        if let Some(m) = workspace::Manifest::parse(&content) {
+                            let detail = format!(
+                                "{}/m2.toml: name={}, m2plus={}, {} deps",
+                                root_display, m.name, m.m2plus, m.deps.len()
+                            );
+                            checks.push(Json::obj(vec![
+                                ("name", Json::str_val("manifest")),
+                                ("status", Json::str_val("ok")),
+                                ("detail", Json::str_val(&detail)),
+                            ]));
+                        } else {
+                            checks.push(Json::obj(vec![
+                                ("name", Json::str_val("manifest")),
+                                ("status", Json::str_val("error")),
+                                ("detail", Json::str_val(&format!("{}/m2.toml: failed to parse", root_display))),
+                            ]));
+                        }
+                    }
+                    Err(e) => {
+                        checks.push(Json::obj(vec![
+                            ("name", Json::str_val("manifest")),
+                            ("status", Json::str_val("error")),
+                            ("detail", Json::str_val(&format!("{}/m2.toml: read error: {}", root_display, e))),
+                        ]));
+                    }
+                }
+
+                // 4. m2.lock
+                let lock_path = root.join("m2.lock");
+                if lock_path.exists() {
+                    checks.push(Json::obj(vec![
+                        ("name", Json::str_val("lockfile")),
+                        ("status", Json::str_val("ok")),
+                        ("detail", Json::str_val(&format!("{}/m2.lock: present", root_display))),
+                    ]));
+                } else {
+                    checks.push(Json::obj(vec![
+                        ("name", Json::str_val("lockfile")),
+                        ("status", Json::str_val("warn")),
+                        ("detail", Json::str_val(&format!("{}/m2.lock: missing (run mx build to generate)", root_display))),
+                    ]));
+                }
+            } else {
+                checks.push(Json::obj(vec![
+                    ("name", Json::str_val("manifest")),
+                    ("status", Json::str_val("warn")),
+                    ("detail", Json::str_val(&format!("{}/m2.toml: not found", root_display))),
+                ]));
+            }
+        }
+
+        // 5. Include paths
+        let mut all_paths = self.include_paths.clone();
+        for root in &self.workspace_roots {
+            if let Some(ctx) = self.project_cache.get(root) {
+                for p in &ctx.include_paths {
+                    if !all_paths.contains(p) {
+                        all_paths.push(p.clone());
+                    }
+                }
+            }
+        }
+        for inc in &all_paths {
+            if inc.exists() {
+                checks.push(Json::obj(vec![
+                    ("name", Json::str_val("includePath")),
+                    ("status", Json::str_val("ok")),
+                    ("detail", Json::str_val(&inc.display().to_string())),
+                ]));
+            } else {
+                checks.push(Json::obj(vec![
+                    ("name", Json::str_val("includePath")),
+                    ("status", Json::str_val("error")),
+                    ("detail", Json::str_val(&format!("{}: directory not found", inc.display()))),
+                ]));
+            }
+        }
+
+        // 6. Workspace index status
+        let idx_status = if self.workspace_index.is_dirty() { "warn" } else { "ok" };
+        let idx_detail = format!(
+            "{} files, {} symbols{}",
+            self.workspace_index.file_count(),
+            self.workspace_index.symbol_count(),
+            if self.workspace_index.is_dirty() { " (stale — rebuild pending)" } else { "" },
+        );
+        checks.push(Json::obj(vec![
+            ("name", Json::str_val("index")),
+            ("status", Json::str_val(idx_status)),
+            ("detail", Json::str_val(&idx_detail)),
+        ]));
+
+        // 7. m2plus mode
+        checks.push(Json::obj(vec![
+            ("name", Json::str_val("m2plus")),
+            ("status", Json::str_val("ok")),
+            ("detail", Json::str_val(if self.m2plus { "enabled" } else { "disabled" })),
+        ]));
+
+        transport::send_response(id, Json::obj(vec![
+            ("checks", Json::arr(checks)),
         ]));
     }
 

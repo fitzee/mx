@@ -630,6 +630,11 @@ impl WorkspaceIndex {
         self.symbols.len()
     }
 
+    /// Whether the index has pending changes that haven't been rebuilt yet.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
     /// Test helper: inject a symbol directly for unit testing.
     #[cfg(test)]
     pub fn inject_symbol_for_test(

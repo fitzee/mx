@@ -2054,6 +2054,35 @@ impl SemanticAnalyzer {
                 }
                 ConstValue::Integer(0)
             }
+            // Builtin type transfer functions: CHR(n), ORD(c), VAL(T, n), INTEGER(x), etc.
+            ExprKind::FuncCall { desig, args }
+                if desig.selectors.is_empty() && desig.ident.module.is_none() =>
+            {
+                match desig.ident.name.as_str() {
+                    "CHR" | "CHAR" if args.len() == 1 => {
+                        match self.eval_const_expr(&args[0]) {
+                            ConstValue::Integer(v) => ConstValue::Char(v as u8 as char),
+                            ConstValue::Char(c) => ConstValue::Char(c),
+                            _ => ConstValue::Integer(0),
+                        }
+                    }
+                    "ORD" if args.len() == 1 => {
+                        match self.eval_const_expr(&args[0]) {
+                            ConstValue::Char(c) => ConstValue::Integer(c as i64),
+                            ConstValue::Integer(v) => ConstValue::Integer(v),
+                            _ => ConstValue::Integer(0),
+                        }
+                    }
+                    "VAL" if args.len() >= 2 => self.eval_const_expr(&args[1]),
+                    "INTEGER" | "INT" | "CARDINAL" | "LONGINT" | "LONGCARD" if args.len() == 1 => {
+                        match self.eval_const_expr(&args[0]) {
+                            ConstValue::Char(c) => ConstValue::Integer(c as i64),
+                            other => other,
+                        }
+                    }
+                    _ => ConstValue::Integer(0),
+                }
+            }
             _ => ConstValue::Integer(0),
         }
     }

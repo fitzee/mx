@@ -303,7 +303,7 @@ export function activate(context: vscode.ExtensionContext) {
     clientOptions
   );
 
-  client.start().catch((err: Error) => {
+  const startPromise = client.start().catch((err: Error) => {
     vscode.window.showWarningMessage(
       `mx language server failed to start: ${err.message}. Ensure mx is on your PATH.`
     );
@@ -522,6 +522,87 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // ── Status bar: workspace index status ─────────────────────────
+  const indexStatus = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left, 0
+  );
+  indexStatus.command = "mx.reindexWorkspace";
+  indexStatus.text = "$(database) mx: indexing…";
+  indexStatus.tooltip = "mx workspace index — click to reindex";
+  indexStatus.show();
+  context.subscriptions.push(indexStatus);
+
+  // Listen for m2/indexStatus notifications from the server (after client is ready)
+  startPromise.then(() => {
+    if (!client) { return; }
+    client.onNotification("m2/indexStatus", (params: {
+      state: string; files: number; symbols: number; dirty: boolean;
+    }) => {
+      if (params.state === "indexing") {
+        indexStatus.text = "$(sync~spin) mx: indexing…";
+        indexStatus.tooltip = "mx workspace index — indexing in progress";
+      } else {
+        const dirtyTag = params.dirty ? " (stale)" : "";
+        indexStatus.text = `$(database) mx: ${params.files} files, ${params.symbols} symbols${dirtyTag}`;
+        indexStatus.tooltip = `mx workspace index — ${params.files} files, ${params.symbols} symbols${dirtyTag}\nClick to reindex`;
+      }
+    });
+  });
+
+  // ── File watcher: auto-reindex on .mod/.def create/delete ─────
+  const fileWatcher = vscode.workspace.createFileSystemWatcher("**/*.{mod,def,MOD,DEF}");
+  let reindexTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleReindex = () => {
+    if (reindexTimer) { clearTimeout(reindexTimer); }
+    reindexTimer = setTimeout(() => {
+      if (client) {
+        client.sendRequest("m2/reindexWorkspace", {}).catch(() => {});
+      }
+    }, 1000); // debounce 1s to batch rapid creates
+  };
+  fileWatcher.onDidCreate(scheduleReindex);
+  fileWatcher.onDidDelete(scheduleReindex);
+  context.subscriptions.push(fileWatcher);
+
+  // Command: diagnose workspace
+  context.subscriptions.push(
+    vscode.commands.registerCommand("mx.diagnoseWorkspace", async () => {
+      if (!client) {
+        vscode.window.showWarningMessage("mx language server is not running.");
+        return;
+      }
+      const result = await client.sendRequest("m2/diagnoseWorkspace", {});
+      const r = result as { checks?: Array<{ name: string; status: string; detail: string }> };
+      if (!r.checks) {
+        vscode.window.showWarningMessage("No diagnostic data returned.");
+        return;
+      }
+
+      const channel = vscode.window.createOutputChannel("MX Workspace Diagnostics");
+      channel.clear();
+      channel.appendLine("MX Workspace Diagnostics");
+      channel.appendLine("========================\n");
+
+      const icons: Record<string, string> = { ok: "✓", warn: "⚠", error: "✗" };
+      for (const check of r.checks) {
+        const icon = icons[check.status] ?? "?";
+        channel.appendLine(`  ${icon} [${check.name}] ${check.detail}`);
+      }
+
+      const errors = r.checks.filter(c => c.status === "error").length;
+      const warnings = r.checks.filter(c => c.status === "warn").length;
+      channel.appendLine("");
+      if (errors > 0) {
+        channel.appendLine(`${errors} error(s), ${warnings} warning(s) found.`);
+      } else if (warnings > 0) {
+        channel.appendLine(`All checks passed with ${warnings} warning(s).`);
+      } else {
+        channel.appendLine("All checks passed.");
+      }
+      channel.show();
+    })
+  );
+
   // Command: open documentation
   context.subscriptions.push(
     vscode.commands.registerCommand("mx.openDocumentation", async () => {
@@ -621,9 +702,9 @@ function renderMarkdownHtml(_title: string, markdown: string): string {
     .join("\n");
 
   // 9. Re-insert code blocks
-  let final = html;
+  let result = html;
   codeBlocks.forEach((block, i) => {
-    final = final.replace(`\x00CB${i}\x00`, block);
+    result = result.replace(`\x00CB${i}\x00`, block);
   });
 
   return `<!DOCTYPE html>
@@ -648,7 +729,7 @@ function renderMarkdownHtml(_title: string, markdown: string): string {
     hr { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 16px 0; }
   </style>
 </head>
-<body>${final}</body>
+<body>${result}</body>
 </html>`;
 }
 
