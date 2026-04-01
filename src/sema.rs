@@ -2021,9 +2021,9 @@ impl SemanticAnalyzer {
                 let r = self.eval_const_expr(right);
                 match (l, r) {
                     (ConstValue::Integer(a), ConstValue::Integer(b)) => match op {
-                        BinaryOp::Add => ConstValue::Integer(a + b),
-                        BinaryOp::Sub => ConstValue::Integer(a - b),
-                        BinaryOp::Mul => ConstValue::Integer(a * b),
+                        BinaryOp::Add => ConstValue::Integer(a.wrapping_add(b)),
+                        BinaryOp::Sub => ConstValue::Integer(a.wrapping_sub(b)),
+                        BinaryOp::Mul => ConstValue::Integer(a.wrapping_mul(b)),
                         BinaryOp::IntDiv => {
                             if b != 0 {
                                 ConstValue::Integer(a / b)

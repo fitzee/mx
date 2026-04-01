@@ -4,7 +4,7 @@ FROM ProcessBridge IMPORT m2dap_spawn, m2dap_read, m2dap_write,
                           m2dap_close, m2dap_kill, m2dap_waitpid;
 
 CONST
-  SentinelLen = 7;  (* length of "(m2dap)" *)
+  SentinelLen = 8;  (* length of "(m2dap) " including trailing space *)
 
 VAR
   pid: INTEGER;
@@ -89,8 +89,10 @@ END SendLine;
 
 PROCEDURE ReadUntilPrompt(VAR buf: ARRAY OF CHAR;
                           VAR len: CARDINAL): BOOLEAN;
-(* Read bytes until we see "(m2dap) " (7 chars + space).
-   The sentinel is NOT included in the output. *)
+(* Read bytes until we see "(m2dap) " at the end of accumulated
+   input.  The sentinel is NOT included in the output.
+   Works regardless of whether pty echo is on or off — when echo
+   is off there is no \n before the prompt. *)
 VAR
   ch: CHAR;
   pos: CARDINAL;
@@ -98,7 +100,14 @@ VAR
   matchLen: CARDINAL;
   i: CARDINAL;
 BEGIN
-  sentinel := "(m2dap) ";
+  sentinel[0] := '(';
+  sentinel[1] := 'm';
+  sentinel[2] := '2';
+  sentinel[3] := 'd';
+  sentinel[4] := 'a';
+  sentinel[5] := 'p';
+  sentinel[6] := ')';
+  sentinel[7] := ' ';
   matchLen := 8;
 
   pos := 0;
@@ -124,7 +133,7 @@ BEGIN
       IF i = matchLen THEN
         (* Found sentinel — remove it from output *)
         pos := pos - matchLen;
-        (* Also strip trailing newline before prompt if present *)
+        (* Strip trailing \r\n or \n before prompt if present *)
         IF (pos > 0) AND (buf[pos-1] = CHR(10)) THEN DEC(pos) END;
         IF (pos > 0) AND (buf[pos-1] = CHR(13)) THEN DEC(pos) END;
         len := pos;

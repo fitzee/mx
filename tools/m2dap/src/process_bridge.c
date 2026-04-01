@@ -7,6 +7,8 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <util.h>     /* forkpty() on macOS */
+#include <termios.h>
 
 /* Maximum number of arguments for spawned process */
 #define MAX_ARGS 64
@@ -14,35 +16,28 @@
 int32_t m2dap_spawn(const char *program, const char *args,
                     int32_t *stdin_fd, int32_t *stdout_fd,
                     int32_t *stderr_fd) {
-    int pipe_in[2];   /* parent writes, child reads */
-    int pipe_out[2];  /* child writes, parent reads */
-    int pipe_err[2];  /* child stderr, parent reads */
+    /*
+     * Use a pseudo-tty for the child's stdin/stdout so that lldb
+     * sees a terminal and flushes prompts immediately (without a tty,
+     * lldb buffers stdout and the prompt never arrives).
+     * stderr still uses a plain pipe.
+     */
+    int pty_master;
+    int pipe_err[2];
 
-    if (pipe(pipe_in) < 0)  return -1;
-    if (pipe(pipe_out) < 0) { close(pipe_in[0]); close(pipe_in[1]); return -1; }
-    if (pipe(pipe_err) < 0) {
-        close(pipe_in[0]); close(pipe_in[1]);
-        close(pipe_out[0]); close(pipe_out[1]);
-        return -1;
-    }
+    if (pipe(pipe_err) < 0) return -1;
 
-    pid_t pid = fork();
+    pid_t pid = forkpty(&pty_master, NULL, NULL, NULL);
     if (pid < 0) {
-        close(pipe_in[0]); close(pipe_in[1]);
-        close(pipe_out[0]); close(pipe_out[1]);
         close(pipe_err[0]); close(pipe_err[1]);
         return -1;
     }
 
     if (pid == 0) {
-        /* Child process */
-        dup2(pipe_in[0], STDIN_FILENO);
-        dup2(pipe_out[1], STDOUT_FILENO);
+        /* Child process — stdin/stdout are the pty slave (set by forkpty) */
+        close(pipe_err[0]);
         dup2(pipe_err[1], STDERR_FILENO);
-
-        close(pipe_in[0]); close(pipe_in[1]);
-        close(pipe_out[0]); close(pipe_out[1]);
-        close(pipe_err[0]); close(pipe_err[1]);
+        close(pipe_err[1]);
 
         /* Parse args into argv array */
         char *argv[MAX_ARGS];
@@ -51,7 +46,6 @@ int32_t m2dap_spawn(const char *program, const char *args,
         argv[argc++] = (char *)program;
 
         if (args != NULL && args[0] != '\0') {
-            /* Copy args so we can tokenize */
             char *args_copy = strdup(args);
             if (args_copy) {
                 char *tok = strtok(args_copy, " ");
@@ -68,12 +62,18 @@ int32_t m2dap_spawn(const char *program, const char *args,
     }
 
     /* Parent process */
-    close(pipe_in[0]);
-    close(pipe_out[1]);
     close(pipe_err[1]);
 
-    *stdin_fd  = pipe_in[1];
-    *stdout_fd = pipe_out[0];
+    /* Disable echo on the pty so we don't get double output */
+    struct termios t;
+    if (tcgetattr(pty_master, &t) == 0) {
+        t.c_lflag &= ~(ECHO | ECHONL);
+        tcsetattr(pty_master, TCSANOW, &t);
+    }
+
+    /* pty_master is used for both reading and writing */
+    *stdin_fd  = pty_master;
+    *stdout_fd = dup(pty_master);  /* dup so caller can close independently */
     *stderr_fd = pipe_err[0];
 
     return (int32_t)pid;

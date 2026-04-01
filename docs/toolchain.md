@@ -22,6 +22,10 @@ mx --emit-llvm program.mod
 
 # Compile only (produce .o, no linking)
 mx -c module.mod
+
+# Compile with AddressSanitizer + UndefinedBehaviorSanitizer
+mx --sanitize hello.mod -o hello
+mx --sanitize --llvm hello.mod -o hello
 ```
 
 ### Backend selection
@@ -254,6 +258,7 @@ See [build plan schema](mxpkg-build-plan.md) for the JSON format.
 mx --version-json          # machine-readable version info (includes target_info)
 mx --print-targets         # list supported target triples
 mx --target <triple>       # set target platform (e.g. x86_64-linux, aarch64-darwin)
+mx --sanitize              # enable ASan + UBSan (both backends)
 ```
 
 ---
@@ -265,9 +270,9 @@ Projects with an `m2.toml` manifest can use the built-in build subcommands.
 ### Subcommands
 
 ```bash
-mx build [--release] [-g] [-v] [--cc <cmd>] [--target <triple>] [--feature <name>]...
-mx run [--release] [-g] [-v] [-- <args>...]
-mx test [-v] [--feature <name>]...
+mx build [--release] [-g] [-v] [--cc <cmd>] [--target <triple>] [--sanitize] [--feature <name>]...
+mx run [--release] [-g] [-v] [--sanitize] [-- <args>...]
+mx test [-v] [--sanitize] [--feature <name>]...
 mx clean
 mx init [name]
 ```

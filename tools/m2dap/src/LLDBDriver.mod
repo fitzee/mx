@@ -202,6 +202,11 @@ VAR
   cmd: ARRAY [0..511] OF CHAR;
 BEGIN
   IF NOT Spawn() THEN RETURN FALSE END;
+
+  (* Use full paths in backtraces so DAP clients can open source files *)
+  cmd := 'settings set frame-format "frame #${frame.index}: ${frame.pc}{ ${module.file.basename}`${function.name-with-args}{${function.pc-offset}}}{ at ${line.file.fullpath}:${line.number}}\n"';
+  IF NOT SendCmd(cmd) THEN RETURN FALSE END;
+
   Assign("target create ", cmd);
   Concat(cmd, targetPath, cmd);
   IF NOT SendCmd(cmd) THEN RETURN FALSE END;

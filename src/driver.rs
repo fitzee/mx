@@ -12,6 +12,16 @@ use crate::identity;
 
 /// Return the mx install prefix directory.
 /// Uses MX_HOME env var if set, otherwise defaults to ~/.mx.
+const SANITIZER_FLAGS: &[&str] = &["-fsanitize=address,undefined", "-fno-omit-frame-pointer"];
+
+fn add_sanitizer_flags(cmd: &mut Command, opts: &CompileOptions) {
+    if opts.sanitize {
+        for flag in SANITIZER_FLAGS {
+            cmd.arg(flag);
+        }
+    }
+}
+
 fn mx_home() -> Option<PathBuf> {
     std::env::var_os(identity::ENV_HOME)
         .map(PathBuf::from)
@@ -60,6 +70,8 @@ pub struct CompileOptions {
     pub out_dir: Option<PathBuf>,
     /// Explicit target triple override (e.g. "x86_64-linux")
     pub target_triple: Option<String>,
+    /// Compile with AddressSanitizer + UndefinedBehaviorSanitizer
+    pub sanitize: bool,
 }
 
 impl Default for CompileOptions {
@@ -89,6 +101,7 @@ impl Default for CompileOptions {
             emit_per_module: false,
             out_dir: None,
             target_triple: None,
+            sanitize: false,
         }
     }
 }
@@ -1249,6 +1262,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .args(["-g", "-O0"])
                 .args(["-ffunction-sections", "-fdata-sections"])
                 .arg("-w");
+            add_sanitizer_flags(&mut compile_cmd, opts);
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, compile_cmd);
             }
@@ -1268,6 +1282,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .args(["-g", "-O0"])
                 .arg("-w");
             for flag in target.default_cflags() { rt_cmd.arg(flag); }
+            add_sanitizer_flags(&mut rt_cmd, opts);
             let output = rt_cmd.output().map_err(|e| {
                 CompileError::driver(format!("failed to compile runtime: {}", e))
             })?;
@@ -1303,6 +1318,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 link_cmd.arg("-framework");
                 link_cmd.arg(fw);
             }
+            add_sanitizer_flags(&mut link_cmd, opts);
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, link_cmd);
             }
@@ -1351,6 +1367,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 cmd.arg("-framework");
                 cmd.arg(fw);
             }
+            add_sanitizer_flags(&mut cmd, opts);
 
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, cmd);
@@ -1466,6 +1483,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
         cmd.args(["-ffunction-sections", "-fdata-sections"]);
         cmd.arg("-w"); // suppress warnings for generated code
+        add_sanitizer_flags(&mut cmd, opts);
 
         if opts.verbose {
             eprintln!("{}: {:?}", identity::COMPILER_NAME, cmd);
@@ -1523,6 +1541,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                     }
                 }
             }
+            add_sanitizer_flags(&mut compile_cmd, opts);
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, compile_cmd);
             }
@@ -1568,6 +1587,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                     }
                 }
             }
+            add_sanitizer_flags(&mut link_cmd, opts);
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, link_cmd);
             }
@@ -1642,6 +1662,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             cmd.args(["-ffunction-sections", "-fdata-sections"]);
             for flag in target.default_ldflags() { cmd.arg(flag); }
             cmd.arg("-w");
+            add_sanitizer_flags(&mut cmd, opts);
 
             if opts.verbose {
                 eprintln!("{}: {:?}", identity::COMPILER_NAME, cmd);

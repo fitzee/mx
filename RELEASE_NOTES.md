@@ -1,5 +1,21 @@
 # Release Notes
 
+## 1.8.1 (2026-04-01)
+
+### Bug fixes
+
+- **DWARF local variable debug info** — The LLVM backend now emits `#dbg_declare` for local variables, not just parameters. Variables appear in the debugger inspector when building with `-g`.
+- **LLVM optnone in debug builds** — Functions compiled with `-g` now include `optnone noinline` attributes, preventing LLVM's mem2reg pass from promoting allocas and dropping debug variable info.
+- **Const eval wrapping arithmetic** — Integer constant evaluation uses wrapping add/sub/mul, fixing a panic on expressions like `4000000000000000H * 2` that overflow signed i64 (legitimate for CARDINAL/LONGCARD bit patterns).
+- **CHR/ORD const eval** — Fixed CHR and ORD handling in constant expression evaluation in sema.
+- **LLVM single-char string memcpy** — Fixed LLVM codegen for single-character string assignments.
+
+### Tooling
+
+- **m2dap 0.2.0: pty-based lldb** — The debug adapter now spawns lldb via a pseudo-tty (forkpty) so lldb flushes prompts immediately. Fixes the hang where lldb buffered stdout with plain pipes.
+- **m2dap: sentinel match fix** — Dropped the `\n` prefix from the `(m2dap) ` prompt sentinel. When pty echo is suppressed, no newline precedes the prompt — the old sentinel never matched, causing a hang.
+- **m2dap: full source paths in stack frames** — Stack traces now report absolute file paths via `settings set frame-format` with `${line.file.fullpath}`, so VS Code can open source files from the call stack.
+
 ## 1.8.0 (2026-03-31)
 
 ### Features

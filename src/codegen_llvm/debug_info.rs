@@ -20,7 +20,7 @@ pub(crate) struct DebugInfoBuilder {
     current_scope: Option<usize>,
     /// Current source location (!DILocation ID), reused if line hasn't changed
     current_loc: Option<usize>,
-    current_loc_line: usize,
+    pub(crate) current_loc_line: usize,
     current_loc_file: String,
     /// Module flags and named metadata (emitted at very end)
     producer: String,

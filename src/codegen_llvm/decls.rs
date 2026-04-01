@@ -367,7 +367,7 @@ impl LLVMCodeGen {
         let stmt_count = proc.body.as_ref().map(|s| s.len()).unwrap_or(0);
         let is_huge = stmt_count > 200; // HIR stmts are denser than AST
         let has_exceptions = proc.except_handler.is_some() || self.m2plus;
-        let fn_attrs = if is_huge {
+        let fn_attrs = if is_huge || self.di.is_some() {
             " optnone noinline"
         } else if has_exceptions { "" } else { " nounwind" };
 
@@ -587,7 +587,7 @@ impl LLVMCodeGen {
 
                 let alloca = self.next_tmp();
                 self.emitln(&format!("  {} = alloca {}", alloca, llvm_ty));
-                self.locals.last_mut().unwrap().insert(name.clone(), (alloca, llvm_ty.clone()));
+                self.locals.last_mut().unwrap().insert(name.clone(), (alloca.clone(), llvm_ty.clone()));
                 if is_array {
                     self.array_vars.insert(name.clone());
                 }
@@ -598,6 +598,17 @@ impl LLVMCodeGen {
                     self.var_type_names.insert(name.clone(), m2_type_name);
                 }
                 self.var_types.insert(name.clone(), *type_id);
+
+                // Debug info for local variable
+                if self.di.is_some() {
+                    let source_file = self.source_file.clone();
+                    let di_type_id = self.debug_type_for_llvm_type_str(&llvm_ty);
+                    let loc_line = self.di.as_ref().unwrap().current_loc_line;
+                    let var_id = self.di.as_mut().unwrap().create_local_variable(
+                        name, &source_file, loc_line, di_type_id, 0,
+                    );
+                    self.emit_dbg_declare(&alloca, var_id);
+                }
             }
             LD::Type { name, type_id } => {
                 let hir_td = crate::hir::HirTypeDecl {

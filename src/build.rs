@@ -141,6 +141,7 @@ pub struct BuildConfig {
     pub features: Vec<String>,
     pub debug: bool,
     pub use_llvm: bool,
+    pub sanitize: bool,
     pub target_triple: Option<String>,
 }
 
@@ -263,6 +264,7 @@ pub fn build_project(
     opts.debug = config.debug;
     opts.emit_llvm = config.use_llvm;
     opts.use_llvm = config.use_llvm;
+    opts.sanitize = config.sanitize;
     opts.target_triple = config.target_triple.clone();
 
     // Auto-inject platform feature (MACOS or LINUX)

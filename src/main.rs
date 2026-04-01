@@ -68,6 +68,7 @@ fn main() {
         eprintln!("  --feature <name>    Enable a feature for conditional compilation");
         eprintln!("  --lsp               Start LSP server (JSON-RPC over stdio)");
         eprintln!("  -g, --debug    Compile with debug info (DWARF via #line mapping)");
+        eprintln!("  --sanitize     Enable AddressSanitizer + UndefinedBehaviorSanitizer");
         eprintln!("  -l <lib>       Link with library");
         eprintln!("  -L <path>      Add library search path");
         eprintln!("  --target <triple>  Set target (e.g. x86_64-linux, aarch64-darwin)");
@@ -236,6 +237,7 @@ fn main() {
             "-v" => opts.verbose = true,
             "-g" | "--debug" => opts.debug = true,
             "--m2plus" => opts.m2plus = true,
+            "--sanitize" => opts.sanitize = true,
             "--case-insensitive" => opts.case_sensitive = false,
             "--diagnostics-json" => opts.diagnostics_json = true,
             "--feature" => {
@@ -484,6 +486,7 @@ fn run_subcommand(args: &[String]) {
     let mut release = false;
     let mut debug = false;
     let mut use_llvm = false;
+    let mut sanitize = false;
     let mut cc = "cc".to_string();
     let mut features: Vec<String> = Vec::new();
     let mut run_args: Vec<String> = Vec::new();
@@ -503,6 +506,7 @@ fn run_subcommand(args: &[String]) {
             "--release" => release = true,
             "-g" | "--debug" => debug = true,
             "--llvm" => use_llvm = true,
+            "--sanitize" => sanitize = true,
             "--cc" => {
                 i += 1;
                 if i >= args.len() {
@@ -638,6 +642,7 @@ fn run_subcommand(args: &[String]) {
         features,
         debug,
         use_llvm: use_llvm || manifest_llvm,
+        sanitize,
         target_triple,
     };
 
