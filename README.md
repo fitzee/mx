@@ -1,5 +1,11 @@
 # mx — Modula-2 Compiler
 
+![version](https://img.shields.io/badge/version-1.8.2-blue)
+![language](https://img.shields.io/badge/language-Rust-orange)
+![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey)
+![license](https://img.shields.io/badge/license-MIT-green)
+![PIM4](https://img.shields.io/badge/Modula--2-PIM4-blueviolet)
+
 mx compiles Modula-2 to native executables via two backends: a **C backend** (transpile to C, then invoke the system C compiler) and an **LLVM backend** (emit LLVM IR, compile with clang). It implements **PIM4** with optional **Modula-2+** extensions (exceptions, reference types, objects, concurrency) via `--m2plus`.
 
 ## Why Modula-2?
