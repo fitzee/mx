@@ -2,7 +2,7 @@
   "name": "m2plus",
   "displayName": "Modula-2+ (mx)",
   "description": "Modula-2 / Modula-2+ language support powered by mx",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "mx",
   "license": "MIT",
   "engines": {
@@ -14,7 +14,13 @@
   "activationEvents": [
     "onLanguage:modula2",
     "onView:mxDocsBrowser",
-    "onDebugResolve:m2dap"
+    "onDebugResolve:m2dap",
+    "onCommand:mx.initProject",
+    "onCommand:mx.restartServer",
+    "onCommand:mx.reindexWorkspace",
+    "onCommand:mx.diagnoseWorkspace",
+    "onCommand:mx.openDocumentation",
+    "onCommand:mx.createDebugConfig"
   ],
   "main": "./out/extension.js",
   "contributes": {

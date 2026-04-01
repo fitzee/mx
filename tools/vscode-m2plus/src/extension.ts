@@ -8,6 +8,231 @@ import {
 
 let client: LanguageClient | undefined;
 
+// ── Auto-capitalize keywords & builtins ─────────────────────────
+
+const M2_KEYWORDS = new Set([
+  "AND", "ARRAY", "BEGIN", "BY", "CASE", "CONST", "DEFINITION", "DIV",
+  "DO", "ELSE", "ELSIF", "END", "EXIT", "EXPORT", "FOR", "FROM", "IF",
+  "IMPLEMENTATION", "IMPORT", "IN", "LOOP", "MOD", "MODULE", "NOT",
+  "OF", "OR", "POINTER", "PROCEDURE", "QUALIFIED", "RECORD", "REPEAT",
+  "RETURN", "SET", "THEN", "TO", "TYPE", "UNTIL", "VAR", "WHILE", "WITH",
+  // M2+ extensions
+  "AS", "BRANDED", "EXCEPT", "EXCEPTION", "FINALLY", "LOCK", "METHODS",
+  "OBJECT", "OVERRIDE", "RAISE", "REF", "REFANY", "RETRY", "TRY",
+]);
+
+const M2_BUILTINS = new Set([
+  "ABS", "BITSET", "BOOLEAN", "CAP", "CARDINAL", "CHAR", "CHR", "DEC",
+  "DISPOSE", "EXCL", "FALSE", "FLOAT", "HALT", "HIGH", "INC", "INCL",
+  "INTEGER", "LONGCARD", "LONGINT", "LONGREAL", "MAX", "MIN", "NEW",
+  "NIL", "ODD", "ORD", "PROC", "REAL", "SIZE", "TRUE", "TRUNC", "VAL",
+  "ADDRESS", "BYTE", "WORD", "ADR", "TSIZE",
+]);
+
+const M2_UPPERCASE = new Set([...M2_KEYWORDS, ...M2_BUILTINS]);
+
+// Characters that signal the end of a word
+const WORD_BOUNDARY = /[\s;:,.()\[\]{}<>=+\-*\/^#|&~!]/;
+
+function registerAutoCapitalize(context: vscode.ExtensionContext): void {
+  let suppressNext = false;
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document.languageId !== "modula2") { return; }
+      if (e.contentChanges.length !== 1) { return; }
+      if (suppressNext) { suppressNext = false; return; }
+
+      const change = e.contentChanges[0];
+      const typed = change.text;
+
+      // Trigger on word boundary characters or newline
+      if (typed.length !== 1 || !WORD_BOUNDARY.test(typed)) { return; }
+
+      const pos = change.range.start;
+      const line = e.document.lineAt(pos.line).text;
+
+      // Extract the word just before the typed character
+      let end = pos.character;
+      let start = end;
+      while (start > 0 && /[a-zA-Z0-9_]/.test(line[start - 1])) { start--; }
+      if (start === end) { return; }
+
+      const word = line.substring(start, end);
+      const upper = word.toUpperCase();
+      if (word === upper) { return; } // already uppercase
+      if (!M2_UPPERCASE.has(upper)) { return; } // not a keyword/builtin
+
+      // Don't capitalize inside strings or comments
+      const prefix = line.substring(0, start);
+      if ((prefix.match(/"/g) || []).length % 2 !== 0) { return; }
+      if ((prefix.match(/'/g) || []).length % 2 !== 0) { return; }
+      if (prefix.includes("(*")) {
+        const opened = (prefix.match(/\(\*/g) || []).length;
+        const closed = (prefix.match(/\*\)/g) || []).length;
+        if (opened > closed) { return; }
+      }
+
+      const range = new vscode.Range(pos.line, start, pos.line, end);
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(e.document.uri, range, upper);
+      suppressNext = true;
+      vscode.workspace.applyEdit(edit);
+    })
+  );
+}
+
+// ── Auto-import completion provider ─────────────────────────────
+
+// Map: procedure/type name → module it lives in
+const STDLIB_EXPORTS: Record<string, string> = {
+  // InOut
+  WriteString: "InOut", WriteLn: "InOut", WriteInt: "InOut",
+  WriteCard: "InOut", WriteHex: "InOut", WriteOct: "InOut",
+  Write: "InOut", WriteChar: "InOut", Read: "InOut", ReadChar: "InOut",
+  ReadString: "InOut", ReadInt: "InOut", ReadCard: "InOut",
+  OpenInput: "InOut", OpenOutput: "InOut", CloseInput: "InOut",
+  CloseOutput: "InOut", Done: "InOut",
+  // Strings
+  Assign: "Strings", Insert: "Strings", Delete: "Strings",
+  Pos: "Strings", Copy: "Strings", Concat: "Strings",
+  CompareStr: "Strings", CAPS: "Strings",
+  // Storage
+  ALLOCATE: "Storage", DEALLOCATE: "Storage",
+  // MathLib0
+  sqrt: "MathLib0", sin: "MathLib0", cos: "MathLib0",
+  exp: "MathLib0", ln: "MathLib0", arctan: "MathLib0",
+  entier: "MathLib0", Random: "MathLib0", Randomize: "MathLib0",
+  // RealInOut
+  ReadReal: "RealInOut", WriteReal: "RealInOut",
+  WriteFixPt: "RealInOut", WriteRealOct: "RealInOut",
+  // Terminal
+  // (Read/Write/WriteString/WriteLn overlap with InOut — skip)
+  // BinaryIO
+  OpenRead: "BinaryIO", OpenWrite: "BinaryIO",
+  ReadByte: "BinaryIO", WriteByte: "BinaryIO",
+  ReadBytes: "BinaryIO", WriteBytes: "BinaryIO",
+  FileSize: "BinaryIO", Seek: "BinaryIO", Tell: "BinaryIO",
+  IsEOF: "BinaryIO",
+  // STextIO
+  SkipLine: "STextIO", ReadToken: "STextIO",
+  // SWholeIO (use distinct names that don't conflict with InOut)
+  // SRealIO / SLongIO
+  WriteFloat: "SRealIO", WriteFixed: "SRealIO",
+  WriteLongReal: "SLongIO", ReadLongReal: "SLongIO",
+  // SYSTEM
+  ADR: "SYSTEM", TSIZE: "SYSTEM", ADDRESS: "SYSTEM",
+  BYTE: "SYSTEM", WORD: "SYSTEM",
+};
+
+/** Find the line number to insert a new import (after MODULE line, among existing imports). */
+function findImportInsertLine(doc: vscode.TextDocument): number {
+  let lastImportLine = -1;
+  let moduleLineFound = false;
+  for (let i = 0; i < Math.min(doc.lineCount, 50); i++) {
+    const line = doc.lineAt(i).text.trimStart();
+    if (/^(PROGRAM\s+)?MODULE\s/.test(line) || /^(DEFINITION|IMPLEMENTATION)\s+MODULE\s/.test(line)) {
+      moduleLineFound = true;
+    }
+    if (/^(FROM|IMPORT)\s/.test(line)) {
+      lastImportLine = i;
+    }
+    // Stop scanning after BEGIN/CONST/TYPE/VAR/PROCEDURE (past import section)
+    if (moduleLineFound && /^(BEGIN|CONST|TYPE|VAR|PROCEDURE)\b/.test(line)) {
+      break;
+    }
+  }
+  return lastImportLine >= 0 ? lastImportLine + 1 : (moduleLineFound ? 2 : 0);
+}
+
+/** Check if a name is already imported in the document. */
+function isAlreadyImported(doc: vscode.TextDocument, name: string): boolean {
+  for (let i = 0; i < Math.min(doc.lineCount, 50); i++) {
+    const line = doc.lineAt(i).text;
+    // Match "FROM Mod IMPORT ..., name, ..." or "IMPORT name"
+    if (line.includes(name)) {
+      const importMatch = line.match(/FROM\s+\w+\s+IMPORT\s+(.+);/);
+      if (importMatch) {
+        const imports = importMatch[1].split(",").map(s => s.trim());
+        if (imports.includes(name)) { return true; }
+      }
+      if (new RegExp(`^\\s*IMPORT\\s+.*\\b${name}\\b`).test(line)) { return true; }
+    }
+  }
+  return false;
+}
+
+/** Find an existing "FROM <module> IMPORT ...;" line and return its line number, or -1. */
+function findExistingFromImport(doc: vscode.TextDocument, moduleName: string): number {
+  for (let i = 0; i < Math.min(doc.lineCount, 50); i++) {
+    const line = doc.lineAt(i).text;
+    if (new RegExp(`^FROM\\s+${moduleName}\\s+IMPORT\\s+`).test(line.trimStart())) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function registerAutoImportCompletion(context: vscode.ExtensionContext): void {
+  const provider = vscode.languages.registerCompletionItemProvider(
+    { language: "modula2", scheme: "file" },
+    {
+      provideCompletionItems(doc, position) {
+        const range = doc.getWordRangeAtPosition(position);
+        if (!range) { return []; }
+        const prefix = doc.getText(range);
+        if (prefix.length < 2) { return []; }
+
+        const items: vscode.CompletionItem[] = [];
+        const prefixLower = prefix.toLowerCase();
+
+        for (const [name, mod] of Object.entries(STDLIB_EXPORTS)) {
+          if (!name.toLowerCase().startsWith(prefixLower)) { continue; }
+          if (isAlreadyImported(doc, name)) { continue; }
+
+          const item = new vscode.CompletionItem(
+            name,
+            vscode.CompletionItemKind.Function
+          );
+          item.detail = `FROM ${mod} IMPORT ${name}`;
+          item.documentation = `Auto-import ${name} from ${mod}`;
+          item.sortText = `0_${name}`; // sort before other completions
+
+          // Build the additional edit to add the import
+          const existingLine = findExistingFromImport(doc, mod);
+          if (existingLine >= 0) {
+            // Append to existing FROM ... IMPORT line
+            const lineText = doc.lineAt(existingLine).text;
+            const semi = lineText.lastIndexOf(";");
+            if (semi >= 0) {
+              item.additionalTextEdits = [
+                vscode.TextEdit.insert(
+                  new vscode.Position(existingLine, semi),
+                  `, ${name}`
+                ),
+              ];
+            }
+          } else {
+            // Insert new FROM ... IMPORT line
+            const insertLine = findImportInsertLine(doc);
+            item.additionalTextEdits = [
+              vscode.TextEdit.insert(
+                new vscode.Position(insertLine, 0),
+                `FROM ${mod} IMPORT ${name};\n`
+              ),
+            ];
+          }
+
+          items.push(item);
+        }
+
+        return items;
+      },
+    }
+  );
+  context.subscriptions.push(provider);
+}
+
 // ── Debug Adapter ───────────────────────────────────────────────
 
 class M2DapAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
@@ -249,6 +474,10 @@ class MxTaskProvider implements vscode.TaskProvider {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  // Auto-capitalize keywords and auto-import stdlib procedures
+  registerAutoCapitalize(context);
+  registerAutoImportCompletion(context);
+
   const config = vscode.workspace.getConfiguration("mx");
   const serverPath = config.get<string>("serverPath", "mx");
   const m2plus = config.get<boolean>("m2plus", true);
@@ -296,18 +525,63 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider("mxDocsBrowser", docTree)
   );
 
-  client = new LanguageClient(
-    "mx-lsp",
-    "Modula-2+ Language Server",
-    serverOptions,
-    clientOptions
+  // ── Status bar: workspace index status ─────────────────────────
+  const indexStatus = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left, 0
   );
+  indexStatus.command = "mx.reindexWorkspace";
+  indexStatus.text = "$(database) mx";
+  indexStatus.tooltip = "mx workspace index — click to reindex";
+  context.subscriptions.push(indexStatus);
 
-  const startPromise = client.start().catch((err: Error) => {
-    vscode.window.showWarningMessage(
-      `mx language server failed to start: ${err.message}. Ensure mx is on your PATH.`
+  // Defer LSP client start until a .mod/.def file is actually open.
+  // This lets commands like initProject/createDebugConfig work without the LSP.
+  let clientStarted = false;
+
+  function ensureClient(): void {
+    if (clientStarted) { return; }
+    clientStarted = true;
+    indexStatus.text = "$(sync~spin) mx: starting…";
+    indexStatus.show();
+    client = new LanguageClient(
+      "mx-lsp",
+      "Modula-2+ Language Server",
+      serverOptions,
+      clientOptions
     );
-  });
+    client.start().then(() => {
+      docTree.refresh();
+      if (client) {
+        client.onNotification("m2/indexStatus", (params: {
+          state: string; files: number; symbols: number; dirty: boolean;
+        }) => {
+          if (params.state === "indexing") {
+            indexStatus.text = "$(sync~spin) mx: indexing…";
+            indexStatus.tooltip = "mx workspace index — indexing in progress";
+          } else {
+            const dirtyTag = params.dirty ? " (stale)" : "";
+            indexStatus.text = `$(database) mx: ${params.files} files, ${params.symbols} symbols${dirtyTag}`;
+            indexStatus.tooltip = `mx workspace index — ${params.files} files, ${params.symbols} symbols${dirtyTag}\nClick to reindex`;
+          }
+        });
+      }
+    }).catch((err: Error) => {
+      indexStatus.text = "$(error) mx: offline";
+      vscode.window.showWarningMessage(
+        `mx language server failed to start: ${err.message}. Ensure mx is on your PATH.`
+      );
+    });
+  }
+
+  // Start LSP when a Modula-2 file is opened or is already open
+  if (vscode.window.activeTextEditor?.document.languageId === "modula2") {
+    ensureClient();
+  }
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((doc) => {
+      if (doc.languageId === "modula2") { ensureClient(); }
+    })
+  );
 
   // Command: show a single doc in webview (used by tree item click)
   context.subscriptions.push(
@@ -338,9 +612,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("mx.restartServer", async () => {
       if (client) {
-        await client.stop();
+        try { await client.stop(); } catch { /* may not be running */ }
         await client.start();
         vscode.window.showInformationMessage("mx language server restarted");
+      } else {
+        ensureClient();
+        vscode.window.showInformationMessage("mx language server started");
       }
     })
   );
@@ -522,32 +799,6 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // ── Status bar: workspace index status ─────────────────────────
-  const indexStatus = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left, 0
-  );
-  indexStatus.command = "mx.reindexWorkspace";
-  indexStatus.text = "$(database) mx: indexing…";
-  indexStatus.tooltip = "mx workspace index — click to reindex";
-  indexStatus.show();
-  context.subscriptions.push(indexStatus);
-
-  // Listen for m2/indexStatus notifications from the server (after client is ready)
-  startPromise.then(() => {
-    if (!client) { return; }
-    client.onNotification("m2/indexStatus", (params: {
-      state: string; files: number; symbols: number; dirty: boolean;
-    }) => {
-      if (params.state === "indexing") {
-        indexStatus.text = "$(sync~spin) mx: indexing…";
-        indexStatus.tooltip = "mx workspace index — indexing in progress";
-      } else {
-        const dirtyTag = params.dirty ? " (stale)" : "";
-        indexStatus.text = `$(database) mx: ${params.files} files, ${params.symbols} symbols${dirtyTag}`;
-        indexStatus.tooltip = `mx workspace index — ${params.files} files, ${params.symbols} symbols${dirtyTag}\nClick to reindex`;
-      }
-    });
-  });
 
   // ── File watcher: auto-reindex on .mod/.def create/delete ─────
   const fileWatcher = vscode.workspace.createFileSystemWatcher("**/*.{mod,def,MOD,DEF}");

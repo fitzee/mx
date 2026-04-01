@@ -1,5 +1,14 @@
 # Release Notes
 
+## vscode-m2plus 0.3.0 (2026-04-01)
+
+### Features
+
+- **Auto-capitalize keywords** — Keywords and builtins are automatically uppercased as you type. Triggers on word boundaries (space, semicolon, newline, etc.) and skips strings and comments.
+- **Auto-import stdlib completions** — Typing a stdlib procedure name (e.g., `WriteString`, `Assign`, `sqrt`) offers a completion that also inserts the `FROM Module IMPORT ...;` line. Appends to existing imports from the same module.
+- **Lazy LSP startup** — The language server now only starts when a `.mod`/`.def` file is opened. Commands like Initialize Project and Create Debug Config work immediately without waiting for the LSP.
+- **Command activation** — All commands (init, restart, reindex, diagnose, debug config) now activate the extension on invocation, so they work even without a Modula-2 file open.
+
 ## 1.8.1 (2026-04-01)
 
 ### Bug fixes
