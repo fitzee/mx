@@ -1976,6 +1976,28 @@ impl SemanticAnalyzer {
             let pt = self.types.get(resolved_param);
             let at = self.types.get(resolved_arg);
 
+            // TY_STRING formal (stdlib stubs): treat like ARRAY OF CHAR —
+            // accepts fixed arrays of CHAR, open arrays of CHAR, and string literals.
+            if matches!(pt, Type::StringLit(_)) {
+                let ok = match at {
+                    Type::Array { elem_type, .. } | Type::OpenArray { elem_type } => {
+                        self.resolve_alias(*elem_type) == TY_CHAR
+                    }
+                    Type::StringLit(_) => true,
+                    _ => false,
+                };
+                if !ok {
+                    self.error(
+                        &arg.loc,
+                        format!(
+                            "incompatible type for parameter '{}'",
+                            param.name
+                        ),
+                    );
+                }
+                continue;
+            }
+
             // Open array parameter: actual must be an array with matching element type
             if let Type::OpenArray { elem_type: expected_elem } = pt {
                 let ok = match at {
