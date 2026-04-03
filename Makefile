@@ -107,6 +107,7 @@ install: build
 	@cp libs/m2sys/m2sys.c "$(PREFIX)/lib/m2sys/m2sys.c"
 	@cp libs/m2sys/m2sys.h "$(PREFIX)/lib/m2sys/m2sys.h"
 	@cp libs/m2sys/m2.toml "$(PREFIX)/lib/m2sys/m2.toml"
+	@cp libs/m2sys/Sys.def "$(PREFIX)/lib/m2sys/Sys.def"
 	@# ── Libraries ──
 	@for libdir in libs/m2*/; do \
 		name=$$(basename "$$libdir"); \
