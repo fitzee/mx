@@ -76,7 +76,7 @@ impl CodeGen {
                 // Type cast — for index expressions, just emit the inner value
                 self.hir_expr_to_c_string(arg)
             }
-            _ => format!("/* HIR expr */0"),
+            _ => self.hir_expr_to_string(expr),
         }
     }
 

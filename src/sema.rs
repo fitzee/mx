@@ -1904,8 +1904,19 @@ impl SemanticAnalyzer {
                                 // Already error — don't cascade
                             }
                             _ => {
-                                self.error(loc, "field access on non-record type");
-                                current_type = TY_ERROR;
+                                // Before erroring, check if the base identifier is
+                                // also a module name — handles cases like:
+                                //   FROM Stream IMPORT Stream; IMPORT Stream;
+                                //   st := Stream.Destroy(str);
+                                // where Stream resolves to the type, but .Destroy
+                                // is a qualified module access.
+                                let base_name = &desig.ident.name;
+                                if let Some((_ds, sym)) = self.symtab.lookup_qualified_with_scope(base_name, name) {
+                                    current_type = sym.typ;
+                                } else {
+                                    self.error(loc, "field access on non-record type");
+                                    current_type = TY_ERROR;
+                                }
                             }
                         }
                     }
@@ -2033,6 +2044,10 @@ impl SemanticAnalyzer {
                         (Type::StringLit(_), Type::OpenArray { elem_type }) => {
                             self.resolve_alias(*elem_type) == TY_CHAR
                         }
+                        // VAR ADDRESS accepts any pointer type (PIM4 SYSTEM convention:
+                        // ALLOCATE/DEALLOCATE take VAR ADDRESS but receive typed pointers)
+                        (Type::Address, _) if at.is_pointer() => true,
+                        (_, Type::Address) if pt.is_pointer() => true,
                         _ => false,
                     };
                     if !structurally_ok {

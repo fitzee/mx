@@ -1,5 +1,20 @@
 # Release Notes
 
+## 1.8.3 (2026-04-03)
+
+### Bug fixes
+
+- **C backend: function call as array index** — Array subscript expressions using a function call on the LHS (e.g., `buf[GetPos()] := ch`) were silently emitted as index 0, writing to the wrong element. The designator expression emitter now delegates unhandled HIR expression kinds to the full expression emitter.
+- **LLVM backend: foreign module qualified imports** — `IMPORT Sys` of a `DEFINITION MODULE FOR "C"` failed to declare or name-map the C functions, causing "use of undefined value" errors at link time. Both qualified (`IMPORT M`) and unqualified (`FROM M IMPORT f`) foreign imports are now handled.
+- **ADR on single-char string literals** — `ADR("r")` emitted invalid code on both backends (scalar char instead of addressable pointer). String literals in ADR context are now emitted as interned constants.
+- **Sema: VAR ADDRESS accepts typed pointers** — `ALLOCATE`/`DEALLOCATE` take `VAR ADDRESS` but were rejecting typed pointer arguments (e.g., `POINTER TO INTEGER`). The VAR parameter check now allows pointer↔ADDRESS compatibility.
+- **Sema: OBJECT types assignable to REFANY** — M2+ OBJECT types are reference types but `is_ref()` did not include them, causing "incompatible type" errors when passing objects to REFANY parameters.
+- **Sema: module/type name collision** — When a type and its module share the same name (e.g., `FROM Stream IMPORT Stream`), qualified calls like `Stream.Destroy()` were rejected as "field access on non-record type". The field-access fallback now tries qualified module lookup.
+
+### Test coverage
+
+- **func_call_index** — Adversarial regression test for function calls used as array indices on both backends.
+
 ## 1.8.2 (2026-04-01)
 
 ### Features

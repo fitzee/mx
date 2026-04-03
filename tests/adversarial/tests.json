@@ -1885,6 +1885,24 @@
     "_comment": "Regression: single-char string literals in FOR loop bounds were emitted as C string literals (char[2]) instead of char values, causing incompatible pointer-to-integer conversion."
   },
   {
+    "name": "func_call_index",
+    "category": "codegen",
+    "dir": "codegen/func_call_index",
+    "main": "FuncCallIndex.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "ok0\nok2\nok3\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: function call as array index on LHS was emitted as 0 in C backend, writing to wrong index."
+  },
+  {
     "name": "enum_indexed_array",
     "category": "codegen",
     "dir": "codegen/enum_indexed_array",

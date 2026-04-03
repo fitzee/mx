@@ -522,6 +522,43 @@ impl LLVMCodeGen {
                         for export in &exports {
                             self.declare_stdlib_function(&iname.name, export);
                         }
+                    } else if self.foreign_modules.contains(iname.name.as_str()) {
+                        // Qualified import of foreign C module: IMPORT Sys
+                        // Enumerate all exported procs and declare + map them.
+                        let mod_name = &iname.name;
+                        if let Some(scope_id) = self.sema.symtab.lookup_module_scope(mod_name) {
+                            let syms: Vec<_> = self.sema.symtab.symbols_in_scope(scope_id)
+                                .iter()
+                                .filter(|s| matches!(s.kind, crate::symtab::SymbolKind::Procedure { .. }))
+                                .map(|s| s.name.clone())
+                                .collect();
+                            for bare_name in syms {
+                                let mangled = format!("{}_{}", mod_name, bare_name);
+                                self.fn_name_map.insert(mangled, bare_name.clone());
+                                if !self.declared_fns.contains(&bare_name) {
+                                    if let Some(sym) = self.sema.symtab.lookup_any(&bare_name) {
+                                        if let crate::symtab::SymbolKind::Procedure { params, return_type, .. } = &sym.kind {
+                                            let ret_ty = if let Some(ret_id) = return_type {
+                                                self.llvm_type_for_type_id(*ret_id)
+                                            } else { "void".to_string() };
+                                            let param_tys: Vec<String> = params.iter()
+                                                .map(|p| {
+                                                    let ty = self.llvm_type_for_type_id(p.typ);
+                                                    if p.is_var || ty == "ptr" { "ptr".to_string() } else { ty }
+                                                })
+                                                .collect();
+                                            let params_str = param_tys.join(", ");
+                                            self.emit_preambleln(&format!("declare {} @{}({})", ret_ty, bare_name, params_str));
+                                        } else {
+                                            self.emit_preambleln(&format!("declare i32 @{}(...)", bare_name));
+                                        }
+                                    } else {
+                                        self.emit_preambleln(&format!("declare i32 @{}(...)", bare_name));
+                                    }
+                                    self.declared_fns.insert(bare_name);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -534,6 +571,9 @@ impl LLVMCodeGen {
                     // Foreign C modules — declare functions with proper signatures
                     for iname in &imp.names {
                         let bare_name = &iname.name;
+                        // Map Module_name → bare_name so call sites resolve correctly
+                        let mangled = format!("{}_{}", imp.module, bare_name);
+                        self.fn_name_map.insert(mangled, bare_name.clone());
                         if !self.declared_fns.contains(bare_name) {
                             if let Some(sym) = self.sema.symtab.lookup_any(bare_name) {
                                 if let crate::symtab::SymbolKind::Procedure { params, return_type, .. } = &sym.kind {

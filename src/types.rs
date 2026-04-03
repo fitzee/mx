@@ -252,7 +252,7 @@ impl Type {
     }
 
     pub fn is_ref(&self) -> bool {
-        matches!(self, Type::Ref { .. } | Type::RefAny)
+        matches!(self, Type::Ref { .. } | Type::RefAny | Type::Object { .. })
     }
 
     pub fn is_object(&self) -> bool {
