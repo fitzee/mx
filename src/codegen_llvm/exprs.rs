@@ -148,7 +148,14 @@ impl LLVMCodeGen {
                                     let addr = self.emit_place_addr(place);
                                     return Val::with_tid(addr.name, "ptr".to_string(), crate::types::TY_ADDRESS);
                                 }
-                                // Non-place arg (e.g., string literal)
+                                // String literal: always emit as interned string
+                                // constant (ptr), even if typed TY_CHAR for
+                                // single-char strings — ADR needs an address.
+                                if let HirExprKind::StringLit(ref s) = arg.kind {
+                                    let (sname, _) = self.intern_string(s);
+                                    return Val::with_tid(sname, "ptr".to_string(), crate::types::TY_ADDRESS);
+                                }
+                                // Non-place, non-string arg
                                 let val = self.gen_hir_expr(arg);
                                 return Val::with_tid(val.name, "ptr".to_string(), crate::types::TY_ADDRESS);
                             }

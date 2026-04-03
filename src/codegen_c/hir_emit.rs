@@ -62,6 +62,12 @@ impl super::CodeGen {
                     // ADR on open array / VAR open array: the param is already
                     // a pointer in C, so emit (void *)arg, not (void *)&(arg).
                     if name == "ADR" && args.len() == 1 {
+                        // String literal: always emit as C string, even for
+                        // single-char strings typed TY_CHAR — ADR needs an
+                        // addressable value, not a char scalar.
+                        if let HirExprKind::StringLit(ref s) = args[0].kind {
+                            return format!("((void *)\"{}\")", super::escape_c_string(s));
+                        }
                         if let HirExprKind::Place(ref place) = args[0].kind {
                             // Bare open array param: already a pointer, skip &
                             let is_bare_open = place.projections.is_empty()
