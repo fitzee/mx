@@ -8,6 +8,7 @@ target/
 
 # Generated C/LLVM output from mx compilation
 libs/*/src/*.c
+!libs/*/src/*_bridge.c
 examples/**/*.c
 examples/**/*.ll
 examples/**/hello
