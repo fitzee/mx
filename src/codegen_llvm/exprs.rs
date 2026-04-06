@@ -281,15 +281,9 @@ impl LLVMCodeGen {
                                 let shift = self.gen_hir_expr(&args[1]);
                                 let v32 = self.coerce_val(&val, "i32");
                                 let s32 = self.coerce_val(&shift, "i32");
-                                // left rotate: (x << n) | (x >> (32 - n))
-                                let shl = self.next_tmp();
-                                self.emitln(&format!("  {} = shl i32 {}, {}", shl, v32.name, s32.name));
-                                let sub = self.next_tmp();
-                                self.emitln(&format!("  {} = sub i32 32, {}", sub, s32.name));
-                                let shr = self.next_tmp();
-                                self.emitln(&format!("  {} = lshr i32 {}, {}", shr, v32.name, sub));
                                 let tmp = self.next_tmp();
-                                self.emitln(&format!("  {} = or i32 {}, {}", tmp, shl, shr));
+                                self.emitln(&format!("  {} = call i32 @llvm.fshl.i32(i32 {}, i32 {}, i32 {})",
+                                    tmp, v32.name, v32.name, s32.name));
                                 return Val::with_tid(tmp, "i32".to_string(), expr.ty);
                             }
                         }
@@ -331,6 +325,40 @@ impl LLVMCodeGen {
                 let mut arg_str = self.expand_hir_call_args(args);
                 let call_name = self.fn_name_map.get(&target.mangled)
                     .cloned().unwrap_or_else(|| target.mangled.clone());
+
+                // MathLib → LLVM intrinsics (single-arg float→float functions)
+                let math_intrinsic = match call_name.as_str() {
+                    "MathLib_sqrt" => Some("llvm.sqrt"),
+                    "MathLib_sin"  => Some("llvm.sin"),
+                    "MathLib_cos"  => Some("llvm.cos"),
+                    "MathLib_exp"  => Some("llvm.exp"),
+                    "MathLib_ln"   => Some("llvm.log"),
+                    "MathLib_arctan" => Some("llvm.atan"),
+                    "MathLib_entier" => Some("llvm.floor"),
+                    _ => None,
+                };
+                if let Some(base) = math_intrinsic {
+                    if let Some(arg) = args.first() {
+                        let val = self.gen_hir_expr(arg);
+                        let fty = if val.ty == "double" { "double" } else { "float" };
+                        let fval = self.coerce_val(&val, fty);
+                        let intrinsic = format!("{}.{}", base, if fty == "double" { "f64" } else { "f32" });
+                        let tmp = self.next_tmp();
+                        if call_name == "MathLib_entier" {
+                            // entier = floor then convert to integer
+                            let floored = self.next_tmp();
+                            self.emitln(&format!("  {} = call {} @{}({} {})",
+                                floored, fty, intrinsic, fty, fval.name));
+                            self.emitln(&format!("  {} = fptosi {} {} to i32", tmp, fty, floored));
+                        } else {
+                            self.emitln(&format!("  {} = call {} @{}({} {})",
+                                tmp, fty, intrinsic, fty, fval.name));
+                        }
+                        let result_ty = if call_name == "MathLib_entier" { "i32" } else { fty };
+                        return Val::with_tid(tmp, result_ty.to_string(), expr.ty);
+                    }
+                }
+
                 // Coerce arg types to match declared param types
                 if let Some(params) = self.proc_params.get(&call_name).or_else(|| self.proc_params.get(&target.source_name)).cloned() {
                     for (i, param) in params.iter().enumerate() {

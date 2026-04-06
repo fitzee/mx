@@ -2,7 +2,7 @@
   "name": "m2plus",
   "displayName": "Modula-2+ (mx)",
   "description": "Modula-2 / Modula-2+ language support powered by mx",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "mx",
   "license": "MIT",
   "engines": {

@@ -1,5 +1,25 @@
 # Release Notes
 
+## 1.9.0 (2026-04-06)
+
+### Features
+
+- **LLVM backend: intrinsics** — The LLVM backend now emits native LLVM intrinsics instead of C runtime calls for key operations:
+  - `@llvm.memcpy.p0.p0.i64` for record/struct assignment (enables LLVM to inline, vectorize, or elide dead copies)
+  - `@llvm.fshl.i32` for ROTATE (single instruction on x86/ARM, replaces 4-instruction sequence)
+  - `@llvm.sqrt/sin/cos/exp/log/atan.f32/f64` for MathLib functions (constant-folded, inlined to native FP instructions)
+  - `@llvm.floor.f32/f64` for MathLib.entier (floor + fptosi, preserving PIM4 floor semantics)
+
+### Bug fixes
+
+- **LSP: false "undefined type" for qualified cross-module types** — The LSP reported spurious "undefined type 'Scheduler'" errors for types referenced via qualified access in transitive dependencies (e.g., `Scheduler.Scheduler` as a return type in EventLoop.def). The LSP analysis now uses two-pass type registration, matching the compiler driver.
+- **LLVM backend: foreign module qualified imports** — `IMPORT Sys` of a `DEFINITION MODULE FOR "C"` failed to declare or name-map the C functions, causing "use of undefined value" errors at link time. Both qualified (`IMPORT M`) and unqualified (`FROM M IMPORT f`) foreign imports are now handled.
+- **make install: missing Sys.def** — Fresh installs via `make install` did not copy `Sys.def` into `~/.mx/lib/m2sys/`, causing all projects that depend on m2sys to fail with "procedure not declared" errors.
+
+### Tooling
+
+- **VS Code: debug configuration provider** — The extension now registers a `DebugConfigurationProvider`, so m2dap appears in the VS Code debug sidebar when creating a new launch.json or pressing F5 without a config. Previously it only worked via the `mx: Create Debug Config` command.
+
 ## 1.8.3 (2026-04-03)
 
 ### Bug fixes

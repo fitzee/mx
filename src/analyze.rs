@@ -226,6 +226,11 @@ pub fn analyze_source(
 
     // Semantic analysis (without codegen)
     let mut sema = SemanticAnalyzer::new();
+    // Two-pass registration: pre-register type names first so cross-module
+    // qualified type references (e.g., Scheduler.Scheduler) resolve correctly.
+    for def in def_modules {
+        sema.pre_register_type_names(def);
+    }
     for def in def_modules {
         sema.register_def_module(def);
     }

@@ -617,14 +617,7 @@ impl LLVMCodeGen {
             self.emit_preambleln("declare void @free(ptr nocapture) nounwind");
             self.declared_fns.insert("free".to_string());
         }
-        if !self.declared_fns.contains("memcpy") {
-            self.emit_preambleln("declare ptr @memcpy(ptr, ptr, i64) nounwind");
-            self.declared_fns.insert("memcpy".to_string());
-        }
-        if !self.declared_fns.contains("memset") {
-            self.emit_preambleln("declare ptr @memset(ptr, i32, i64) nounwind");
-            self.declared_fns.insert("memset".to_string());
-        }
+        // llvm.memcpy and llvm.memset are intrinsics — no declaration needed
         if !self.declared_fns.contains("exit") {
             self.emit_preambleln("declare void @exit(i32) noreturn nounwind");
             self.declared_fns.insert("exit".to_string());

@@ -235,6 +235,53 @@ function registerAutoImportCompletion(context: vscode.ExtensionContext): void {
 
 // ── Debug Adapter ───────────────────────────────────────────────
 
+class M2DapConfigProvider implements vscode.DebugConfigurationProvider {
+  provideDebugConfigurations(
+    folder: vscode.WorkspaceFolder | undefined
+  ): vscode.ProviderResult<vscode.DebugConfiguration[]> {
+    // Resolve project name from m2.toml
+    let projectName = folder ? path.basename(folder.uri.fsPath) : "program";
+    if (folder) {
+      try {
+        const tomlPath = path.join(folder.uri.fsPath, "m2.toml");
+        const raw = require("fs").readFileSync(tomlPath, "utf-8");
+        for (const line of raw.split("\n")) {
+          const m = line.match(/^name\s*=\s*(.+)/);
+          if (m) { projectName = m[1].trim(); break; }
+        }
+      } catch { /* use folder name */ }
+    }
+    return [
+      {
+        name: "Debug (m2dap)",
+        type: "m2dap",
+        request: "launch",
+        program: `\${workspaceFolder}/.mx/bin/${projectName}`,
+        args: [],
+        cwd: "${workspaceFolder}",
+        stopOnEntry: false,
+        preLaunchTask: "mx: build debug",
+      },
+    ];
+  }
+
+  resolveDebugConfiguration(
+    _folder: vscode.WorkspaceFolder | undefined,
+    config: vscode.DebugConfiguration
+  ): vscode.ProviderResult<vscode.DebugConfiguration> {
+    // If user hits F5 with no launch.json, fill in defaults
+    if (!config.type && !config.request && !config.name) {
+      config.type = "m2dap";
+      config.request = "launch";
+      config.program = "${workspaceFolder}/.mx/bin/${workspaceFolderBasename}";
+      config.cwd = "${workspaceFolder}";
+      config.stopOnEntry = false;
+      config.preLaunchTask = "mx: build debug";
+    }
+    return config;
+  }
+}
+
 class M2DapAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   createDebugAdapterDescriptor(
     _session: vscode.DebugSession,
@@ -514,6 +561,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register m2dap debug adapter
   context.subscriptions.push(
+    vscode.debug.registerDebugConfigurationProvider(
+      "m2dap",
+      new M2DapConfigProvider()
+    ),
     vscode.debug.registerDebugAdapterDescriptorFactory(
       "m2dap",
       new M2DapAdapterFactory()

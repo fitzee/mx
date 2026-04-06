@@ -107,7 +107,7 @@ impl LLVMCodeGen {
     /// Emit a memcpy using LLVM's sizeof trick for correct size.
     pub(crate) fn emit_struct_memcpy(&mut self, dst: &str, src: &str, ty: &str) {
         let size = self.emit_sizeof(ty);
-        self.emitln(&format!("  call ptr @memcpy(ptr {}, ptr {}, i64 {})", dst, src, size));
+        self.emitln(&format!("  call void @llvm.memcpy.p0.p0.i64(ptr {}, ptr {}, i64 {}, i1 false)", dst, src, size));
     }
 
     pub(crate) fn llvm_type_for_type_id(&self, id: TypeId) -> String {
