@@ -1374,8 +1374,14 @@ impl SemanticAnalyzer {
                 SymbolKind::Type => typ,
                 SymbolKind::EnumVariant(_) => typ,
                 _ => {
-                    // Could be using a type name that's also a module, etc.
-                    typ
+                    // The name resolved to something that isn't a type
+                    // (e.g. the unresolved-import Procedure stub planted by
+                    // import_from_module with typ=TY_VOID). Treat this as
+                    // an undefined type rather than silently returning the
+                    // stub's typ field — that path used to silently produce
+                    // TY_VOID parameter types and miscompile in LLVM.
+                    self.error(&qi.loc, format!("undefined type '{}'", qi.name));
+                    TY_ERROR
                 }
             }
         } else {

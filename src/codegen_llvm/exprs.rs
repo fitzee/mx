@@ -322,9 +322,15 @@ impl LLVMCodeGen {
                 }
 
                 let ret_ty = self.tl_type_str(expr.ty);
-                let mut arg_str = self.expand_hir_call_args(args);
                 let call_name = self.fn_name_map.get(&target.mangled)
                     .cloned().unwrap_or_else(|| target.mangled.clone());
+                let callee_params_owned = self.proc_params.get(&call_name)
+                    .or_else(|| self.proc_params.get(&target.source_name))
+                    .cloned();
+                let mut arg_str = self.expand_hir_call_args_for_callee(
+                    args,
+                    callee_params_owned.as_deref(),
+                );
 
                 // MathLib → LLVM intrinsics (single-arg float→float functions)
                 let math_intrinsic = match call_name.as_str() {
@@ -756,18 +762,90 @@ impl LLVMCodeGen {
         &mut self,
         args: &[crate::hir::HirExpr],
     ) -> Vec<String> {
-        args.iter().map(|a| {
-            // VAR parameters: always pass as ptr, never load the struct.
-            // AddrOf wraps explicit VAR args; Place with is_var_param covers
-            // passing a VAR param through to another function.
-            let is_var_param = matches!(a.kind, crate::hir::HirExprKind::AddrOf(_))
+        self.expand_hir_call_args_for_callee(args, None)
+    }
+
+    /// Like expand_hir_call_args, but uses the callee's parameter signature
+    /// to decide per-arg whether to pass-as-pointer or load-and-pass-by-value.
+    /// This is essential when forwarding a VAR-record local to a callee that
+    /// declares the corresponding parameter by VALUE — the bare pointer
+    /// forwarded from the VAR slot must be dereferenced into the struct
+    /// value before the call, otherwise the callee receives garbage in the
+    /// register pair the ABI uses for the by-value struct.
+    ///
+    /// HIR pre-expands open-array params into two slots (ptr + high), but
+    /// `callee_params` (`ParamLLVMInfo`) has one entry per source-language
+    /// param. We walk the two lists in lock-step: for each param we consume
+    /// one HIR arg, plus an extra HIR arg whenever the param is an open
+    /// array. The extra "high" arg is always an i32 value that needs no
+    /// dereferencing, so we pass it through unchanged.
+    pub(crate) fn expand_hir_call_args_for_callee(
+        &mut self,
+        args: &[crate::hir::HirExpr],
+        callee_params: Option<&[crate::codegen_llvm::ParamLLVMInfo]>,
+    ) -> Vec<String> {
+        // Build a parallel "is_var?" map: one entry per HIR arg position.
+        // None means "we don't know" (no callee info, or position past
+        // the known params — rare, e.g. variadic-ish stdlib calls).
+        // Parallel maps: for each HIR arg position, what does the callee
+        // declare? `var_at` = is_var?, `expects_aggregate_at` = does the
+        // callee want a struct value (not a `ptr`)?  We need both because
+        // an `ADDRESS` param looks "by value" (not VAR) but its LLVM type
+        // is `ptr`, so passing `ADR(rec)` must NOT trigger record-loading.
+        let (var_at, expects_aggregate_at): (Vec<Option<bool>>, Vec<bool>) =
+            if let Some(params) = callee_params {
+                let mut v: Vec<Option<bool>> = Vec::with_capacity(args.len());
+                let mut a: Vec<bool> = Vec::with_capacity(args.len());
+                for p in params.iter() {
+                    let agg = p.llvm_type.starts_with('{') || p.llvm_type.starts_with('[');
+                    v.push(Some(p.is_var));
+                    a.push(agg && !p.is_var);
+                    if p.is_open_array {
+                        // The "high" companion is always a plain i32 by value.
+                        v.push(Some(false));
+                        a.push(false);
+                    }
+                    if v.len() >= args.len() { break; }
+                }
+                while v.len() < args.len() { v.push(None); a.push(false); }
+                (v, a)
+            } else {
+                (vec![None; args.len()], vec![false; args.len()])
+            };
+
+        args.iter().enumerate().map(|(idx, a)| {
+            let callee_is_var = var_at.get(idx).copied().flatten();
+
+            // Source-side: is this arg an explicit AddrOf, or a forwarded
+            // VAR-param local? Both arrive at codegen as a bare pointer.
+            let src_is_pointerish = matches!(a.kind, crate::hir::HirExprKind::AddrOf(_))
                 || matches!(&a.kind, crate::hir::HirExprKind::Place(p)
                     if matches!(&p.base, crate::hir::PlaceBase::Local(sid) if sid.is_var_param));
+
+            // Pass as pointer (no deref) only when the callee actually wants
+            // a VAR. If the callee wants a value, fall through to the
+            // by-value loading logic below regardless of how the source was
+            // shaped.
+            let pass_as_ptr = match callee_is_var {
+                Some(true) => true,
+                Some(false) => false,
+                None => src_is_pointerish,
+            };
+            // If the callee declares this slot as a real pointer
+            // (e.g. `ADDRESS`), never auto-deref — `ADR(rec)` must reach
+            // the callee as a pointer, not as a loaded record value.
+            let callee_wants_aggregate = expects_aggregate_at.get(idx).copied().unwrap_or(false);
             let val = self.gen_hir_expr(a);
             // By-value struct args: gen_hir_expr returns "ptr" for aggregates,
             // but the callee expects the struct value. Load it.
-            // Skip VAR params — those must stay as pointers.
-            if val.ty == "ptr" && !is_var_param {
+            // Skip when we know we're passing as a pointer to a VAR param,
+            // OR when the callee param's LLVM type is itself a pointer.
+            let allow_record_load = match callee_params {
+                Some(_) => callee_wants_aggregate,
+                // No callee info: keep legacy behaviour (load if pointer-shaped val).
+                None => !pass_as_ptr,
+            };
+            if val.ty == "ptr" && !pass_as_ptr && allow_record_load {
                 // Check if the underlying type is a record/aggregate that needs
                 // loading for by-value passing. Try type_id first, then fall back
                 // to checking the LLVM type from type_lowering.

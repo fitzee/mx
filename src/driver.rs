@@ -907,7 +907,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                         }
                     }
                 }
-                // Now register this def (all deps are already registered)
+                // Now register this def (all deps are already registered).
+                // Pre-register type names first so any self-referential or
+                // forward type refs in this def resolve during full registration
+                // — mirrors the two-pass done in Phase 2.
+                sema.pre_register_type_names(&dep_def);
                 sema.register_def_module(&dep_def);
                 registered_defs.insert(mod_name.to_string());
                 all_sorted_defs.push(dep_def);

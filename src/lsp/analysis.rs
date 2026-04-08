@@ -77,7 +77,27 @@ pub fn analyze(
     def_modules.reverse();
     let def_refs: Vec<&DefinitionModule> = def_modules.iter().collect();
 
-    analyze::analyze_source(source, filename, m2plus, &def_refs)
+    let mut result = analyze::analyze_source(source, filename, m2plus, &def_refs);
+
+    // Drop diagnostics that originated inside imported .def files. Sema
+    // dumps every transitively-loaded def into one symbol table for analysis;
+    // cross-def type references that don't fully resolve there produce
+    // spurious "undefined type" errors anchored to the def's source loc.
+    // Those would otherwise be published against the editor's open .mod
+    // file (because that's the URI we publish to), painting random squiggles
+    // at whatever line numbers the def errors happen to carry. Keep only
+    // diagnostics whose source file matches the file under analysis.
+    let want = std::path::Path::new(filename)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(filename));
+    result.diagnostics.retain(|d| {
+        if d.loc.file.is_empty() { return true; }
+        let got = std::path::Path::new(&d.loc.file)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(&d.loc.file));
+        got == want
+    });
+    result
 }
 
 /// Pre-parse the source to extract imports, then load .def files from disk/cache.
@@ -106,7 +126,10 @@ fn collect_def_modules(
     let imports = match &unit {
         CompilationUnit::ProgramModule(m) => &m.imports,
         CompilationUnit::ImplementationModule(m) => &m.imports,
-        _ => return result,
+        // When the open file is itself a .def, walk *its* imports too —
+        // otherwise sema sees zero transitively-loaded modules and every
+        // `FROM X IMPORT Name` reference reports as "undefined type".
+        CompilationUnit::DefinitionModule(m) => &m.imports,
     };
 
     let input_path = Path::new(filename);

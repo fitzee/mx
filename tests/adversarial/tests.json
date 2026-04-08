@@ -981,6 +981,23 @@
     "_comment": "PIM4: single-char string literals assignable to CHAR subrange types like ['A'..'Z']."
   },
   {
+    "name": "char_high_bit_ord",
+    "category": "semantics",
+    "dir": "semantics/char_high_bit_ord",
+    "main": "highbit.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "ORD values:\n 128\n 129\n 200\n 254\n 255\n   0\n  65\n 127\nVerify 128: PASS\nVerify 255: PASS\nIndex test: PASS\nDone\n",
+    "c_scan": true,
+    "tags": [
+      "ci"
+    ],
+    "_comment": "Ensures ORD(char) zero-extends high-bit chars (0x80-0xFF), not sign-extends. C backend bug fix."
+  },
+  {
     "name": "proc_type_equiv",
     "category": "semantics",
     "dir": "semantics/proc_type_equiv",

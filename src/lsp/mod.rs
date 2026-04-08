@@ -11,7 +11,7 @@ mod rename;
 mod references;
 mod prepare_rename;
 mod symbols;
-mod workspace;
+pub mod workspace;
 mod index;
 mod highlight;
 mod signature_help;

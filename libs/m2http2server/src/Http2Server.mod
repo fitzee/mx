@@ -252,10 +252,14 @@ IMPLEMENTATION MODULE Http2Server;
   VAR
     sp: ServerRecPtr;
     i: CARDINAL;
+    clientFd: INTEGER;
   BEGIN
     sp := ServerRecPtr(serverAddr);
     IF sp = NIL THEN RETURN END;
     IF cp = NIL THEN RETURN END;
+
+    (* Capture fd before ConnClose, which may DEALLOCATE cp *)
+    clientFd := cp^.fd;
 
     (* Unwatch from event loop *)
     IF cp^.watching THEN
@@ -267,6 +271,13 @@ IMPLEMENTATION MODULE Http2Server;
     FOR i := 0 TO MaxServerConns - 1 DO
       IF sp^.conns[i] = cp THEN
         ConnClose(cp);
+        (* Release the socket fd — ConnClose tears down TLS and
+           buffers but does NOT close(2) the underlying fd, so
+           without this the kernel-side TCP reaches CLOSED state
+           while the userland fd leaks until ulimit -n is hit. *)
+        IF clientFd >= 0 THEN
+          CloseSocket(Socket(clientFd));
+        END;
         sp^.conns[i] := NIL;
         IF sp^.numConns > 0 THEN
           DEC(sp^.numConns);
@@ -476,6 +487,7 @@ IMPLEMENTATION MODULE Http2Server;
   VAR
     sp: ServerRecPtr;
     i: CARDINAL;
+    clientFd: INTEGER;
   BEGIN
     sp := ServerRecPtr(s);
     IF sp = NIL THEN RETURN Invalid END;
@@ -486,7 +498,11 @@ IMPLEMENTATION MODULE Http2Server;
         IF sp^.conns[i]^.watching THEN
           UnwatchFd(sp^.loop, sp^.conns[i]^.fd);
         END;
+        clientFd := sp^.conns[i]^.fd;
         ConnClose(sp^.conns[i]);
+        IF clientFd >= 0 THEN
+          CloseSocket(Socket(clientFd));
+        END;
         sp^.conns[i] := NIL;
         DecConnsActive(sp^.metrics);
         IncConnsClosed(sp^.metrics);
@@ -509,6 +525,7 @@ IMPLEMENTATION MODULE Http2Server;
     sp: ServerRecPtr;
     i: CARDINAL;
     dummy: Status;
+    clientFd: INTEGER;
   BEGIN
     sp := ServerRecPtr(s);
     IF sp = NIL THEN
@@ -518,7 +535,11 @@ IMPLEMENTATION MODULE Http2Server;
     (* Close any remaining connections *)
     FOR i := 0 TO MaxServerConns - 1 DO
       IF sp^.conns[i] # NIL THEN
+        clientFd := sp^.conns[i]^.fd;
         ConnClose(sp^.conns[i]);
+        IF clientFd >= 0 THEN
+          CloseSocket(Socket(clientFd));
+        END;
         sp^.conns[i] := NIL;
       END;
     END;

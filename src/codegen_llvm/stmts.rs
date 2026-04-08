@@ -82,8 +82,24 @@ impl LLVMCodeGen {
             }
 
             HirStmtKind::ProcCall { target, args } => {
-                // HIR has already expanded open arrays and marked VAR with AddrOf
-                let mut arg_str = self.expand_hir_call_args(args);
+                // HIR has already expanded open arrays and marked VAR with AddrOf.
+                // For Direct calls we need the callee param info so that
+                // VAR-source args targeting by-VALUE callee params get
+                // dereferenced; otherwise the callee receives a bare ptr in
+                // the ABI slot reserved for a struct value.
+                let direct_callee_params = if let HirCallTarget::Direct(sid) = target {
+                    let call_name = self.fn_name_map.get(&sid.mangled)
+                        .cloned().unwrap_or_else(|| sid.mangled.clone());
+                    self.proc_params.get(&call_name)
+                        .or_else(|| self.proc_params.get(&sid.source_name))
+                        .cloned()
+                } else {
+                    None
+                };
+                let mut arg_str = self.expand_hir_call_args_for_callee(
+                    args,
+                    direct_callee_params.as_deref(),
+                );
 
                 match target {
                     HirCallTarget::Direct(sid) if builtins::is_builtin_proc(&sid.source_name) => {
@@ -148,7 +164,18 @@ impl LLVMCodeGen {
                                     };
                                     if let Some(place) = place_ref {
                                         let addr = self.emit_place_addr(place);
-                                        let pointee_ty = self.tl_type_str(place.ty);
+                                        // place.ty is the pointer type itself
+                                        // (e.g. SchedulerPtr); to size the
+                                        // allocation we need the *pointee*
+                                        // type. tl_type_str of any pointer
+                                        // returns "ptr", which would size
+                                        // every NEW() at 8 bytes regardless
+                                        // of the record being allocated and
+                                        // silently corrupt the heap for
+                                        // anything bigger than a malloc bucket.
+                                        let pointee_id = self.tl_pointer_target(place.ty)
+                                            .unwrap_or(place.ty);
+                                        let pointee_ty = self.tl_type_str(pointee_id);
                                         let size = self.emit_sizeof(&pointee_ty);
                                         // Check if the variable's pointer type has a type descriptor
                                         let td_name = self.sema.symtab.find_type_by_id(place.ty)

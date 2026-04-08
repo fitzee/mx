@@ -1,5 +1,15 @@
 # Release Notes
 
+## 1.9.1 (2026-04-09)
+
+### Bug fixes
+
+- **LLVM backend: NEW(p) sized via wrong type** — `NEW(p)` allocated using the size of the pointer type itself rather than its pointee, so every allocation was 8 bytes regardless of the record being allocated. Records larger than a malloc bucket silently corrupted the heap. The codegen now resolves the pointee type before computing the allocation size.
+- **LLVM backend: VAR-record args dereferenced incorrectly** — When a procedure passed a VAR-source record to a callee parameter that takes the record by value, the codegen forwarded a bare pointer instead of loading the struct value, leaving the callee with an undefined ABI slot. The HIR call-arg lowering now consults the callee's parameter info to coerce correctly.
+- **LLVM backend: ADR(record) → ADDRESS lowered as struct load** — `ADR(globalRecord)` passed to a procedure parameter declared `ADDRESS` was lowered as a load of the entire record value, not as a pointer. Under the ARM64 ABI the first 4 bytes of the loaded struct ended up in the callee's pointer slot, producing crashes when the callee dereferenced it. The arg-lowering pass now only triggers the by-value record-load coercion when the callee actually declares an aggregate parameter type, never when the slot is a `ptr`.
+- **LSP: missing `.def` file imports** — When the editor's open file was a definition module, `collect_def_modules` returned an empty list (the `DefinitionModule` arm of the import-walk match was missing), so sema saw zero transitively-loaded modules and every `FROM X IMPORT Name` reference in the open `.def` reported as "undefined type". The match now handles all three compilation-unit kinds.
+- **LSP: cross-file diagnostics published to wrong URI** — Semantic errors emitted while sema registered transitively-loaded `.def` files were published against the editor's currently-open URI, painting unrelated squiggles at whatever line numbers the def-file errors carried. Diagnostics whose source file does not match the file under analysis are now filtered out.
+
 ## 1.9.0 (2026-04-06)
 
 ### Features

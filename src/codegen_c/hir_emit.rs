@@ -194,7 +194,13 @@ impl super::CodeGen {
             HirExprKind::TypeTransfer(inner) => {
                 let inner_str = self.hir_expr_to_string(inner);
                 let target_c = self.type_id_to_c(expr.ty);
-                format!("(({})({}))", target_c, inner_str)
+                // CHAR -> integer: cast through unsigned char first to ensure
+                // zero-extension (C's char may be signed on some platforms)
+                if inner.ty == TY_CHAR {
+                    format!("(({})((unsigned char)({})))", target_c, inner_str)
+                } else {
+                    format!("(({})({}))", target_c, inner_str)
+                }
             }
         }
     }
