@@ -40,10 +40,12 @@ IMPLEMENTATION MODULE Http2Middleware;
     i: CARDINAL;
     ok: BOOLEAN;
   BEGIN
-    FOR i := 0 TO c.count - 1 DO
-      ok := c.entries[i].proc(req, resp, c.entries[i].ctx);
-      IF NOT ok THEN
-        RETURN
+    IF c.count > 0 THEN
+      FOR i := 0 TO c.count - 1 DO
+        ok := c.entries[i].proc(req, resp, c.entries[i].ctx);
+        IF NOT ok THEN
+          RETURN
+        END;
       END;
     END;
     handler(req, resp, handlerCtx);

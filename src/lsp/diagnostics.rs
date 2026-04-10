@@ -13,17 +13,23 @@ pub fn errors_to_diagnostics(errors: &[CompileError]) -> Vec<Json> {
 
         // Map ErrorKind to LSP DiagnosticSeverity
         let severity = match e.kind {
+            ErrorKind::Warning => 2, // Warning
             ErrorKind::Lexer | ErrorKind::Parser | ErrorKind::Semantic
             | ErrorKind::CodeGen | ErrorKind::Driver => 1, // Error
         };
 
-        // Include error kind as a code for the client
-        let code = match e.kind {
-            ErrorKind::Lexer => "lexer",
-            ErrorKind::Parser => "parser",
-            ErrorKind::Semantic => "semantic",
-            ErrorKind::CodeGen => "codegen",
-            ErrorKind::Driver => "driver",
+        // Include warning code (W01, W10, etc.) or error kind as LSP code
+        let code = if let Some(wc) = &e.code {
+            (*wc).to_string()
+        } else {
+            match e.kind {
+                ErrorKind::Lexer => "lexer".to_string(),
+                ErrorKind::Parser => "parser".to_string(),
+                ErrorKind::Semantic => "semantic".to_string(),
+                ErrorKind::CodeGen => "codegen".to_string(),
+                ErrorKind::Driver => "driver".to_string(),
+                ErrorKind::Warning => "warning".to_string(),
+            }
         };
 
         Json::obj(vec![
@@ -38,7 +44,7 @@ pub fn errors_to_diagnostics(errors: &[CompileError]) -> Vec<Json> {
                 ])),
             ])),
             ("severity", Json::int_val(severity)),
-            ("code", Json::str_val(code)),
+            ("code", Json::str_val(&code)),
             ("source", Json::str_val(crate::identity::COMPILER_ID)),
             ("message", Json::str_val(&e.message)),
         ])

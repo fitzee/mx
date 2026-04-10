@@ -341,6 +341,8 @@ impl Cfg {
 /// Builds a CFG from a sequence of HIR statements.
 
 mod build;
+pub mod dataflow;
+pub mod lint;
 
 pub use build::build_cfg;
 use build::CfgBuilder;

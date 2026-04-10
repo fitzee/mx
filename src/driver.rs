@@ -1082,6 +1082,51 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
     }
 
+    // ── Lint warning output (Tier 1 + Tier 2) ─────────────────────────
+    {
+        let suppressions = crate::analyze::collect_suppressions(&source);
+
+        // Tier 1: AST-level warnings from sema (only from the main source file)
+        let main_file = opts.input.canonicalize()
+            .unwrap_or_else(|_| opts.input.clone());
+        for w in sema.warnings() {
+            // Skip warnings from imported .def files
+            if !w.loc.file.is_empty() {
+                let wf = std::path::Path::new(&w.loc.file).canonicalize()
+                    .unwrap_or_else(|_| std::path::PathBuf::from(&w.loc.file));
+                if wf != main_file { continue; }
+            }
+            if let Some(code) = w.code {
+                if suppressions.is_suppressed(code, w.loc.line) { continue; }
+            }
+            eprintln!("{}", w);
+        }
+
+        // Tier 2: CFG-level dataflow warnings
+        fn lint_all_procs(procs: &[crate::hir::HirProcDecl], types: &crate::types::TypeRegistry) -> Vec<CompileError> {
+            let mut warnings = Vec::new();
+            for pd in procs {
+                warnings.extend(crate::cfg::lint::lint_procedure(pd, types));
+                lint_all_procs_nested(&pd.nested_procs, types, &mut warnings);
+            }
+            warnings
+        }
+        fn lint_all_procs_nested(procs: &[crate::hir::HirProcDecl], types: &crate::types::TypeRegistry, warnings: &mut Vec<CompileError>) {
+            for pd in procs {
+                warnings.extend(crate::cfg::lint::lint_procedure(pd, types));
+                lint_all_procs_nested(&pd.nested_procs, types, warnings);
+            }
+        }
+
+        let cfg_warnings = lint_all_procs(&hir_module.proc_decls, &sema.types);
+        for w in &cfg_warnings {
+            if let Some(code) = w.code {
+                if suppressions.is_suppressed(code, w.loc.line) { continue; }
+            }
+            eprintln!("{}", w);
+        }
+    }
+
     // ── CFG emission (--cfg) ─────────────────────────────────────────
     if opts.emit_cfg {
         use crate::cfg;

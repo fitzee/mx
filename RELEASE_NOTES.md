@@ -1,5 +1,21 @@
 # Release Notes
 
+## 1.10.0 (2026-04-10)
+
+### Features
+
+- **Lint warning system** — New static analysis framework with 11 coded warnings (W01–W11) across two tiers. Tier 1 (AST-level, in sema): unsigned comparison against zero (W01), unsigned countdown loop (W02), short-circuit safety (W03), VAR parameter aliasing (W04), INC/DEC on bounded subrange (W05), SYSTEM import (W06), non-exhaustive CASE (W07), mixed signed/unsigned arithmetic (W08), unsigned FOR upper-bound underflow (W09). Tier 2 (CFG dataflow): uninitialized variable use (W10), unreachable code after RETURN (W11).
+- **Warning suppression pragmas** — `(*!Wxx*)` inline comments suppress individual warnings per-line or file-wide (when placed before the MODULE keyword).
+- **LSP warning diagnostics** — Lint warnings surface as LSP `Warning`-severity diagnostics with their warning code, enabling IDE squiggles and filtering.
+
+### Bug fixes
+
+- **m2http2server: CARDINAL underflow in FOR loops** — All `FOR i := 0 TO count - 1` loops in Http2Middleware, Http2Router, and Http2ServerStream are now guarded with `IF count > 0` to prevent unsigned underflow when the count is zero.
+
+### Documentation
+
+- **Lint reference** — New `docs/lint.md` documenting all warning codes, suppression syntax, and the two-tier architecture.
+
 ## 1.9.1 (2026-04-09)
 
 ### Bug fixes

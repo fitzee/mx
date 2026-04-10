@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::analyze::{Reference, ReferenceIndex, ScopeMap};
 use crate::ast::*;
 use crate::builtins;
-use crate::errors::{CompileError, CompileResult, SourceLoc};
+use crate::errors::{CompileError, CompileResult, ErrorKind, SourceLoc};
 use crate::symtab::*;
 use crate::types::*;
 
@@ -59,6 +59,11 @@ impl SemanticAnalyzer {
     /// Used by the LSP analysis path (no codegen needed).
     pub fn into_results(self) -> (SymbolTable, TypeRegistry, ScopeMap, ReferenceIndex, Vec<CompileError>) {
         (self.symtab, self.types, self.scope_map, self.ref_index, self.errors)
+    }
+
+    /// Return warnings (non-destructively) for the driver to print.
+    pub fn warnings(&self) -> Vec<&CompileError> {
+        self.errors.iter().filter(|e| e.kind == ErrorKind::Warning).collect()
     }
 
     fn register_builtins(&mut self) {
@@ -408,16 +413,22 @@ impl SemanticAnalyzer {
             CompilationUnit::DefinitionModule(m) => self.analyze_definition_module(m),
             CompilationUnit::ImplementationModule(m) => self.analyze_implementation_module(m),
         }
-        if self.errors.is_empty() {
-            Ok(())
-        } else {
+        let has_errors = self.errors.iter().any(|e| e.kind != ErrorKind::Warning);
+        if has_errors {
             Err(self.errors.clone())
+        } else {
+            Ok(())
         }
     }
 
     fn error(&mut self, loc: &SourceLoc, msg: impl Into<String>) {
         self.errors
             .push(CompileError::semantic(loc.clone(), msg.into()));
+    }
+
+    fn warning(&mut self, loc: &SourceLoc, code: &'static str, msg: impl Into<String>) {
+        self.errors
+            .push(CompileError::warning_coded(loc.clone(), code, msg.into()));
     }
 
     fn enter_scope(&mut self, name: &str) -> usize {
@@ -811,6 +822,8 @@ impl SemanticAnalyzer {
     }
 
     fn process_imports(&mut self, imports: &[Import]) {
+        // W06: SYSTEM import warning
+        self.lint_system_import(imports);
         for imp in imports {
             if let Some(from_mod) = &imp.from_module {
                 self.import_from_module(from_mod, &imp.names);
@@ -1467,8 +1480,12 @@ impl SemanticAnalyzer {
                 let name = &desig.ident.name;
                 if builtins::is_builtin_proc(name) {
                     self.check_builtin_call(name, args, &stmt.loc);
+                    // W05: INC/DEC on bounded subrange
+                    self.lint_inc_dec_subrange(name, args, &stmt.loc);
                 } else {
                     self.check_call_arg_types(name, args);
+                    // W04: VAR parameter aliasing
+                    self.lint_var_param_aliasing(name, args);
                 }
             }
             StatementKind::If {
@@ -1530,12 +1547,16 @@ impl SemanticAnalyzer {
                         self.analyze_statement(s);
                     }
                 }
+                // W07: non-exhaustive CASE
+                self.lint_nonexhaustive_case(et, branches, else_body, &stmt.loc);
             }
             StatementKind::While { cond, body } => {
                 let ct = self.analyze_expr(cond);
                 if ct != TY_ERROR && ct != TY_VOID && ct != TY_BOOLEAN {
                     self.error(&stmt.loc, "WHILE condition must be BOOLEAN");
                 }
+                // W02: unsigned countdown loop detection
+                self.lint_unsigned_countdown_loop(cond, body);
                 self.in_loop += 1;
                 for s in body {
                     self.analyze_statement(s);
@@ -1574,6 +1595,17 @@ impl SemanticAnalyzer {
                 self.analyze_expr(end);
                 if let Some(s) = step {
                     self.analyze_expr(s);
+                }
+                // Warn on FOR i := 0 TO cardinal - N where underflow is possible
+                if let Some((_, vt)) = lookup {
+                    if is_unsigned_type(&self.types, self.resolve_alias(vt)) {
+                        if let ExprKind::BinaryOp { op: BinaryOp::Sub, .. } = &end.kind {
+                            self.warning(
+                                &end.loc, "W09",
+                                "subtraction in FOR upper bound with unsigned variable may underflow to MAX(CARDINAL) when zero",
+                            );
+                        }
+                    }
                 }
                 self.in_loop += 1;
                 for s in body {
@@ -1762,6 +1794,8 @@ impl SemanticAnalyzer {
                             if !expression_compatible(&self.types, lt, rt) {
                                 self.error(&expr.loc, "incompatible types in arithmetic");
                             }
+                            // W08: mixed signed/unsigned
+                            self.lint_mixed_signedness(expr, lt, rt);
                         }
                         // Return the "wider" type
                         if lt == TY_REAL || lt == TY_LONGREAL || rt == TY_REAL || rt == TY_LONGREAL
@@ -1802,10 +1836,16 @@ impl SemanticAnalyzer {
                         if lt != TY_ERROR && lt != TY_VOID && lt != TY_BOOLEAN {
                             self.error(&expr.loc, "AND/OR requires BOOLEAN operands");
                         }
+                        // W03: short-circuit safety
+                        self.lint_short_circuit_safety(expr);
                         TY_BOOLEAN
                     }
                     BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le
-                    | BinaryOp::Gt | BinaryOp::Ge => TY_BOOLEAN,
+                    | BinaryOp::Gt | BinaryOp::Ge => {
+                        // W01: unsigned comparison against zero
+                        self.lint_unsigned_comparison_zero(expr);
+                        TY_BOOLEAN
+                    }
                     BinaryOp::In => {
                         // left must be ordinal, right must be set
                         TY_BOOLEAN
@@ -2117,6 +2157,329 @@ impl SemanticAnalyzer {
                 }
             }
             _ => {}
+        }
+    }
+
+    // ── Lint checks (Tier 1: AST-level) ──────────────────────────────
+
+    /// W01: Flag `CARDINAL >= 0` (always true) and `CARDINAL < 0` (always false).
+    fn lint_unsigned_comparison_zero(&mut self, expr: &Expr) {
+        if let ExprKind::BinaryOp { op, left, right } = &expr.kind {
+            let lt = self.analyze_expr_type_only(left);
+            let is_zero = |e: &Expr| matches!(e.kind, ExprKind::IntLit(0));
+            if lt != TY_ERROR && is_unsigned_type(&self.types, self.resolve_alias(lt)) {
+                match op {
+                    BinaryOp::Ge if is_zero(right) => {
+                        self.warning(&expr.loc, "W01",
+                            "comparison >= 0 on unsigned type is always true");
+                    }
+                    BinaryOp::Lt if is_zero(right) => {
+                        self.warning(&expr.loc, "W01",
+                            "comparison < 0 on unsigned type is always false");
+                    }
+                    _ => {}
+                }
+            }
+            // Symmetric: 0 <= CARDINAL always true, 0 > CARDINAL always false
+            let rt = self.analyze_expr_type_only(right);
+            if rt != TY_ERROR && is_unsigned_type(&self.types, self.resolve_alias(rt)) {
+                match op {
+                    BinaryOp::Le if is_zero(left) => {
+                        self.warning(&expr.loc, "W01",
+                            "comparison 0 <= unsigned type is always true");
+                    }
+                    BinaryOp::Gt if is_zero(left) => {
+                        self.warning(&expr.loc, "W01",
+                            "comparison 0 > unsigned type is always false");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// W02: Detect `WHILE i >= 0 DO ... DEC(i) ...` with unsigned loop variable
+    /// which creates an infinite loop (unsigned can never be < 0).
+    fn lint_unsigned_countdown_loop(&mut self, cond: &Expr, body: &[Statement]) {
+        // Check: WHILE var >= 0 where var is unsigned
+        if let ExprKind::BinaryOp { op: BinaryOp::Ge, left, right } = &cond.kind {
+            if !matches!(right.kind, ExprKind::IntLit(0)) { return; }
+            let var_name = match &left.kind {
+                ExprKind::Designator(d) if d.selectors.is_empty() => &d.ident.name,
+                _ => return,
+            };
+            let vt = match self.symtab.lookup_in_scope_with_id(self.current_scope, var_name) {
+                Some((_, sym)) => sym.typ,
+                None => return,
+            };
+            if !is_unsigned_type(&self.types, self.resolve_alias(vt)) { return; }
+            // Check if body contains DEC(var)
+            if Self::body_contains_dec(body, var_name) {
+                self.warning(&cond.loc, "W02",
+                    format!("WHILE {} >= 0 with unsigned type is an infinite loop; DEC will underflow, never reaching < 0", var_name));
+            }
+        }
+    }
+
+    /// Check if a statement list contains a DEC(var_name) call.
+    fn body_contains_dec(body: &[Statement], var_name: &str) -> bool {
+        for s in body {
+            match &s.kind {
+                StatementKind::ProcCall { desig, args } => {
+                    if desig.ident.name == "DEC" && !args.is_empty() {
+                        if let ExprKind::Designator(d) = &args[0].kind {
+                            if d.selectors.is_empty() && d.ident.name == var_name {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                StatementKind::If { then_body, elsifs, else_body, .. } => {
+                    if Self::body_contains_dec(then_body, var_name) { return true; }
+                    for (_, eb) in elsifs {
+                        if Self::body_contains_dec(eb, var_name) { return true; }
+                    }
+                    if let Some(eb) = else_body {
+                        if Self::body_contains_dec(eb, var_name) { return true; }
+                    }
+                }
+                StatementKind::Loop { body } | StatementKind::While { body, .. } => {
+                    if Self::body_contains_dec(body, var_name) { return true; }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// W03: Flag pointer dereference or array index on RHS of AND/OR
+    /// where short-circuit evaluation is needed for safety.
+    fn lint_short_circuit_safety(&mut self, expr: &Expr) {
+        if let ExprKind::BinaryOp { op, left, right } = &expr.kind {
+            match op {
+                BinaryOp::And | BinaryOp::Or => {
+                    // Check if LHS is a NIL guard (p # NIL or p = NIL)
+                    let lhs_is_nil_check = Self::is_nil_comparison(left);
+                    // Check if RHS dereferences a pointer or indexes an array
+                    let rhs_has_deref = Self::expr_has_deref_or_index(right);
+                    if lhs_is_nil_check && rhs_has_deref {
+                        let op_name = if *op == BinaryOp::And { "AND" } else { "OR" };
+                        let safe_op = if *op == BinaryOp::And { "& (AND THEN)" } else { "OR" };
+                        self.warning(&expr.loc, "W03",
+                            format!("pointer dereference on RHS of {} requires short-circuit evaluation; use {}", op_name, safe_op));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Check if expression is a NIL comparison (p # NIL, p = NIL, NIL # p, NIL = p).
+    fn is_nil_comparison(expr: &Expr) -> bool {
+        if let ExprKind::BinaryOp { op, left, right } = &expr.kind {
+            if matches!(op, BinaryOp::Ne | BinaryOp::Eq) {
+                return Self::is_nil_expr(left) || Self::is_nil_expr(right);
+            }
+        }
+        false
+    }
+
+    /// Check if an expression is NIL (either NilLit or the identifier "NIL").
+    fn is_nil_expr(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::NilLit => true,
+            ExprKind::Designator(d) if d.selectors.is_empty() && d.ident.name == "NIL" => true,
+            _ => false,
+        }
+    }
+
+    /// Check if expression contains a pointer dereference or array index.
+    fn expr_has_deref_or_index(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Designator(d) => {
+                d.selectors.iter().any(|s| matches!(s, Selector::Deref(_) | Selector::Index(..)))
+            }
+            ExprKind::Deref(_) => true,
+            ExprKind::BinaryOp { left, right, .. } => {
+                Self::expr_has_deref_or_index(left) || Self::expr_has_deref_or_index(right)
+            }
+            ExprKind::UnaryOp { operand, .. } => Self::expr_has_deref_or_index(operand),
+            ExprKind::Not(inner) => Self::expr_has_deref_or_index(inner),
+            ExprKind::FuncCall { args, .. } => {
+                args.iter().any(|a| Self::expr_has_deref_or_index(a))
+            }
+            _ => false,
+        }
+    }
+
+    /// W04: Detect same designator passed to multiple VAR parameters.
+    fn lint_var_param_aliasing(&mut self, name: &str, args: &[Expr]) {
+        let param_list: Vec<ParamInfo> = if let Some(sym) = self.symtab.lookup(name) {
+            if let SymbolKind::Procedure { params, .. } = &sym.kind {
+                params.clone()
+            } else { return; }
+        } else { return; };
+
+        // Collect (index, designator_name) for VAR params
+        let mut var_args: Vec<(usize, String)> = Vec::new();
+        for (i, arg) in args.iter().enumerate() {
+            if i >= param_list.len() { break; }
+            if !param_list[i].is_var { continue; }
+            if let ExprKind::Designator(d) = &arg.kind {
+                let full_name = Self::designator_key(d);
+                var_args.push((i, full_name));
+            }
+        }
+
+        // Check for duplicates
+        for i in 0..var_args.len() {
+            for j in (i + 1)..var_args.len() {
+                if var_args[i].1 == var_args[j].1 {
+                    self.warning(
+                        &args[var_args[j].0].loc, "W04",
+                        format!("same variable '{}' passed to multiple VAR parameters; aliasing may cause unexpected behavior",
+                            var_args[j].1));
+                }
+            }
+        }
+    }
+
+    /// Build a string key from a designator for aliasing comparison.
+    fn designator_key(d: &Designator) -> String {
+        let mut key = d.ident.name.clone();
+        for sel in &d.selectors {
+            match sel {
+                Selector::Field(name, _) => {
+                    key.push('.');
+                    key.push_str(name);
+                }
+                Selector::Index(_, _) => key.push_str("[*]"),
+                Selector::Deref(_) => key.push('^'),
+            }
+        }
+        key
+    }
+
+    /// W05: Warn on INC/DEC applied to bounded subrange types.
+    fn lint_inc_dec_subrange(&mut self, name: &str, args: &[Expr], loc: &SourceLoc) {
+        if !matches!(name, "INC" | "DEC") || args.is_empty() { return; }
+        let arg_type = self.analyze_expr_type_only(&args[0]);
+        if arg_type == TY_ERROR { return; }
+        let resolved = self.resolve_alias(arg_type);
+        if let Type::Subrange { low, high, .. } = self.types.get(resolved) {
+            let (lo, hi) = (*low, *high);
+            if name == "INC" {
+                self.warning(loc, "W05",
+                    format!("{} on subrange [{}..{}] may overflow upper bound", name, lo, hi));
+            } else {
+                self.warning(loc, "W05",
+                    format!("{} on subrange [{}..{}] may underflow lower bound", name, lo, hi));
+            }
+        }
+    }
+
+    /// W06: Warn on FROM SYSTEM IMPORT (portability/safety hazard).
+    fn lint_system_import(&mut self, imports: &[Import]) {
+        for imp in imports {
+            if let Some(from_mod) = &imp.from_module {
+                if from_mod == "SYSTEM" {
+                    self.warning(&imp.loc, "W06",
+                        "FROM SYSTEM IMPORT reduces portability; use with care");
+                }
+            }
+        }
+    }
+
+    /// W07: Warn on non-exhaustive CASE without ELSE on enum/subrange types.
+    fn lint_nonexhaustive_case(&mut self, expr_type: TypeId, branches: &[CaseBranch], else_body: &Option<Vec<Statement>>, loc: &SourceLoc) {
+        if else_body.is_some() { return; } // ELSE present, OK
+        if expr_type == TY_ERROR || expr_type == TY_VOID { return; }
+        let resolved = self.resolve_alias(expr_type);
+        match self.types.get(resolved) {
+            Type::Enumeration { variants, .. } => {
+                // Collect all covered values
+                let mut covered: std::collections::HashSet<i64> = std::collections::HashSet::new();
+                for branch in branches {
+                    for label in &branch.labels {
+                        match label {
+                            CaseLabel::Single(e) => {
+                                if let ExprKind::IntLit(v) = &e.kind { covered.insert(*v); }
+                                // Also handle enum identifiers via const eval
+                                let cv = self.eval_const_expr(e);
+                                if let ConstValue::Integer(v) = cv { covered.insert(v); }
+                            }
+                            CaseLabel::Range(lo, hi) => {
+                                let lo_v = match self.eval_const_expr(lo) { ConstValue::Integer(v) => v, _ => continue };
+                                let hi_v = match self.eval_const_expr(hi) { ConstValue::Integer(v) => v, _ => continue };
+                                for v in lo_v..=hi_v { covered.insert(v); }
+                            }
+                        }
+                    }
+                }
+                let total = variants.len() as i64;
+                let missing = (0..total).filter(|v| !covered.contains(v)).count();
+                if missing > 0 {
+                    self.warning(loc, "W07",
+                        format!("CASE on enumeration does not cover all {} variants; add ELSE or missing labels", total));
+                }
+            }
+            Type::Subrange { low, high, .. } => {
+                let range_size = *high - *low + 1;
+                if range_size > 256 { return; } // Too large to enumerate
+                let mut covered: std::collections::HashSet<i64> = std::collections::HashSet::new();
+                for branch in branches {
+                    for label in &branch.labels {
+                        match label {
+                            CaseLabel::Single(e) => {
+                                if let ConstValue::Integer(v) = self.eval_const_expr(e) { covered.insert(v); }
+                            }
+                            CaseLabel::Range(lo, hi) => {
+                                let lo_v = match self.eval_const_expr(lo) { ConstValue::Integer(v) => v, _ => continue };
+                                let hi_v = match self.eval_const_expr(hi) { ConstValue::Integer(v) => v, _ => continue };
+                                for v in lo_v..=hi_v { covered.insert(v); }
+                            }
+                        }
+                    }
+                }
+                let missing = (*low..=*high).filter(|v| !covered.contains(v)).count();
+                if missing > 0 {
+                    self.warning(loc, "W07",
+                        format!("CASE on subrange [{}..{}] does not cover all values; add ELSE or missing labels", low, high));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// W08: Warn on mixed signed/unsigned arithmetic.
+    fn lint_mixed_signedness(&mut self, expr: &Expr, lt: TypeId, rt: TypeId) {
+        if lt == TY_ERROR || lt == TY_VOID || rt == TY_ERROR || rt == TY_VOID { return; }
+        let lt_resolved = self.resolve_alias(lt);
+        let rt_resolved = self.resolve_alias(rt);
+        let lt_unsigned = is_unsigned_type(&self.types, lt_resolved);
+        let rt_unsigned = is_unsigned_type(&self.types, rt_resolved);
+        let lt_signed = matches!(self.types.get(lt_resolved), Type::Integer | Type::LongInt);
+        let rt_signed = matches!(self.types.get(rt_resolved), Type::Integer | Type::LongInt);
+        if (lt_unsigned && rt_signed) || (lt_signed && rt_unsigned) {
+            self.warning(&expr.loc, "W08",
+                "mixed signed/unsigned arithmetic may produce unexpected results");
+        }
+    }
+
+    /// Get the type of an expression without re-analyzing (for lint checks that run
+    /// after analyze_expr has already been called). Falls back to analyze_expr.
+    fn analyze_expr_type_only(&mut self, expr: &Expr) -> TypeId {
+        // For simple designators, look up directly without side effects
+        match &expr.kind {
+            ExprKind::Designator(d) if d.selectors.is_empty() => {
+                if let Some(sym) = self.symtab.lookup(&d.ident.name) {
+                    sym.typ
+                } else {
+                    TY_ERROR
+                }
+            }
+            ExprKind::IntLit(_) => TY_INTEGER,
+            _ => self.analyze_expr(expr),
         }
     }
 

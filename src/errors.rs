@@ -38,6 +38,8 @@ pub struct CompileError {
     pub loc: SourceLoc,
     pub message: String,
     pub kind: ErrorKind,
+    /// Warning code (e.g. "W01"). None for errors.
+    pub code: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,18 +49,24 @@ pub enum ErrorKind {
     Semantic,
     CodeGen,
     Driver,
+    Warning,
 }
 
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let kind = match self.kind {
+            ErrorKind::Warning => "warning",
             ErrorKind::Lexer
             | ErrorKind::Parser
             | ErrorKind::Semantic
             | ErrorKind::CodeGen
             | ErrorKind::Driver => "error",
         };
-        write!(f, "{}: {}: {}", self.loc, kind, self.message)
+        if let Some(code) = self.code {
+            write!(f, "{}: {}[{}]: {}", self.loc, kind, code, self.message)
+        } else {
+            write!(f, "{}: {}: {}", self.loc, kind, self.message)
+        }
     }
 }
 
@@ -66,7 +74,7 @@ impl std::error::Error for CompileError {}
 
 impl CompileError {
     pub fn new(loc: SourceLoc, message: String, kind: ErrorKind) -> Self {
-        Self { loc, message, kind }
+        Self { loc, message, kind, code: None }
     }
 
     pub fn lexer(loc: SourceLoc, msg: impl Into<String>) -> Self {
@@ -92,12 +100,23 @@ impl CompileError {
             ErrorKind::Driver,
         )
     }
+
+    pub fn warning(loc: SourceLoc, msg: impl Into<String>) -> Self {
+        Self::new(loc, msg.into(), ErrorKind::Warning)
+    }
+
+    pub fn warning_coded(loc: SourceLoc, code: &'static str, msg: impl Into<String>) -> Self {
+        let mut e = Self::new(loc, msg.into(), ErrorKind::Warning);
+        e.code = Some(code);
+        e
+    }
 }
 
 impl CompileError {
     pub fn to_json(&self) -> String {
         use crate::json::Json;
         let severity = match self.kind {
+            ErrorKind::Warning => "warning",
             ErrorKind::Lexer | ErrorKind::Parser | ErrorKind::Semantic
             | ErrorKind::CodeGen | ErrorKind::Driver => "error",
         };
@@ -107,6 +126,7 @@ impl CompileError {
             ErrorKind::Semantic => "semantic",
             ErrorKind::CodeGen => "codegen",
             ErrorKind::Driver => "driver",
+            ErrorKind::Warning => "warning",
         };
         Json::obj(vec![
             ("file", Json::str_val(&self.loc.file)),

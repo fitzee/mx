@@ -239,13 +239,34 @@ pub fn analyze_source(
     if !def_modules.is_empty() {
         sema.reset_position_artifacts();
     }
-    let _ = sema.analyze(&unit); // errors are captured inside sema
+    let sema_ok = sema.analyze(&unit).is_ok(); // errors are captured inside sema
+
+    // Tier 2 lint: build HIR + CFG and run dataflow-based checks.
+    // Only attempt if sema succeeded (no hard errors) — HIR builder
+    // assumes a well-typed AST.
+    if sema_ok {
+        let hir_lint_warnings = run_cfg_lint(&unit, &sema);
+        diagnostics.extend(hir_lint_warnings);
+    }
 
     let (symtab, types, scope_map, ref_index, errors) = sema.into_results();
     diagnostics.extend(errors);
 
     // Build call graph by walking AST procedure declarations.
     let call_graph = build_call_graph(&unit);
+
+    // ── Warning suppression ─────────────────────────────────────────
+    // Scan source for (*!Wxx*) pragmas.
+    // Line-level: suppress that warning code on that line only.
+    // File-level (line 1 or before MODULE): suppress globally.
+    let suppressions = collect_suppressions(source);
+    diagnostics.retain(|d| {
+        if let Some(code) = d.code {
+            !suppressions.is_suppressed(code, d.loc.line)
+        } else {
+            true
+        }
+    });
 
     AnalysisResult {
         ast: Some(unit),
@@ -256,6 +277,100 @@ pub fn analyze_source(
         call_graph,
         diagnostics,
     }
+}
+
+// ── Warning suppression ─────────────────────────────────────────────
+
+pub struct Suppressions {
+    /// Warning codes suppressed for specific lines: (line_number, code).
+    pub by_line: std::collections::HashSet<(usize, String)>,
+    /// Warning codes suppressed for the entire file.
+    pub file_wide: std::collections::HashSet<String>,
+}
+
+impl Suppressions {
+    /// Check if a warning should be suppressed.
+    pub fn is_suppressed(&self, code: &str, line: usize) -> bool {
+        self.file_wide.contains(code) || self.by_line.contains(&(line, code.to_string()))
+    }
+}
+
+/// Scan source for (*!Wxx*) suppression pragmas.
+/// `(*!W06*)` on a line suppresses W06 for that line.
+/// `(*!W06*)` before the MODULE keyword suppresses W06 file-wide.
+pub fn collect_suppressions(source: &str) -> Suppressions {
+    let mut by_line = std::collections::HashSet::new();
+    let mut file_wide = std::collections::HashSet::new();
+    let mut seen_module = false;
+
+    for (line_idx, line) in source.lines().enumerate() {
+        let line_num = line_idx + 1; // 1-based
+        if !seen_module && line.contains("MODULE") {
+            seen_module = true;
+        }
+
+        // Find all (*!Wxx*) patterns in this line
+        let mut pos = 0;
+        while let Some(start) = line[pos..].find("(*!") {
+            let abs_start = pos + start + 3; // skip (*!
+            if let Some(end) = line[abs_start..].find("*)") {
+                let code = line[abs_start..abs_start + end].trim();
+                // Accept W followed by digits (W01..W99)
+                if code.starts_with('W') && code.len() >= 2 && code[1..].chars().all(|c| c.is_ascii_digit()) {
+                    if !seen_module {
+                        file_wide.insert(code.to_string());
+                    } else {
+                        by_line.insert((line_num, code.to_string()));
+                    }
+                }
+                pos = abs_start + end + 2;
+            } else {
+                break;
+            }
+        }
+    }
+
+    Suppressions { by_line, file_wide }
+}
+
+// ── Tier 2 CFG lint ─────────────────────────────────────────────────
+
+/// Build HIR + CFG for the given AST and run dataflow-based lint checks.
+/// Returns warnings only — never errors.
+fn run_cfg_lint(unit: &CompilationUnit, sema: &SemanticAnalyzer) -> Vec<CompileError> {
+    use std::panic;
+
+    // Build HIR from AST + sema. Catch panics since HIR builder may
+    // not handle all edge cases gracefully on partially-valid ASTs.
+    let hir_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        crate::hir_build::build_module(unit, &[], sema)
+    }));
+    let mut hir_module = match hir_result {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+
+    // Build CFGs for all procedures
+    fn build_proc_cfgs(procs: &mut [crate::hir::HirProcDecl]) {
+        for pd in procs.iter_mut() {
+            if let Some(ref body) = pd.body {
+                pd.cfg = Some(crate::cfg::build_cfg(body));
+            }
+            build_proc_cfgs(&mut pd.nested_procs);
+        }
+    }
+    build_proc_cfgs(&mut hir_module.proc_decls);
+
+    // Run lint on all procedures
+    let mut warnings = Vec::new();
+    fn lint_procs(procs: &[crate::hir::HirProcDecl], types: &TypeRegistry, warnings: &mut Vec<CompileError>) {
+        for pd in procs {
+            warnings.extend(crate::cfg::lint::lint_procedure(pd, types));
+            lint_procs(&pd.nested_procs, types, warnings);
+        }
+    }
+    lint_procs(&hir_module.proc_decls, &sema.types, &mut warnings);
+    warnings
 }
 
 // ── Call graph builder ──────────────────────────────────────────────
@@ -864,5 +979,278 @@ mod tests {
         let result = analyze_source(source, "test.mod", false, &[]);
         assert!(!has_error(&result, "incompatible"),
             "empty set constructor should be BITSET-compatible");
+    }
+
+    // ── CARDINAL underflow warning tests ─────────────────────────────
+
+    #[test]
+    fn test_for_cardinal_underflow_warning() {
+        // FOR i := 0 TO n - 1 with CARDINAL variable should warn
+        let source = "MODULE Test;\nVAR i, n: CARDINAL;\nBEGIN\n  FOR i := 0 TO n - 1 DO END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(result.diagnostics.iter().any(|e| e.kind == crate::errors::ErrorKind::Warning && e.message.contains("underflow")),
+            "FOR with CARDINAL subtraction in upper bound should warn, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_for_integer_no_warning() {
+        // FOR i := 0 TO n - 1 with INTEGER variable should NOT warn
+        let source = "MODULE Test;\nVAR i, n: INTEGER;\nBEGIN\n  FOR i := 0 TO n - 1 DO END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!result.diagnostics.iter().any(|e| e.kind == crate::errors::ErrorKind::Warning),
+            "FOR with INTEGER subtraction should not warn");
+    }
+
+    #[test]
+    fn test_for_cardinal_no_sub_no_warning() {
+        // FOR i := 0 TO n with CARDINAL variable should NOT warn (no subtraction)
+        let source = "MODULE Test;\nVAR i, n: CARDINAL;\nBEGIN\n  FOR i := 0 TO n DO END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!result.diagnostics.iter().any(|e| e.kind == crate::errors::ErrorKind::Warning),
+            "FOR with CARDINAL but no subtraction should not warn");
+    }
+
+    // ── W01: Unsigned comparison against zero ────────────────────────
+
+    fn has_warning(result: &AnalysisResult, substring: &str) -> bool {
+        result.diagnostics.iter().any(|e|
+            e.kind == crate::errors::ErrorKind::Warning && e.message.contains(substring))
+    }
+
+    #[test]
+    fn test_cardinal_ge_zero_always_true() {
+        let source = "MODULE Test;\nVAR c: CARDINAL;\nBEGIN\n  IF c >= 0 THEN END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "always true"),
+            "CARDINAL >= 0 should warn always true, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_cardinal_lt_zero_always_false() {
+        let source = "MODULE Test;\nVAR c: CARDINAL;\nBEGIN\n  IF c < 0 THEN END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "always false"),
+            "CARDINAL < 0 should warn always false, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_integer_ge_zero_no_warning() {
+        let source = "MODULE Test;\nVAR i: INTEGER;\nBEGIN\n  IF i >= 0 THEN END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "always"),
+            "INTEGER >= 0 should not warn");
+    }
+
+    // ── W02: Unsigned countdown loop ─────────────────────────────────
+
+    #[test]
+    fn test_unsigned_countdown_loop() {
+        let source = "MODULE Test;\nVAR i: CARDINAL;\nBEGIN\n  i := 10;\n  WHILE i >= 0 DO DEC(i) END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "infinite loop"),
+            "WHILE CARDINAL >= 0 with DEC should warn infinite loop, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_signed_countdown_no_warning() {
+        let source = "MODULE Test;\nVAR i: INTEGER;\nBEGIN\n  i := 10;\n  WHILE i >= 0 DO DEC(i) END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "infinite loop"),
+            "WHILE INTEGER >= 0 with DEC should not warn");
+    }
+
+    // ── W03: Short-circuit safety ────────────────────────────────────
+
+    #[test]
+    fn test_short_circuit_deref_after_nil_check() {
+        let source = "MODULE Test;\nTYPE Ptr = POINTER TO RECORD x: INTEGER END;\nVAR p: Ptr;\nBEGIN\n  IF (p # NIL) AND (p^.x = 1) THEN END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "short-circuit"),
+            "AND with NIL check + deref should warn, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_no_short_circuit_warning_without_nil() {
+        let source = "MODULE Test;\nVAR a, b: BOOLEAN;\nBEGIN\n  IF a AND b THEN END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "short-circuit"),
+            "plain AND without NIL/deref should not warn");
+    }
+
+    // ── W05: INC/DEC on bounded subrange ─────────────────────────────
+
+    #[test]
+    fn test_inc_on_subrange() {
+        let source = "MODULE Test;\nTYPE Idx = [0..15];\nVAR i: Idx;\nBEGIN\n  INC(i)\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "overflow"),
+            "INC on subrange should warn about overflow, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_dec_on_subrange() {
+        let source = "MODULE Test;\nTYPE Idx = [0..15];\nVAR i: Idx;\nBEGIN\n  DEC(i)\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "underflow"),
+            "DEC on subrange should warn about underflow, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_inc_on_integer_no_warning() {
+        let source = "MODULE Test;\nVAR i: INTEGER;\nBEGIN\n  INC(i)\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "overflow"),
+            "INC on INTEGER should not warn");
+    }
+
+    // ── W06: SYSTEM import warning ───────────────────────────────────
+
+    #[test]
+    fn test_system_import_warning() {
+        let source = "MODULE Test;\nFROM SYSTEM IMPORT ADDRESS;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "SYSTEM"),
+            "FROM SYSTEM IMPORT should warn, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_non_system_import_no_warning() {
+        let source = "MODULE Test;\nFROM Storage IMPORT ALLOCATE;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "SYSTEM"),
+            "FROM Storage IMPORT should not warn");
+    }
+
+    // ── W08: Mixed signed/unsigned arithmetic ────────────────────────
+
+    #[test]
+    fn test_mixed_signed_unsigned() {
+        let source = "MODULE Test;\nVAR i: INTEGER; c: CARDINAL;\nBEGIN\n  i := i + c\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "mixed signed/unsigned"),
+            "INTEGER + CARDINAL should warn, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_same_signedness_no_warning() {
+        let source = "MODULE Test;\nVAR a, b: INTEGER;\nBEGIN\n  a := a + b\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "mixed signed/unsigned"),
+            "INTEGER + INTEGER should not warn");
+    }
+
+    // ── W09: FOR unsigned subtraction (already tested above) ─────────
+
+    // ── Warnings don't block compilation ─────────────────────────────
+
+    // ── W10: Uninitialized variable (CFG-based, via LSP path) ─────────
+
+    #[test]
+    fn test_uninit_var_via_lsp_path() {
+        // Variable used before assignment should produce a warning
+        // through the LSP analysis path (analyze_source → HIR → CFG → lint)
+        let source = "MODULE Test;\nPROCEDURE Foo(): INTEGER;\nVAR x, y: INTEGER;\nBEGIN\n  y := x + 1;\n  RETURN y\nEND Foo;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "used before being assigned"),
+            "uninit var should produce warning via LSP path, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_uninit_var_path_sensitive_via_lsp() {
+        // Variable assigned in THEN but not ELSE — should warn
+        let source = "MODULE Test;\nPROCEDURE Foo(flag: BOOLEAN): INTEGER;\nVAR x: INTEGER;\nBEGIN\n  IF flag THEN x := 10 END;\n  RETURN x\nEND Foo;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "used before being assigned"),
+            "path-sensitive uninit should warn via LSP path, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_no_uninit_warning_when_assigned() {
+        // All variables properly assigned before use — no warning
+        let source = "MODULE Test;\nPROCEDURE Foo(): INTEGER;\nVAR a, b: INTEGER;\nBEGIN\n  a := 1;\n  b := a + 2;\n  RETURN b\nEND Foo;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "used before being assigned"),
+            "properly assigned vars should not warn");
+    }
+
+    // ── W11: Pointer NIL safety ────────────────────────────────────────
+
+    #[test]
+    fn test_nil_deref_uninitialized_pointer() {
+        let source = "MODULE Test;\nTYPE Node = POINTER TO RECORD val: INTEGER END;\nPROCEDURE Bad(): INTEGER;\nVAR p: Node;\nBEGIN\n  RETURN p^.val\nEND Bad;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "may be NIL"),
+            "deref of uninitialized pointer should warn W11, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn test_no_nil_deref_after_new() {
+        let source = "MODULE Test;\nTYPE Node = POINTER TO RECORD val: INTEGER END;\nPROCEDURE Good(): INTEGER;\nVAR p: Node;\nBEGIN\n  NEW(p);\n  p^.val := 42;\n  RETURN p^.val\nEND Good;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "may be NIL"),
+            "pointer after NEW should not warn W11");
+    }
+
+    #[test]
+    fn test_nil_deref_after_nil_assign() {
+        let source = "MODULE Test;\nTYPE Node = POINTER TO RECORD val: INTEGER END;\nPROCEDURE Bad(): INTEGER;\nVAR p: Node;\nBEGIN\n  NEW(p);\n  p := NIL;\n  RETURN p^.val\nEND Bad;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(has_warning(&result, "may be NIL"),
+            "deref after NIL assignment should warn W11, got: {:?}", result.diagnostics);
+    }
+
+    // ── Warnings don't block compilation ─────────────────────────────
+
+    #[test]
+    fn test_warnings_dont_block_analysis() {
+        // Code with a warning (CARDINAL >= 0) should still analyze successfully
+        let source = "MODULE Test;\nVAR c: CARDINAL;\nBEGIN\n  IF c >= 0 THEN c := 1 END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(result.ast.is_some(), "AST should be present despite warnings");
+        // Should have warning but no errors
+        let warnings: Vec<_> = result.diagnostics.iter().filter(|e| e.kind == crate::errors::ErrorKind::Warning).collect();
+        let errors: Vec<_> = result.diagnostics.iter().filter(|e| e.kind != crate::errors::ErrorKind::Warning).collect();
+        assert!(!warnings.is_empty(), "should have warnings");
+        assert!(errors.is_empty(), "should have no errors");
+    }
+
+    // ── Warning suppression tests ────────────────────────────────────
+
+    #[test]
+    fn test_line_level_suppression() {
+        // (*!W06*) on the SYSTEM import line should suppress the warning
+        let source = "MODULE Test;\nFROM SYSTEM IMPORT ADDRESS; (*!W06*)\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "SYSTEM"),
+            "W06 should be suppressed by line-level pragma");
+    }
+
+    #[test]
+    fn test_file_wide_suppression() {
+        // (*!W06*) before MODULE should suppress file-wide
+        let source = "(*!W06*)\nMODULE Test;\nFROM SYSTEM IMPORT ADDRESS;\nFROM SYSTEM IMPORT ADR;\nBEGIN\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "SYSTEM"),
+            "W06 should be suppressed file-wide");
+    }
+
+    #[test]
+    fn test_suppression_does_not_affect_other_codes() {
+        // Suppressing W06 should not suppress W01
+        let source = "MODULE Test;\nFROM SYSTEM IMPORT ADDRESS; (*!W06*)\nVAR c: CARDINAL;\nBEGIN\n  IF c >= 0 THEN END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        assert!(!has_warning(&result, "SYSTEM"), "W06 should be suppressed");
+        assert!(has_warning(&result, "always true"), "W01 should NOT be suppressed");
+    }
+
+    #[test]
+    fn test_warning_codes_present() {
+        // Warnings should carry their code
+        let source = "MODULE Test;\nVAR c: CARDINAL;\nBEGIN\n  IF c >= 0 THEN END\nEND Test.\n";
+        let result = analyze_source(source, "test.mod", false, &[]);
+        let w01 = result.diagnostics.iter().find(|e|
+            e.kind == crate::errors::ErrorKind::Warning && e.message.contains("always true"));
+        assert!(w01.is_some(), "should have W01 warning");
+        assert_eq!(w01.unwrap().code, Some("W01"), "warning should carry code W01");
     }
 }

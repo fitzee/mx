@@ -28,8 +28,10 @@ IMPLEMENTATION MODULE Http2ServerStream;
     IF lim > dstHigh THEN
       lim := dstHigh;
     END;
-    FOR i := 0 TO lim - 1 DO
-      dst[i] := src[i];
+    IF lim > 0 THEN
+      FOR i := 0 TO lim - 1 DO
+        dst[i] := src[i];
+      END;
     END;
     IF lim <= dstHigh THEN
       dst[lim] := 0C;
@@ -51,9 +53,11 @@ IMPLEMENTATION MODULE Http2ServerStream;
     IF nameLen # sLen THEN
       RETURN FALSE;
     END;
-    FOR i := 0 TO nameLen - 1 DO
-      IF name[i] # s[i] THEN
-        RETURN FALSE;
+    IF nameLen > 0 THEN
+      FOR i := 0 TO nameLen - 1 DO
+        IF name[i] # s[i] THEN
+          RETURN FALSE;
+        END;
       END;
     END;
     RETURN TRUE;
@@ -144,6 +148,7 @@ IMPLEMENTATION MODULE Http2ServerStream;
     hasMethod := FALSE;
     hasPath := FALSE;
 
+    IF numDecoded > 0 THEN
     FOR i := 0 TO numDecoded - 1 DO
       IF (decoded[i].nameLen > 0) AND (decoded[i].name[0] = ":") THEN
         (* Pseudo-header *)
@@ -177,6 +182,7 @@ IMPLEMENTATION MODULE Http2ServerStream;
         END;
       END;
     END;
+    END; (* IF numDecoded > 0 *)
 
     (* Required pseudo-headers must be present *)
     IF (NOT hasMethod) OR (NOT hasPath) THEN
@@ -264,31 +270,37 @@ IMPLEMENTATION MODULE Http2ServerStream;
     numEntries := 1;
 
     (* Copy response headers from ReqHeader format to HeaderEntry format *)
-    FOR i := 0 TO resp.numHeaders - 1 DO
-      IF numEntries <= MaxRespHeaders THEN
-        (* Copy name *)
-        copyLen := resp.headers[i].nameLen;
-        IF copyLen > 127 THEN copyLen := 127; END;
-        FOR j := 0 TO copyLen - 1 DO
-          hdrEntries[numEntries].name[j] := resp.headers[i].name[j];
-        END;
-        IF copyLen <= 127 THEN
-          hdrEntries[numEntries].name[copyLen] := 0C;
-        END;
-        hdrEntries[numEntries].nameLen := copyLen;
+    IF resp.numHeaders > 0 THEN
+      FOR i := 0 TO resp.numHeaders - 1 DO
+        IF numEntries <= MaxRespHeaders THEN
+          (* Copy name *)
+          copyLen := resp.headers[i].nameLen;
+          IF copyLen > 127 THEN copyLen := 127; END;
+          IF copyLen > 0 THEN
+            FOR j := 0 TO copyLen - 1 DO
+              hdrEntries[numEntries].name[j] := resp.headers[i].name[j];
+            END;
+          END;
+          IF copyLen <= 127 THEN
+            hdrEntries[numEntries].name[copyLen] := 0C;
+          END;
+          hdrEntries[numEntries].nameLen := copyLen;
 
-        (* Copy value *)
-        copyLen := resp.headers[i].valLen;
-        IF copyLen > 4095 THEN copyLen := 4095; END;
-        FOR j := 0 TO copyLen - 1 DO
-          hdrEntries[numEntries].value[j] := resp.headers[i].value[j];
-        END;
-        IF copyLen <= 4095 THEN
-          hdrEntries[numEntries].value[copyLen] := 0C;
-        END;
-        hdrEntries[numEntries].valLen := copyLen;
+          (* Copy value *)
+          copyLen := resp.headers[i].valLen;
+          IF copyLen > 4095 THEN copyLen := 4095; END;
+          IF copyLen > 0 THEN
+            FOR j := 0 TO copyLen - 1 DO
+              hdrEntries[numEntries].value[j] := resp.headers[i].value[j];
+            END;
+          END;
+          IF copyLen <= 4095 THEN
+            hdrEntries[numEntries].value[copyLen] := 0C;
+          END;
+          hdrEntries[numEntries].valLen := copyLen;
 
-        INC(numEntries);
+          INC(numEntries);
+        END;
       END;
     END;
 
@@ -511,29 +523,35 @@ IMPLEMENTATION MODULE Http2ServerStream;
     hdrEntries[0].valLen := 3;
     numEntries := 1;
 
-    FOR i := 0 TO resp.numHeaders - 1 DO
-      IF numEntries <= MaxRespHeaders THEN
-        copyLen := resp.headers[i].nameLen;
-        IF copyLen > 127 THEN copyLen := 127 END;
-        FOR j := 0 TO copyLen - 1 DO
-          hdrEntries[numEntries].name[j] := resp.headers[i].name[j];
-        END;
-        IF copyLen <= 127 THEN
-          hdrEntries[numEntries].name[copyLen] := 0C;
-        END;
-        hdrEntries[numEntries].nameLen := copyLen;
+    IF resp.numHeaders > 0 THEN
+      FOR i := 0 TO resp.numHeaders - 1 DO
+        IF numEntries <= MaxRespHeaders THEN
+          copyLen := resp.headers[i].nameLen;
+          IF copyLen > 127 THEN copyLen := 127 END;
+          IF copyLen > 0 THEN
+            FOR j := 0 TO copyLen - 1 DO
+              hdrEntries[numEntries].name[j] := resp.headers[i].name[j];
+            END;
+          END;
+          IF copyLen <= 127 THEN
+            hdrEntries[numEntries].name[copyLen] := 0C;
+          END;
+          hdrEntries[numEntries].nameLen := copyLen;
 
-        copyLen := resp.headers[i].valLen;
-        IF copyLen > 4095 THEN copyLen := 4095 END;
-        FOR j := 0 TO copyLen - 1 DO
-          hdrEntries[numEntries].value[j] := resp.headers[i].value[j];
-        END;
-        IF copyLen <= 4095 THEN
-          hdrEntries[numEntries].value[copyLen] := 0C;
-        END;
-        hdrEntries[numEntries].valLen := copyLen;
+          copyLen := resp.headers[i].valLen;
+          IF copyLen > 4095 THEN copyLen := 4095 END;
+          IF copyLen > 0 THEN
+            FOR j := 0 TO copyLen - 1 DO
+              hdrEntries[numEntries].value[j] := resp.headers[i].value[j];
+            END;
+          END;
+          IF copyLen <= 4095 THEN
+            hdrEntries[numEntries].value[copyLen] := 0C;
+          END;
+          hdrEntries[numEntries].valLen := copyLen;
 
-        INC(numEntries);
+          INC(numEntries);
+        END;
       END;
     END;
 

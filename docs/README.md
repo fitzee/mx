@@ -5,6 +5,7 @@
 - [Language support](language-support.md) — PIM4 and Modula-2+ feature matrix
 - [Using the toolchain](toolchain.md) — compiler flags, project builds, debugging, environment variables
 - [VS Code integration](vscode.md) — extension setup, settings, commands, troubleshooting
+- [Lint warnings](lint.md) — W01–W11 static analysis checks, suppression pragmas, architecture
 - [FAQ](faq.md) — common questions and answers
 
 ## Libraries

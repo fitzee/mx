@@ -83,11 +83,13 @@ IMPLEMENTATION MODULE Http2Router;
   VAR
     i: CARDINAL;
   BEGIN
-    FOR i := 0 TO r.count - 1 DO
-      IF StrEq(req.method, r.routes[i].method) AND
-         StrEq(req.path, r.routes[i].path) THEN
-        r.routes[i].handler(req, resp, r.routes[i].ctx);
-        RETURN
+    IF r.count > 0 THEN
+      FOR i := 0 TO r.count - 1 DO
+        IF StrEq(req.method, r.routes[i].method) AND
+           StrEq(req.path, r.routes[i].path) THEN
+          r.routes[i].handler(req, resp, r.routes[i].ctx);
+          RETURN
+        END;
       END;
     END;
     (* No route matched — return 404 *)
