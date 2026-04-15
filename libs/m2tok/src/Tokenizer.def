@@ -20,7 +20,7 @@ DEFINITION MODULE Tokenizer;
 FROM SYSTEM IMPORT ADDRESS;
 
 TYPE
-  TokenKind = (Ident, Operator, Shebang, EndOfInput);
+  TokenKind = (Ident, Operator, Shebang, StringLit, EndOfInput);
 
   Token = RECORD
     start: CARDINAL;
@@ -29,13 +29,20 @@ TYPE
   END;
 
   State = RECORD
-    buf:  ADDRESS;
-    blen: CARDINAL;
-    pos:  CARDINAL;
+    buf:         ADDRESS;
+    blen:        CARDINAL;
+    pos:         CARDINAL;
+    keepStrings: BOOLEAN;   (* if TRUE, yield StringLit tokens *)
   END;
 
-(* Initialise tokenizer state over a byte buffer. *)
+(* Initialise tokenizer state over a byte buffer.
+   Strings are skipped by default. *)
 PROCEDURE Init(VAR s: State; buf: ADDRESS; len: CARDINAL);
+
+(* Enable string literal preservation.
+   When enabled, Next yields StringLit tokens with the content
+   between quotes (excluding the quotes themselves). *)
+PROCEDURE SetKeepStrings(VAR s: State; keep: BOOLEAN);
 
 (* Advance to the next token.
    Returns TRUE and fills t, or FALSE at end-of-input. *)

@@ -72,6 +72,10 @@ pub struct CompileOptions {
     pub target_triple: Option<String>,
     /// Compile with AddressSanitizer + UndefinedBehaviorSanitizer
     pub sanitize: bool,
+    /// Project source directories — warnings from files under these paths are
+    /// shown, warnings from library deps outside them are suppressed.
+    /// Typically: [project_root, manifest include dirs].
+    pub project_paths: Vec<PathBuf>,
 }
 
 impl Default for CompileOptions {
@@ -102,6 +106,7 @@ impl Default for CompileOptions {
             out_dir: None,
             target_triple: None,
             sanitize: false,
+            project_paths: Vec::new(),
         }
     }
 }
@@ -1086,16 +1091,30 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
     {
         let suppressions = crate::analyze::collect_suppressions(&source);
 
-        // Tier 1: AST-level warnings from sema (only from the main source file)
+        // Determine which files are "project code" (show warnings) vs
+        // library dependencies (suppress warnings).  If project_paths is
+        // set, any file under those directories is project code.  Otherwise
+        // fall back to showing only the main file's warnings.
+        let project_roots: Vec<PathBuf> = opts.project_paths.iter()
+            .filter_map(|p| p.canonicalize().ok())
+            .collect();
         let main_file = opts.input.canonicalize()
             .unwrap_or_else(|_| opts.input.clone());
-        for w in sema.warnings() {
-            // Skip warnings from imported .def files
-            if !w.loc.file.is_empty() {
-                let wf = std::path::Path::new(&w.loc.file).canonicalize()
-                    .unwrap_or_else(|_| std::path::PathBuf::from(&w.loc.file));
-                if wf != main_file { continue; }
+
+        let is_project_file = |file: &str| -> bool {
+            if file.is_empty() { return true; }
+            let wf = std::path::Path::new(file).canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(file));
+            if !project_roots.is_empty() {
+                project_roots.iter().any(|root| wf.starts_with(root))
+            } else {
+                wf == main_file
             }
+        };
+
+        // Tier 1: AST-level warnings from sema (project files only)
+        for w in sema.warnings() {
+            if !is_project_file(&w.loc.file) { continue; }
             if let Some(code) = w.code {
                 if suppressions.is_suppressed(code, w.loc.line) { continue; }
             }
@@ -1120,6 +1139,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
 
         let cfg_warnings = lint_all_procs(&hir_module.proc_decls, &sema.types);
         for w in &cfg_warnings {
+            if !is_project_file(&w.loc.file) { continue; }
             if let Some(code) = w.code {
                 if suppressions.is_suppressed(code, w.loc.line) { continue; }
             }

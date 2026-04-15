@@ -1438,6 +1438,41 @@ impl SemanticAnalyzer {
         id
     }
 
+    /// Check if two types are equivalent — either by resolved TypeId or by
+    /// alias name.  Handles the case where the same imported type (e.g.
+    /// HeaderEntry) gets registered with different TypeIds across def modules.
+    fn types_equivalent(&self, a: TypeId, b: TypeId) -> bool {
+        let ra = self.resolve_alias(a);
+        let rb = self.resolve_alias(b);
+        if ra == rb { return true; }
+        // Fall back to alias name comparison
+        let name_a = self.type_alias_name(a);
+        let name_b = self.type_alias_name(b);
+        if let (Some(na), Some(nb)) = (name_a, name_b) {
+            na == nb
+        } else {
+            false
+        }
+    }
+
+    /// Get the alias name for a type, if it has one.
+    fn type_alias_name(&self, type_id: TypeId) -> Option<&str> {
+        let mut id = type_id;
+        let mut depth = 0;
+        loop {
+            match self.types.get(id) {
+                Type::Alias { name, target } => {
+                    if !name.is_empty() { return Some(name); }
+                    id = *target;
+                    depth += 1;
+                    if depth > 50 { break; }
+                }
+                _ => break,
+            }
+        }
+        None
+    }
+
     fn get_ordinal_range(&self, type_id: TypeId) -> (i64, i64) {
         let resolved = self.resolve_alias(type_id);
         match self.types.get(resolved) {
@@ -1833,12 +1868,22 @@ impl SemanticAnalyzer {
                         }
                     }
                     BinaryOp::And | BinaryOp::Or => {
-                        if lt != TY_ERROR && lt != TY_VOID && lt != TY_BOOLEAN {
-                            self.error(&expr.loc, "AND/OR requires BOOLEAN operands");
+                        // PIM4: AND/OR is logical for BOOLEAN, bitwise for integers
+                        let lt_resolved = self.resolve_alias(lt);
+                        let is_bool = lt == TY_BOOLEAN;
+                        let is_integer = lt != TY_ERROR && lt != TY_VOID
+                            && self.types.get(lt_resolved).is_integer_type();
+                        if !is_bool && !is_integer && lt != TY_ERROR && lt != TY_VOID {
+                            self.error(&expr.loc, "AND/OR requires BOOLEAN or integer operands");
                         }
-                        // W03: short-circuit safety
-                        self.lint_short_circuit_safety(expr);
-                        TY_BOOLEAN
+                        if is_bool {
+                            // W03: short-circuit safety (only for logical AND/OR)
+                            self.lint_short_circuit_safety(expr);
+                            TY_BOOLEAN
+                        } else {
+                            // Bitwise: result type matches operands
+                            lt
+                        }
                     }
                     BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le
                     | BinaryOp::Gt | BinaryOp::Ge => {
@@ -2059,13 +2104,15 @@ impl SemanticAnalyzer {
             if let Type::OpenArray { elem_type: expected_elem } = pt {
                 let ok = match at {
                     Type::Array { elem_type: actual_elem, .. } => {
-                        self.resolve_alias(*actual_elem) == self.resolve_alias(*expected_elem)
+                        self.types_equivalent(*actual_elem, *expected_elem)
                     }
                     Type::OpenArray { elem_type: actual_elem } => {
-                        self.resolve_alias(*actual_elem) == self.resolve_alias(*expected_elem)
+                        self.types_equivalent(*actual_elem, *expected_elem)
                     }
                     // String literal compatible with ARRAY OF CHAR
                     Type::StringLit(_) => *expected_elem == TY_CHAR,
+                    // ADDRESS is a universal pointer — compatible with any open array
+                    Type::Address => true,
                     _ => false,
                 };
                 if !ok {
@@ -2454,6 +2501,12 @@ impl SemanticAnalyzer {
     /// W08: Warn on mixed signed/unsigned arithmetic.
     fn lint_mixed_signedness(&mut self, expr: &Expr, lt: TypeId, rt: TypeId) {
         if lt == TY_ERROR || lt == TY_VOID || rt == TY_ERROR || rt == TY_VOID { return; }
+        // Integer literals are compatible with both signed and unsigned — skip.
+        if let ExprKind::BinaryOp { left, right, .. } = &expr.kind {
+            if matches!(left.kind, ExprKind::IntLit(_)) || matches!(right.kind, ExprKind::IntLit(_)) {
+                return;
+            }
+        }
         let lt_resolved = self.resolve_alias(lt);
         let rt_resolved = self.resolve_alias(rt);
         let lt_unsigned = is_unsigned_type(&self.types, lt_resolved);

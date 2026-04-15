@@ -70,11 +70,10 @@ pub fn analyze(
     include_paths: &[PathBuf],
     def_cache: &mut DefCache,
 ) -> AnalysisResult {
-    // Collect def modules for imports.
-    // Reverse so transitive deps (discovered later by BFS) are registered
-    // before the modules that depend on them — poor man's topo sort.
+    // Collect def modules for imports and topologically sort them so that
+    // a module's dependencies are analyzed before the module itself.
     let mut def_modules = collect_def_modules(source, filename, m2plus, include_paths, def_cache);
-    def_modules.reverse();
+    topo_sort_def_modules(&mut def_modules);
     let def_refs: Vec<&DefinitionModule> = def_modules.iter().collect();
 
     let mut result = analyze::analyze_source(source, filename, m2plus, &def_refs);
@@ -190,6 +189,68 @@ fn collect_def_modules(
     }
 
     result
+}
+
+/// Topologically sort def modules so dependencies come before dependents.
+/// Uses DFS-based topological sort on the import graph.
+fn topo_sort_def_modules(modules: &mut Vec<DefinitionModule>) {
+    use std::collections::{HashMap, HashSet};
+
+    if modules.len() <= 1 { return; }
+
+    // Build name → index mapping
+    let name_to_idx: HashMap<String, usize> = modules.iter()
+        .enumerate()
+        .map(|(i, m)| (m.name.clone(), i))
+        .collect();
+
+    // Build adjacency: module → set of dep indices
+    let deps: Vec<Vec<usize>> = modules.iter().map(|m| {
+        let mut dep_indices = Vec::new();
+        for imp in &m.imports {
+            let dep_name = if let Some(ref from_mod) = imp.from_module {
+                from_mod.clone()
+            } else {
+                continue;
+            };
+            if let Some(&idx) = name_to_idx.get(&dep_name) {
+                dep_indices.push(idx);
+            }
+        }
+        dep_indices
+    }).collect();
+
+    // DFS topo sort
+    let n = modules.len();
+    let mut visited = vec![false; n];
+    let mut on_stack = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+
+    fn dfs(node: usize, deps: &[Vec<usize>], visited: &mut [bool],
+           on_stack: &mut [bool], order: &mut Vec<usize>) {
+        if visited[node] { return; }
+        if on_stack[node] { return; } // cycle — skip
+        on_stack[node] = true;
+        for &dep in &deps[node] {
+            dfs(dep, deps, visited, on_stack, order);
+        }
+        on_stack[node] = false;
+        visited[node] = true;
+        order.push(node);
+    }
+
+    for i in 0..n {
+        dfs(i, &deps, &mut visited, &mut on_stack, &mut order);
+    }
+
+    // Reorder modules according to topological order
+    // (dependencies first, dependents later)
+    let mut sorted: Vec<Option<DefinitionModule>> = modules.drain(..).map(Some).collect();
+    for idx in order {
+        if let Some(m) = sorted[idx].take() {
+            modules.push(m);
+        }
+    }
 }
 
 /// Find a .def file ONLY in the same directory as the input file.

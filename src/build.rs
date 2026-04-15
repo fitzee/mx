@@ -266,6 +266,18 @@ pub fn build_project(
     opts.use_llvm = config.use_llvm;
     opts.sanitize = config.sanitize;
     opts.target_triple = config.target_triple.clone();
+    // Project paths = root + manifest includes (project code that should show warnings).
+    // Library dep paths from ~/.mx/lib/ are excluded.
+    {
+        let mut pp = vec![root.clone()];
+        for inc in &manifest.includes {
+            let p = root.join(inc);
+            if let Ok(canon) = p.canonicalize() {
+                pp.push(canon);
+            }
+        }
+        opts.project_paths = pp;
+    }
 
     // Auto-inject platform feature (MACOS or LINUX)
     // When cross-compiling, use the target; otherwise fall back to host.

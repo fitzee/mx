@@ -1,5 +1,16 @@
 # Release Notes
 
+## 1.10.1 (2026-04-15)
+
+### Bug fixes
+
+- **Sema: bitwise AND/OR on integers** — `AND`/`OR` now correctly accepts integer operands for bitwise operations per PIM4, not just BOOLEAN. Fixes false "AND/OR requires BOOLEAN operands" errors on expressions like `(enabled AND 1) # 0`.
+- **Sema: W08 false positive on integer literals** — Integer literals (e.g. `i + 5`) no longer trigger "mixed signed/unsigned arithmetic" warnings, since literals are type-neutral in Modula-2.
+- **Sema: ADDRESS accepted for open array parameters** — Passing `ADDRESS` to an `ARRAY OF` parameter no longer reports a type error, matching the compiler's existing behavior.
+- **LSP: def module topological sort** — Definition modules are now topologically sorted before analysis, fixing false "incompatible type" errors when the same type is imported both directly and transitively.
+- **LSP: cross-module type equivalence** — Open array element type checks now fall back to alias name comparison when TypeIds differ across def modules, eliminating spurious "expected ARRAY OF compatible type" errors.
+- **LSP: project-scoped warnings** — Lint warnings are now shown for all project source files (entry + `includes=` paths), not just the main file. Library dependency warnings remain suppressed.
+
 ## 1.10.0 (2026-04-10)
 
 ### Features

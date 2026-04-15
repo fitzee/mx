@@ -108,8 +108,14 @@ PROCEDURE Init(VAR s: State; buf: ADDRESS; len: CARDINAL);
 BEGIN
   s.buf := buf;
   s.blen := len;
-  s.pos := 0
+  s.pos := 0;
+  s.keepStrings := FALSE
 END Init;
+
+PROCEDURE SetKeepStrings(VAR s: State; keep: BOOLEAN);
+BEGIN
+  s.keepStrings := keep
+END SetKeepStrings;
 
 PROCEDURE Next(VAR s: State; VAR t: Token): BOOLEAN;
 VAR ch, ch2: CHAR;
@@ -138,9 +144,18 @@ BEGIN
       RETURN TRUE
     END;
 
-    (* String literals: skip *)
+    (* String literals: skip or yield *)
     IF (ch = '"') OR (ch = "'") THEN
-      SkipString(s)
+      IF s.keepStrings THEN
+        t.start := s.pos + 1;  (* skip opening quote *)
+        t.kind := StringLit;
+        SkipString(s);
+        (* t.len = content between quotes *)
+        t.len := s.pos - t.start - 1;
+        RETURN TRUE
+      ELSE
+        SkipString(s)
+      END
 
     (* Block comment: /* ... */ — skip *)
     ELSIF (ch = '/') AND (s.pos + 1 < s.blen) AND
