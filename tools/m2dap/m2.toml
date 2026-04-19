@@ -17,3 +17,4 @@ m2sys=path:../../libs/m2sys
 
 [cc]
 extra-c=src/process_bridge.c
+libs=-lutil
