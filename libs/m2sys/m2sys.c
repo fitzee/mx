@@ -5,6 +5,9 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <errno.h>
+#ifndef __APPLE__
+#include <sys/syscall.h>
+#endif
 
 /* ── File handle table ─────────────────────────────────────────── */
 
@@ -477,9 +480,13 @@ void m2sys_format_time(void *buf, int32_t bufSize) {
 }
 
 int64_t m2sys_thread_id(void) {
+#ifdef __APPLE__
     uint64_t tid;
     pthread_threadid_np(NULL, &tid);
     return (int64_t)tid;
+#else
+    return (int64_t)syscall(SYS_gettid);
+#endif
 }
 
 /* ── File metadata ───────────────────────────────────────────────── */

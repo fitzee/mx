@@ -2141,16 +2141,37 @@ impl SemanticAnalyzer {
                         // ALLOCATE/DEALLOCATE take VAR ADDRESS but receive typed pointers)
                         (Type::Address, _) if at.is_pointer() => true,
                         (_, Type::Address) if pt.is_pointer() => true,
+                        // ADDRESS is a universal type — accept for any VAR parameter
+                        // (common with ADR() results passed to low-level I/O procedures)
+                        (Type::Address, _) => true,
+                        (_, Type::Address) => true,
                         _ => false,
                     };
                     if !structurally_ok {
-                        self.error(
-                            &arg.loc,
-                            format!(
-                                "incompatible type for VAR parameter '{}'",
-                                param.name
-                            ),
+                        // INTEGER↔CARDINAL mismatch on VAR params: warn, not error
+                        // (compiler accepts it, common in I/O code)
+                        let is_int_card_mismatch = matches!(
+                            (pt, at),
+                            (Type::Integer, Type::Cardinal) | (Type::Cardinal, Type::Integer) |
+                            (Type::LongInt, Type::LongCard) | (Type::LongCard, Type::LongInt)
                         );
+                        if is_int_card_mismatch {
+                            self.warning(
+                                &arg.loc, "W08",
+                                format!(
+                                    "signed/unsigned mismatch for VAR parameter '{}'",
+                                    param.name
+                                ),
+                            );
+                        } else {
+                            self.error(
+                                &arg.loc,
+                                format!(
+                                    "incompatible type for VAR parameter '{}'",
+                                    param.name
+                                ),
+                            );
+                        }
                     }
                 }
             } else {

@@ -1,5 +1,13 @@
 # Release Notes
 
+## 1.10.2 (2026-04-20)
+
+### Bug fixes
+
+- **Sema: INTEGER↔CARDINAL VAR parameter mismatch downgraded to warning** — Passing an INTEGER variable to a VAR CARDINAL parameter (or vice versa) now emits a W08 warning instead of a hard error, matching the compiler's existing lenient behavior.
+- **Sema: ADDRESS universal for VAR parameters** — ADDRESS is now accepted for any VAR parameter type, not just pointer-typed ones. Fixes false errors when passing `ADR()` results to low-level I/O procedures.
+- **m2sys: Linux `pthread_threadid_np` fix** — `m2sys_thread_id()` now uses `syscall(SYS_gettid)` on Linux instead of the macOS-only `pthread_threadid_np()`.
+
 ## 1.10.1 (2026-04-15)
 
 ### Bug fixes
