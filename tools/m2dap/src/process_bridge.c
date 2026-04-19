@@ -7,7 +7,11 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
 #include <util.h>     /* forkpty() on macOS */
+#else
+#include <pty.h>      /* forkpty() on Linux */
+#endif
 #include <termios.h>
 
 /* Maximum number of arguments for spawned process */
