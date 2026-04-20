@@ -1,6 +1,6 @@
 # m2.toml - m2gfx: SDL2-based graphics library for Modula-2
 name=m2gfx
-version=0.5.0
+version=0.6.0
 entry=src/Gfx.mod
 m2plus=false
 includes=src

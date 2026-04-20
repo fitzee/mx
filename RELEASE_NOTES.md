@@ -1,5 +1,21 @@
 # Release Notes
 
+## 1.10.3 (2026-04-20)
+
+### Bug fixes
+
+- **C backend: nested procedures in embedded modules** — Nested procedures (e.g. local helpers inside a procedure in an imported module) are now correctly emitted as top-level C functions with proper name mangling. Previously they were silently omitted, causing "procedure not declared" C compiler errors.
+- **C backend: local variables in nested procedures** — Local variable declarations for nested procedures in embedded modules are now emitted in the generated C code.
+- **C backend: FOR loop variables in module init body** — Module-level VARs used as FOR loop variables in a module's `BEGIN...END` body now correctly resolve to the module-prefixed global in generated C.
+- **C backend: ADDRESS coercion** — Suppress clang errors from `void *` ↔ integer conversions in generated C code, matching PIM4 ADDRESS semantics where ADDRESS is a universal type.
+- **Sema: too many arguments** — Procedure calls with more arguments than parameters are now caught by sema instead of silently passing through to the C compiler.
+- **LLVM backend: conditional unwind.h** — The exception handling runtime (`unwind.h`) is only included when the program uses TRY/EXCEPT/RAISE, fixing builds on systems without the unwind header.
+- **m2dap: Linux build** — Use `<pty.h>` instead of macOS-only `<util.h>` for `forkpty()`, and link `-lutil` on Linux.
+
+### Libraries
+
+- **m2gfx** — Added `Texture_LoadBMPKeyed` and `PixBuf_LoadPNGPal` APIs.
+
 ## 1.10.2 (2026-04-20)
 
 ### Bug fixes
