@@ -1306,8 +1306,11 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         })?;
 
         // Write standalone runtime C file
+        // Only include the full EH runtime (which requires <unwind.h>) if the
+        // program actually uses TRY/EXCEPT/RAISE.  Otherwise emit stubs.
+        let needs_eh = ll_code.contains("@m2_throw") || ll_code.contains("m2_eh_personality");
         let runtime_c = parent_dir.join(format!("{}_rt.c", stem));
-        let runtime_code = crate::stdlib::generate_llvm_runtime_c();
+        let runtime_code = crate::stdlib::generate_llvm_runtime_c_with_eh(needs_eh);
         fs::write(&runtime_c, &runtime_code).map_err(|e| {
             CompileError::driver(format!("cannot write runtime '{}': {}", runtime_c.display(), e))
         })?;

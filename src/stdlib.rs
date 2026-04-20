@@ -1345,7 +1345,7 @@ static int m2_BinaryIO_IsEOF(uint32_t fh) {
 /// Derives from the embedded header (generate_runtime_header) with `static`
 /// stripped so all functions have external linkage. Appends LLVM-specific
 /// extras (native EH personality, _Unwind-based throw).
-pub fn generate_llvm_runtime_c() -> String {
+pub fn generate_llvm_runtime_c_with_eh(needs_eh: bool) -> String {
     // Start with the full embedded runtime, strip static linkage so all
     // functions/variables have external linkage for LLVM IR to reference.
     let mut base = generate_runtime_header();
@@ -1362,10 +1362,23 @@ pub fn generate_llvm_runtime_c() -> String {
         base = base.replace("static char **m2_argv", "char **m2_argv");
     }
 
-    // Append LLVM-native exception handling (not in the C backend header)
-    let llvm_extras = generate_llvm_eh_runtime();
+    if needs_eh {
+        // Append LLVM-native exception handling (requires <unwind.h>)
+        let llvm_extras = generate_llvm_eh_runtime();
+        format!("{}\n{}", base, llvm_extras)
+    } else {
+        // Emit stub functions so the linker doesn't complain
+        format!("{}\n\
+            void m2_throw(int32_t id, const char *name) {{ fprintf(stderr, \"uncaught exception: %s\\n\", name); exit(1); }}\n\
+            int32_t m2_eh_get_id(void *p) {{ return 0; }}\n\
+            void *m2_eh_begin_catch(void *p) {{ return p; }}\n\
+            void m2_eh_end_catch(void) {{}}\n",
+            base)
+    }
+}
 
-    format!("{}\n{}", base, llvm_extras)
+pub fn generate_llvm_runtime_c() -> String {
+    generate_llvm_runtime_c_with_eh(true)
 }
 
 /// LLVM-native exception handling runtime (personality function, throw).
