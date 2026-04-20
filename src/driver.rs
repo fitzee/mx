@@ -1555,6 +1555,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
         cmd.args(["-ffunction-sections", "-fdata-sections"]);
         cmd.arg("-w"); // suppress warnings for generated code
+        cmd.arg("-Wno-error"); // don't promote warnings to errors in generated code
         add_sanitizer_flags(&mut cmd, opts);
 
         if opts.verbose {

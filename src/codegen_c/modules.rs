@@ -671,6 +671,49 @@ impl CodeGen {
         let emb_procs: Vec<crate::hir::HirProcSig> = hir_emb.as_ref()
             .map(|e| e.procedures.iter().map(|pd| pd.sig.clone()).collect())
             .unwrap_or_default();
+
+        // Emit nested procedures as top-level C functions before their parents.
+        // The inline proc emitter below doesn't handle nested procs, so we lift
+        // them here (same approach as the LLVM backend).
+        if let Some(ref emb) = hir_emb {
+            for pd in &emb.procedures {
+                for np in &pd.nested_procs {
+                    let mangled = format!("{}_{}", pd.sig.name, np.sig.name);
+                    let c_name = format!("{}_{}", self.module_name, mangled);
+                    self.nested_proc_names.insert(np.sig.name.clone(), c_name.clone());
+                    // Emit the nested proc as a static C function
+                    let ret_type = match np.sig.return_type {
+                        Some(rt) => self.type_id_to_c(rt),
+                        None => "void".to_string(),
+                    };
+                    self.emit(&format!("static {} {}(", ret_type, c_name));
+                    for (pi, hp) in np.sig.params.iter().enumerate() {
+                        if pi > 0 { self.emit(", "); }
+                        let c_type = self.type_id_to_c(hp.type_id);
+                        let c_param = self.mangle(&hp.name);
+                        if hp.is_var {
+                            self.emit(&format!("{} *{}", c_type, c_param));
+                        } else {
+                            self.emit(&format!("{} {}", c_type, c_param));
+                        }
+                    }
+                    if np.sig.params.is_empty() { self.emit("void"); }
+                    self.emit(") {\n");
+                    self.indent += 1;
+                    if let Some(ref cfg) = np.cfg {
+                        if np.sig.return_type.is_none() {
+                            self.emit_cfg_body(cfg);
+                        } else {
+                            self.emit_cfg_body_with_return(cfg, "0");
+                        }
+                    }
+                    self.indent -= 1;
+                    self.emitln("}");
+                    self.newline();
+                }
+            }
+        }
+
         for sig in &emb_procs {
             {
                 let emb_sig: Option<crate::hir::HirProcSig> = Some(sig.clone());
