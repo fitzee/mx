@@ -20,6 +20,7 @@ DEFINITION MODULE PixBuf;
 
   (* Palette *)
   PROCEDURE SetPal(pb: PBuf; idx, r, g, b: INTEGER);
+  PROCEDURE SetPalAlpha(pb: PBuf; idx, r, g, b, a: INTEGER);
   PROCEDURE PalR(pb: PBuf; idx: INTEGER): INTEGER;
   PROCEDURE PalG(pb: PBuf; idx: INTEGER): INTEGER;
   PROCEDURE PalB(pb: PBuf; idx: INTEGER): INTEGER;
@@ -126,6 +127,8 @@ DEFINITION MODULE PixBuf;
   (* File I/O — PNG, .dp2, palette *)
   PROCEDURE SavePNG(pb: PBuf; path: ARRAY OF CHAR): BOOLEAN;
   PROCEDURE LoadPNG(path: ARRAY OF CHAR; ncolors: INTEGER): PBuf;
+  PROCEDURE LoadPNGPal(path: ARRAY OF CHAR; palSrc: PBuf;
+                       ncolors: INTEGER): PBuf;
   PROCEDURE SaveDP2(path: ARRAY OF CHAR): BOOLEAN;
   PROCEDURE LoadDP2(path: ARRAY OF CHAR): BOOLEAN;
   PROCEDURE SavePal(pb: PBuf; path: ARRAY OF CHAR): BOOLEAN;

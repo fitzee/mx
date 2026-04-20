@@ -853,7 +853,28 @@ void *gfx_load_bmp(void *ren, const char *path)
     SDL_Surface *surf = SDL_LoadBMP(path);
     if (!surf) return NULL;
 
+    /* Use nearest-neighbor scaling for pixel art */
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     SDL_Texture *tex = SDL_CreateTextureFromSurface((SDL_Renderer *)ren, surf);
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
+    SDL_FreeSurface(surf);
+    return (void *)tex;
+}
+
+void *gfx_load_bmp_keyed(void *ren, const char *path,
+                         int32_t kr, int32_t kg, int32_t kb)
+{
+    if (!ren || !path) return NULL;
+
+    SDL_Surface *surf = SDL_LoadBMP(path);
+    if (!surf) return NULL;
+
+    SDL_SetColorKey(surf, SDL_TRUE,
+                    SDL_MapRGB(surf->format, (Uint8)kr, (Uint8)kg, (Uint8)kb));
+    /* Use nearest-neighbor scaling for pixel art / bitmap fonts */
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    SDL_Texture *tex = SDL_CreateTextureFromSurface((SDL_Renderer *)ren, surf);
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
     SDL_FreeSurface(surf);
     return (void *)tex;
 }
@@ -1218,6 +1239,16 @@ void gfx_pb_set_pal(void *pb, int32_t idx, int32_t r, int32_t g, int32_t b)
     }
 }
 
+void gfx_pb_set_pal_alpha(void *pb, int32_t idx, int32_t r, int32_t g, int32_t b, int32_t a)
+{
+    PixBuf *p = (PixBuf *)pb;
+    if (p && idx >= 0 && idx <= 255) {
+        p->pal[idx] = ((uint32_t)(uint8_t)r << 24) | ((uint32_t)(uint8_t)g << 16)
+                    | ((uint32_t)(uint8_t)b << 8) | (uint32_t)(uint8_t)a;
+        pb_mark_dirty_rect(p, 0, 0, p->w, p->h);
+    }
+}
+
 int32_t gfx_pb_pal_packed(void *pb, int32_t idx)
 {
     PixBuf *p = (PixBuf *)pb;
@@ -1489,6 +1520,30 @@ void *gfx_pb_load_png(const char *path, int32_t ncolors)
     if (ncolors < 1) ncolors = 32;
     PixBuf *p = (PixBuf *)gfx_pb_create(w, h);
     if (!p) { stbi_image_free(data); return NULL; }
+    for (int32_t i = 0; i < w * h; i++) {
+        uint8_t r = data[i*3+0], g = data[i*3+1], b = data[i*3+2];
+        p->pixels[i] = (uint8_t)pb_nearest(p, r, g, b, ncolors);
+    }
+    stbi_image_free(data);
+    pb_mark_dirty_rect(p, 0, 0, p->w, p->h);
+    return p;
+}
+
+/* Load PNG with a pre-defined palette (no auto-quantization). */
+void *gfx_pb_load_png_pal(const char *path, void *palPb, int32_t ncolors)
+{
+    int w, h, comp;
+    uint8_t *data = stbi_load(path, &w, &h, &comp, 3);
+    if (!data) return NULL;
+    if (ncolors < 1) ncolors = 32;
+    PixBuf *p = (PixBuf *)gfx_pb_create(w, h);
+    if (!p) { stbi_image_free(data); return NULL; }
+    /* Copy palette from palPb */
+    PixBuf *pp = (PixBuf *)palPb;
+    if (pp) {
+        for (int i = 0; i < 256 && i < ncolors; i++)
+            p->pal[i] = pp->pal[i];
+    }
     for (int32_t i = 0; i < w * h; i++) {
         uint8_t r = data[i*3+0], g = data[i*3+1], b = data[i*3+2];
         p->pixels[i] = (uint8_t)pb_nearest(p, r, g, b, ncolors);

@@ -109,6 +109,8 @@ DEFINITION MODULE FOR "C" GfxBridge;
 
   (* Texture *)
   PROCEDURE gfx_load_bmp(ren: ADDRESS; path: ADDRESS): ADDRESS;
+  PROCEDURE gfx_load_bmp_keyed(ren: ADDRESS; path: ADDRESS;
+                                kr, kg, kb: INTEGER): ADDRESS;
   PROCEDURE gfx_create_texture(ren: ADDRESS; w, h: INTEGER): ADDRESS;
   PROCEDURE gfx_text_texture(ren, font: ADDRESS;
                               text: ADDRESS;
@@ -156,6 +158,7 @@ DEFINITION MODULE FOR "C" GfxBridge;
 
   (* Pixel Buffer — Palette *)
   PROCEDURE gfx_pb_set_pal(pb: ADDRESS; idx, r, g, b: INTEGER);
+  PROCEDURE gfx_pb_set_pal_alpha(pb: ADDRESS; idx, r, g, b, a: INTEGER);
   PROCEDURE gfx_pb_pal_packed(pb: ADDRESS; idx: INTEGER): INTEGER;
 
   (* Pixel Buffer — Pixel Access *)
@@ -191,6 +194,8 @@ DEFINITION MODULE FOR "C" GfxBridge;
   (* Pixel Buffer — File I/O (PNG stays in C — stb_image) *)
   PROCEDURE gfx_pb_save_png(pb: ADDRESS; path: ADDRESS): INTEGER;
   PROCEDURE gfx_pb_load_png(path: ADDRESS; ncolors: INTEGER): ADDRESS;
+  PROCEDURE gfx_pb_load_png_pal(path: ADDRESS; palPb: ADDRESS;
+                                 ncolors: INTEGER): ADDRESS;
 
   (* Pixel Buffer — Render Alpha (stays in C — SDL) *)
   PROCEDURE gfx_pb_render_alpha(ren, tex, pb: ADDRESS; alpha: INTEGER);

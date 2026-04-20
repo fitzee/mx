@@ -1,7 +1,8 @@
 IMPLEMENTATION MODULE Texture;
 
 FROM SYSTEM IMPORT ADR;
-FROM GfxBridge IMPORT gfx_load_bmp, gfx_create_texture, gfx_text_texture,
+FROM GfxBridge IMPORT gfx_load_bmp, gfx_load_bmp_keyed,
+     gfx_create_texture, gfx_text_texture,
      gfx_destroy_texture,
      gfx_draw_texture, gfx_draw_texture_ex, gfx_draw_texture_rot,
      gfx_tex_width, gfx_tex_height,
@@ -12,6 +13,12 @@ PROCEDURE LoadBMP(ren: Renderer; path: ARRAY OF CHAR): Tex;
 BEGIN
   RETURN gfx_load_bmp(ren, ADR(path))
 END LoadBMP;
+
+PROCEDURE LoadBMPKeyed(ren: Renderer; path: ARRAY OF CHAR;
+                        kr, kg, kb: INTEGER): Tex;
+BEGIN
+  RETURN gfx_load_bmp_keyed(ren, ADR(path), kr, kg, kb)
+END LoadBMPKeyed;
 
 PROCEDURE Create(ren: Renderer; w, h: INTEGER): Tex;
 BEGIN

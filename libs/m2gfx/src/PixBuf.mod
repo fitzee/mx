@@ -8,7 +8,7 @@ FROM DrawAlgo IMPORT Ctx, PointFn, HLineFn, LineFn;
 FROM GfxBridge IMPORT
      gfx_pb_create, gfx_pb_free, gfx_pb_clear,
      gfx_pb_width, gfx_pb_height,
-     gfx_pb_set_pal, gfx_pb_pal_packed,
+     gfx_pb_set_pal, gfx_pb_set_pal_alpha, gfx_pb_pal_packed,
      gfx_pb_set, gfx_pb_get,
      gfx_pb_fill_row, gfx_pb_mark_dirty, gfx_pb_total,
      gfx_alloc, gfx_dealloc, gfx_buf_get, gfx_buf_set,
@@ -17,7 +17,7 @@ FROM GfxBridge IMPORT
      gfx_pb_render,
      gfx_pb_save, gfx_pb_restore, gfx_pb_save_w, gfx_pb_save_h,
      gfx_pb_free_save,
-     gfx_pb_save_png, gfx_pb_load_png,
+     gfx_pb_save_png, gfx_pb_load_png, gfx_pb_load_png_pal,
      gfx_pb_render_alpha,
      gfx_pb_render_ham,
      gfx_pb_pal_to_screen, gfx_pb_rgba_get32, gfx_pb_rgba_set32,
@@ -72,6 +72,9 @@ BEGIN RETURN gfx_pb_height(pb) END Height;
 
 PROCEDURE SetPal(pb: PBuf; idx, r, g, b: INTEGER);
 BEGIN gfx_pb_set_pal(pb, idx, r, g, b) END SetPal;
+
+PROCEDURE SetPalAlpha(pb: PBuf; idx, r, g, b, a: INTEGER);
+BEGIN gfx_pb_set_pal_alpha(pb, idx, r, g, b, a) END SetPalAlpha;
 
 PROCEDURE PalPacked(pb: PBuf; idx: INTEGER): CARDINAL;
 BEGIN RETURN CARDINAL(gfx_pb_pal_packed(pb, idx)) END PalPacked;
@@ -1035,6 +1038,10 @@ BEGIN RETURN gfx_pb_save_png(pb, ADR(path)) # 0 END SavePNG;
 
 PROCEDURE LoadPNG(path: ARRAY OF CHAR; ncolors: INTEGER): PBuf;
 BEGIN RETURN gfx_pb_load_png(ADR(path), ncolors) END LoadPNG;
+
+PROCEDURE LoadPNGPal(path: ARRAY OF CHAR; palSrc: PBuf;
+                     ncolors: INTEGER): PBuf;
+BEGIN RETURN gfx_pb_load_png_pal(ADR(path), palSrc, ncolors) END LoadPNGPal;
 
 (* ── SaveDP2/LoadDP2 — pure M2 ──────────────────────────── *)
 

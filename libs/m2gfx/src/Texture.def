@@ -13,6 +13,8 @@ DEFINITION MODULE Texture;
     Tex = ADDRESS;
 
   PROCEDURE LoadBMP(ren: Renderer; path: ARRAY OF CHAR): Tex;
+  PROCEDURE LoadBMPKeyed(ren: Renderer; path: ARRAY OF CHAR;
+                          kr, kg, kb: INTEGER): Tex;
   PROCEDURE Create(ren: Renderer; w, h: INTEGER): Tex;
   PROCEDURE FromText(ren: Renderer; font: FontHandle;
                      text: ARRAY OF CHAR;
