@@ -90,6 +90,10 @@ impl CodeGen {
                     format!("(*_env->{})", sid.source_name)
                 } else if self.is_var_param(&sid.source_name) {
                     format!("(*{})", self.mangle(&sid.source_name))
+                } else if self.embedded_local_vars.contains(&sid.source_name) {
+                    // CFG-generated places (e.g. FOR loop vars) use PlaceBase::Local
+                    // for variables that are actually embedded module globals.
+                    format!("{}_{}", self.module_name, sid.source_name)
                 } else {
                     self.mangle(&sid.source_name)
                 }
