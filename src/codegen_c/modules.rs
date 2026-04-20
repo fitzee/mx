@@ -700,6 +700,16 @@ impl CodeGen {
                     if np.sig.params.is_empty() { self.emit("void"); }
                     self.emit(") {\n");
                     self.indent += 1;
+                    // Emit local variable declarations
+                    for local in &np.locals {
+                        if let crate::hir::HirLocalDecl::Var { name, type_id } = local {
+                            let resolved = self.resolve_hir_alias(*type_id);
+                            let c_name = self.mangle(name);
+                            let (ctype, arr_suffix) = self.field_type_and_suffix(resolved);
+                            self.emit_indent();
+                            self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
+                        }
+                    }
                     if let Some(ref cfg) = np.cfg {
                         if np.sig.return_type.is_none() {
                             self.emit_cfg_body(cfg);
