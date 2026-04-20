@@ -1603,7 +1603,8 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
                 .arg(&c_file)
                 .args(["-g", "-O0", "-fno-omit-frame-pointer", "-fno-inline", "-gno-column-info"])
                 .args(["-ffunction-sections", "-fdata-sections"])
-                .arg("-w");
+                .arg("-w")
+                .args(["-Wno-error", "-Wno-int-conversion", "-Wno-incompatible-pointer-types"]);
             for flag in target.default_cflags() { compile_cmd.arg(flag); }
             add_mx_home_includes(&mut compile_cmd);
             for flag in &opts.extra_cflags {
@@ -1737,6 +1738,7 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
             cmd.args(["-ffunction-sections", "-fdata-sections"]);
             for flag in target.default_ldflags() { cmd.arg(flag); }
             cmd.arg("-w");
+            cmd.args(["-Wno-error", "-Wno-int-conversion", "-Wno-incompatible-pointer-types"]);
             add_sanitizer_flags(&mut cmd, opts);
 
             if opts.verbose {

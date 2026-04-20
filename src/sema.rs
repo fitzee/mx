@@ -2065,6 +2065,13 @@ impl SemanticAnalyzer {
             } else { vec![] }
         } else { vec![] };
 
+        // Check arg count (skip for empty param lists — unresolved stubs)
+        if !param_list.is_empty() && args.len() > param_list.len() {
+            self.error(
+                &args[param_list.len()].loc,
+                format!("too many arguments: expected {}, got {}", param_list.len(), args.len()),
+            );
+        }
         for (i, arg) in args.iter().enumerate() {
             let arg_type = self.analyze_expr(arg);
             if arg_type == TY_ERROR || arg_type == TY_VOID { continue; }
