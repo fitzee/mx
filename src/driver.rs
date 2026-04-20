@@ -1555,7 +1555,9 @@ pub fn compile(opts: &CompileOptions) -> CompileResult<()> {
         }
         cmd.args(["-ffunction-sections", "-fdata-sections"]);
         cmd.arg("-w"); // suppress warnings for generated code
-        cmd.arg("-Wno-error"); // don't promote warnings to errors in generated code
+        // PIM4 SYSTEM.ADDRESS is universal — suppress type conversion errors
+        // in generated C code that arise from ADDRESS ↔ integer coercions.
+        cmd.args(["-Wno-error", "-Wno-int-conversion", "-Wno-incompatible-pointer-types"]);
         add_sanitizer_flags(&mut cmd, opts);
 
         if opts.verbose {

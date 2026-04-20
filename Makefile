@@ -15,7 +15,7 @@ build: check-deps
 	@echo "Bootstrapping mxpkg..."
 	@cd tools/mxpkg && ../../target/release/mxpkg0 build
 	@echo "Building m2dap..."
-	@cd tools/m2dap && ../../target/release/mx build
+	@cd tools/m2dap && CC=$(CC) ../../target/release/mx build
 
 check-deps:
 	@echo "Checking build prerequisites..."

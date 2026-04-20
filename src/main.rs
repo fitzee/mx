@@ -487,7 +487,9 @@ fn run_subcommand(args: &[String]) {
     let mut debug = false;
     let mut use_llvm = false;
     let mut sanitize = false;
-    let mut cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    let mut cc = std::env::var("CC")
+        .map(|v| v.split_whitespace().next().unwrap_or("cc").to_string())
+        .unwrap_or_else(|_| "cc".to_string());
     let mut features: Vec<String> = Vec::new();
     let mut run_args: Vec<String> = Vec::new();
     let mut saw_dashdash = false;
