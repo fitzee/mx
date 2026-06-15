@@ -180,6 +180,12 @@ int32_t m2_lmdb_dbi_stat_entries(void *txn, uint32_t dbi, uint64_t *entries) {
     return map_rc(rc);
 }
 
+/* ── Environment copy ─────────────────────────────── */
+
+int32_t m2_lmdb_env_copy2(void *env, void *path, int32_t flags) {
+    return mdb_env_copy2((MDB_env *)env, (const char *)path, (unsigned int)flags);
+}
+
 /* ── Error reporting ──────────────────────────────── */
 
 void m2_lmdb_errmsg(int32_t code, char *buf, int32_t bufLen) {

@@ -24,6 +24,8 @@ PROCEDURE m2sys_fseek(handle: INTEGER; offset: LONGINT;
 
 PROCEDURE m2sys_flock(handle: INTEGER; exclusive: INTEGER): INTEGER;
 PROCEDURE m2sys_funlock(handle: INTEGER): INTEGER;
+PROCEDURE m2sys_fsync(handle: INTEGER): INTEGER;
+PROCEDURE m2sys_getpid(): INTEGER;
 
 (* ── File system ─────────────────────────────────────── *)
 

@@ -121,7 +121,7 @@ impl LLVMCodeGen {
                     // Named array params: alloca stores ptr to the array (passed as ptr)
                     // Need to load the pointer for correct GEP
                     let resolved = self.resolve_alias_id(sid.ty);
-                    if self.named_array_params.last().map(|s| s.contains(&sid.source_name)).unwrap_or(false) {
+                    if self.is_named_array_param(&sid.source_name) {
                         let ptr = self.next_tmp();
                         self.emitln(&format!("  {} = load ptr, ptr {}", ptr, addr));
                         (ptr, ty, Some(sid.ty))
@@ -133,12 +133,21 @@ impl LLVMCodeGen {
                 }
             }
             PlaceBase::Global(sid) => {
-                if let Some((addr, ty)) = self.globals.get(&sid.mangled) {
-                    (addr.clone(), ty.clone(), Some(sid.ty))
-                } else if let Some((addr, ty)) = self.globals.get(&sid.source_name) {
-                    (addr.clone(), ty.clone(), Some(sid.ty))
+                let (addr, ty) = if let Some((a, t)) = self.globals.get(&sid.mangled) {
+                    (a.clone(), t.clone())
+                } else if let Some((a, t)) = self.globals.get(&sid.source_name) {
+                    (a.clone(), t.clone())
                 } else {
-                    (format!("@{}", sid.mangled), self.tl_type_str(sid.ty), Some(sid.ty))
+                    (format!("@{}", sid.mangled), self.tl_type_str(sid.ty))
+                };
+                // Promoted named array value param: the global stores a ptr
+                // (array decayed to pointer), need to load for correct address.
+                if ty.starts_with('[') && self.is_named_array_param(&sid.source_name) {
+                    let ptr = self.next_tmp();
+                    self.emitln(&format!("  {} = load ptr, ptr {}", ptr, addr));
+                    (ptr, ty, Some(sid.ty))
+                } else {
+                    (addr, ty, Some(sid.ty))
                 }
             }
             PlaceBase::Constant(cv) => {

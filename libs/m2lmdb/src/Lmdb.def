@@ -114,6 +114,14 @@ PROCEDURE CursorPut(cur: Cursor;
                     val: ADDRESS; valLen: LONGCARD;
                     flags: CARDINAL): Status;
 
+(* ── Environment copy ───────────────────────────── *)
+
+CONST
+  CpCompact = 01H;   (* MDB_CP_COMPACT: compact copy *)
+
+PROCEDURE EnvCopy2(env: Env; path: ARRAY OF CHAR;
+                   flags: CARDINAL): Status;
+
 (* ── Statistics ─────────────────────────────────── *)
 
 (* DbiStatEntries returns the number of entries in the given database

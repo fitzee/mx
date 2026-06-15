@@ -1973,6 +1973,28 @@
     "_comment": "Regression: ADDRESS^[i] byte-level indexing emitted void* indexing in C backend, causing incomplete type error. m2plus feature: treat ADDRESS as POINTER TO ARRAY OF CHAR for indexing."
   },
   {
+    "name": "adr_value_array_param",
+    "category": "codegen",
+    "dir": "codegen/adr_value_array_param",
+    "main": "AdrValueArrayParam.mod",
+    "include_dirs": [
+      ".",
+      "@root/libs/m2sys"
+    ],
+    "extra_c_files": [
+      "@root/libs/m2sys/m2sys.c"
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "value: PASS\nvar: PASS\nindirect: PASS\nnested: PASS\ntwo_params: PASS\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: ADR(param) where param is a non-VAR fixed-size array emitted &param in C (address of pointer) instead of param (the data address). Silent data corruption."
+  },
+  {
     "name": "param_entry_clash",
     "category": "codegen",
     "dir": "codegen/param_entry_clash",

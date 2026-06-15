@@ -677,6 +677,18 @@ impl CodeGen {
         // them here (same approach as the LLVM backend).
         if let Some(ref emb) = hir_emb {
             for pd in &emb.procedures {
+                // Collect parent proc's named array value params so nested
+                // procs can see them (needed for ADR on captured value arrays).
+                let mut parent_na_params = HashSet::new();
+                for hp in &pd.sig.params {
+                    let resolved_tid = self.resolve_hir_alias(hp.type_id);
+                    let is_open = hp.is_open_array;
+                    if !hp.is_var && !is_open {
+                        if matches!(self.sema.types.get(resolved_tid), crate::types::Type::Array { .. }) {
+                            parent_na_params.insert(hp.name.clone());
+                        }
+                    }
+                }
                 for np in &pd.nested_procs {
                     let mangled = format!("{}_{}", pd.sig.name, np.sig.name);
                     let c_name = format!("{}_{}", self.module_name, mangled);
@@ -710,6 +722,9 @@ impl CodeGen {
                             self.emit(&format!("{} {}{};\n", ctype, c_name, arr_suffix));
                         }
                     }
+                    // Push parent's named array value params so ADR() on
+                    // env-captured value array params emits correctly.
+                    self.named_array_value_params.push(parent_na_params.clone());
                     if let Some(ref cfg) = np.cfg {
                         if np.sig.return_type.is_none() {
                             self.emit_cfg_body(cfg);
@@ -717,6 +732,7 @@ impl CodeGen {
                             self.emit_cfg_body_with_return(cfg, "0");
                         }
                     }
+                    self.named_array_value_params.pop();
                     self.indent -= 1;
                     self.emitln("}");
                     self.newline();

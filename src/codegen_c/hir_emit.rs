@@ -80,6 +80,18 @@ impl super::CodeGen {
                                 let s = self.hir_expr_to_string(&args[0]);
                                 return format!("((void *)({}))", s);
                             }
+                            // Named fixed-size array value param: also already a
+                            // pointer in C (array decays to pointer), skip &
+                            let is_named_arr_val = place.projections.is_empty()
+                                && match &place.base {
+                                    PlaceBase::Local(sid) | PlaceBase::Global(sid) =>
+                                        self.is_named_array_value_param(&sid.source_name),
+                                    _ => false,
+                                };
+                            if is_named_arr_val {
+                                let s = self.hir_expr_to_string(&args[0]);
+                                return format!("((void *)({}))", s);
+                            }
                         }
                     }
                     let arg_strs: Vec<String> = args.iter()

@@ -621,6 +621,11 @@ IMPLEMENTATION MODULE Http2ServerConn;
           SendGoaway(cp, ErrProtocol);
           EXIT;
         END;
+        (* RFC 7540 §4.2: reject frames exceeding SETTINGS_MAX_FRAME_SIZE *)
+        IF cp^.curHeader.length > cp^.localSettings.maxFrameSize THEN
+          SendGoaway(cp, ErrFrameSize);
+          EXIT
+        END;
         cp^.haveHeader := TRUE;
       END;
 
@@ -736,7 +741,15 @@ IMPLEMENTATION MODULE Http2ServerConn;
         IF got > 0 THEN
           v.base := ADR(tmpBuf);
           v.len := CARDINAL(got);
-          AppendView(cp^.readBuf, v);
+          IF NOT AppendView(cp^.readBuf, v) THEN
+            (* Read buffer allocation failed — close connection *)
+            SendGoaway(cp, ErrInternal);
+            cp^.phase := CpClosed;
+            IF ConnCleanup # NIL THEN
+              ConnCleanup(cp^.server, cp)
+            END;
+            RETURN
+          END
         ELSE
           (* got=0 means EOF — peer closed *)
           cp^.phase := CpClosed;

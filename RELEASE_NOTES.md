@@ -1,5 +1,23 @@
 # Release Notes
 
+## 1.10.4 (2026-06-15)
+
+### Bug fixes
+
+- **C backend: ADR() of by-value array parameter** — `ADR(param)` where `param` is a non-VAR fixed-size array parameter now correctly emits the array data address instead of the address of the C pointer variable. The compiler optimizes value array params to pointer passing, but `ADR` was emitting `&pointer` instead of `pointer`, causing silent data corruption in any code using `ADR` on value array params for C FFI calls.
+- **LLVM backend: ADR() of by-value array parameter** — Same fix as above for the LLVM backend. Additionally fixes closure capture of named array value params, where the promoted global was using incorrect load/store types.
+- **C/LLVM: ADR() in nested procedures** — `ADR` on a value array parameter captured from an enclosing procedure now correctly resolves through closure env structs (C backend) and promoted globals (LLVM backend).
+
+### Libraries
+
+- **m2lmdb 0.3.0** — Added `EnvCopy2` procedure and `CpCompact` flag for LMDB environment backup with compaction.
+- **m2sys 0.3.0** — Added `m2sys_fsync` (file sync) and `m2sys_getpid` (process ID) system calls.
+- **m2http2server 0.2.2** — Reject frames exceeding `SETTINGS_MAX_FRAME_SIZE` per RFC 7540 §4.2; handle read buffer allocation failure gracefully instead of silently dropping data.
+
+### Test coverage
+
+- **Adversarial regression test** — Added `adr_value_array_param` codegen test covering ADR on value params, VAR params, indirect ADDRESS passing, nested procedure captures, and multi-param cases.
+
 ## 1.10.3 (2026-04-20)
 
 ### Bug fixes

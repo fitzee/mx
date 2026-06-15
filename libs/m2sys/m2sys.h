@@ -66,6 +66,12 @@ int32_t m2sys_fread_bytes(int32_t handle, void *buf, int32_t maxLen);
 int32_t m2sys_flock(int32_t handle, int32_t exclusive);
 int32_t m2sys_funlock(int32_t handle);
 
+/* File durability */
+int32_t m2sys_fsync(int32_t handle);
+
+/* Process identity */
+int32_t m2sys_getpid(void);
+
 /* Remove directory recursively */
 int32_t m2sys_rmdir_r(void *path);
 

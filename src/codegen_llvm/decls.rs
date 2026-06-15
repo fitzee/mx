@@ -460,6 +460,9 @@ impl LLVMCodeGen {
             .flat_map(|l| l.keys().cloned())
             .collect();
         let mut nested_procs = Vec::new();
+        // Track parent's named array params captured by nested procs
+        let parent_named_arr: HashSet<String> = self.named_array_params.last()
+            .cloned().unwrap_or_default();
         for nested in &proc.nested_procs {
             let nested_name = format!("{}_{}", proc_name, nested.sig.name);
             self.declared_fns.insert(nested_name.clone());
@@ -501,12 +504,21 @@ impl LLVMCodeGen {
                     .find_map(|l| l.get(&cap.name).cloned());
                 if let Some((alloca, ty)) = found {
                     if alloca.starts_with('@') { continue; }
+                    // Named array value params: the alloca stores a ptr (array
+                    // decayed to pointer), not the array itself. Use ptr type
+                    // for the global so load/store are correct, but keep the
+                    // array type in the locals/globals entry so emit_place_addr
+                    // recognizes it and applies the named-array-param load.
+                    let is_named_arr = self.is_named_array_param(&cap.name);
+                    let storage_ty = if is_named_arr { "ptr" } else { ty.as_str() };
                     let global_name = format!("@{}_{}", proc_name, cap.name);
-                    let zero = self.llvm_zero_initializer(&ty);
-                    self.emit_preambleln(&format!("{} = global {} {}", global_name, ty, zero));
+                    let zero = self.llvm_zero_initializer(storage_ty);
+                    self.emit_preambleln(&format!("{} = global {} {}", global_name, storage_ty, zero));
                     let tmp = self.next_tmp();
-                    self.emitln(&format!("  {} = load {}, ptr {}", tmp, ty, alloca));
-                    self.emitln(&format!("  store {} {}, ptr {}", ty, tmp, global_name));
+                    self.emitln(&format!("  {} = load {}, ptr {}", tmp, storage_ty, alloca));
+                    self.emitln(&format!("  store {} {}, ptr {}", storage_ty, tmp, global_name));
+                    // Use the original array type in tracking so emit_place_addr
+                    // applies the named-array-param indirection.
                     self.locals.last_mut().unwrap().insert(cap.name.clone(), (global_name.clone(), ty.clone()));
                     self.globals.insert(cap.name.clone(), (global_name, ty));
                 }
@@ -534,9 +546,16 @@ impl LLVMCodeGen {
             di.leave_scope();
         }
 
-        // Emit nested procedures
+        // Emit nested procedures — push parent's named array params so
+        // ADR and element access on captured value array params work correctly.
         for nested in nested_procs {
+            if !parent_named_arr.is_empty() {
+                self.named_array_params.push(parent_named_arr.clone());
+            }
             self.gen_hir_proc_decl(&nested)?;
+            if !parent_named_arr.is_empty() {
+                self.named_array_params.pop();
+            }
         }
         self.parent_proc_stack.pop();
         self.var_types = saved_var_types;

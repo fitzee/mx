@@ -448,6 +448,17 @@ int32_t m2sys_funlock(int32_t handle) {
     return flock(fd, LOCK_UN) == 0 ? 0 : -1;
 }
 
+int32_t m2sys_fsync(int32_t handle) {
+    if (handle < 0 || handle >= MAX_HANDLES || !handle_table[handle]) return -1;
+    fflush(handle_table[handle]);
+    int fd = fileno(handle_table[handle]);
+    return fsync(fd) == 0 ? 0 : -1;
+}
+
+int32_t m2sys_getpid(void) {
+    return (int32_t)getpid();
+}
+
 /* ── Remove directory recursively ──────────────────────────────── */
 
 int32_t m2sys_rmdir_r(void *path) {

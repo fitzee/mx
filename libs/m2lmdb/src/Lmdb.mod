@@ -8,6 +8,7 @@ FROM LmdbBridge IMPORT
   m2_lmdb_env_create, m2_lmdb_env_open, m2_lmdb_env_close,
   m2_lmdb_env_set_mapsize, m2_lmdb_env_set_maxdbs,
   m2_lmdb_env_set_maxreaders, m2_lmdb_env_sync,
+  m2_lmdb_env_copy2,
   m2_lmdb_txn_begin, m2_lmdb_txn_commit, m2_lmdb_txn_abort,
   m2_lmdb_txn_reset, m2_lmdb_txn_renew,
   m2_lmdb_dbi_open,
@@ -217,6 +218,21 @@ BEGIN
   rc := m2_lmdb_cursor_put(cur, key, keyLen, val, valLen, flags);
   RETURN MapStatus(rc)
 END CursorPut;
+
+(* ── Environment copy ───────────────────────────── *)
+
+PROCEDURE EnvCopy2(env: Env; path: ARRAY OF CHAR;
+                   flags: CARDINAL): Status;
+VAR
+  rc:  INTEGER;
+  buf: ARRAY [0..511] OF CHAR;
+BEGIN
+  CopyStr(path, buf);
+  rc := m2_lmdb_env_copy2(env, ADR(buf), VAL(INTEGER, flags));
+  IF rc = 0 THEN RETURN LmOk
+  ELSE RETURN LmError
+  END
+END EnvCopy2;
 
 (* ── Statistics ─────────────────────────────────── *)
 

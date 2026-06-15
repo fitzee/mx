@@ -74,6 +74,10 @@ int32_t m2_lmdb_cursor_put(void *cur,
 
 int32_t m2_lmdb_dbi_stat_entries(void *txn, uint32_t dbi, uint64_t *entries);
 
+/* ── Environment copy ─────────────────────────────── */
+
+int32_t m2_lmdb_env_copy2(void *env, void *path, int32_t flags);
+
 /* ── Error reporting ──────────────────────────────── */
 
 void m2_lmdb_errmsg(int32_t code, char *buf, int32_t bufLen);

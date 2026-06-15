@@ -784,6 +784,23 @@ impl CodeGen {
         // Push parent proc name — stays for entire proc scope (nested proc mangling + Module skip)
         self.parent_proc_stack.push(proc_name.to_string());
 
+        // Compute parent proc's named array value params so nested procs
+        // can correctly emit ADR() on env-captured value array params.
+        let parent_na_params: HashSet<String> = early_sig.as_ref()
+            .map(|sig| {
+                sig.params.iter().filter_map(|hp| {
+                    let resolved = self.resolve_hir_alias(hp.type_id);
+                    let is_open = matches!(self.sema.types.get(resolved), crate::types::Type::OpenArray { .. });
+                    if !hp.is_var && !is_open {
+                        if matches!(self.sema.types.get(resolved), crate::types::Type::Array { .. }) {
+                            return Some(hp.name.clone());
+                        }
+                    }
+                    None
+                }).collect()
+            })
+            .unwrap_or_default();
+
         // Generate nested procs (lifted to top level, with env param if they have captures)
         for np_name in &nested_proc_names {
             let mangled = format!("{}_{}", proc_name, np_name);
@@ -829,7 +846,14 @@ impl CodeGen {
                 }
                 self.env_access_names.push(np_captures.iter().cloned().collect());
             }
+            // Push parent's named array value params for ADR correctness
+            if !parent_na_params.is_empty() {
+                self.named_array_value_params.push(parent_na_params.clone());
+            }
             self.gen_proc_by_name(np_name);
+            if !parent_na_params.is_empty() {
+                self.named_array_value_params.pop();
+            }
             if self.closure_env_type.contains_key(np_name) {
                 self.env_access_names.pop();
             }
@@ -995,6 +1019,12 @@ impl CodeGen {
                 } else if self.is_var_param(cap_name) {
                     // VAR param: already a pointer
                     self.emit(&format!("_child_env.{} = {};\n", cap_name, cap_name));
+                } else if self.is_named_array_value_param(cap_name) {
+                    // Named array value param: C decays array to pointer,
+                    // so param is already a pointer — cast to array pointer
+                    // type to match env struct field type.
+                    self.emit(&format!("_child_env.{} = ({} *){};\n",
+                        cap_name, _cap_type, self.mangle(cap_name)));
                 } else {
                     // Regular local/param: take address
                     self.emit(&format!("_child_env.{} = &{};\n", cap_name, self.mangle(cap_name)));
