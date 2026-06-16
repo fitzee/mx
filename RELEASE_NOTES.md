@@ -1,5 +1,11 @@
 # Release Notes
 
+## 1.10.5 (2026-06-16)
+
+### Bug fixes
+
+- **Sema: reject calls to unimported procedures** — Calling a procedure from a `DEFINITION MODULE FOR "C"` without importing it via `FROM M IMPORT name` now produces a compile error instead of silently compiling and returning zero at runtime. The error message identifies the source module: `'X' is not imported; add it to FROM M IMPORT ...`.
+
 ## 1.10.4 (2026-06-15)
 
 ### Bug fixes

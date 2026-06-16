@@ -1168,6 +1168,24 @@
     "_comment": "Procedure referencing module-level VAR declared after the procedure."
   },
   {
+    "name": "unimported_ffi_call",
+    "category": "semantics",
+    "dir": "semantics/unimported_ffi_call",
+    "main": "UnimportedFFI.mod",
+    "include_dirs": [
+      ".",
+      "@root/libs/m2sys"
+    ],
+    "m2plus": false,
+    "expect_compile_fail": true,
+    "compile_fail_match": "is not imported",
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: calling an unimported procedure from a FOR C def module must be a compile error, not silently return 0."
+  },
+  {
     "name": "const_forward_ref",
     "category": "semantics",
     "dir": "semantics/const_forward_ref",

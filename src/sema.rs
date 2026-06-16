@@ -1510,7 +1510,7 @@ impl SemanticAnalyzer {
                 }
             }
             StatementKind::ProcCall { desig, args } => {
-                self.analyze_designator(desig);
+                let desig_type = self.analyze_designator(desig);
                 // Check if it's a builtin
                 let name = &desig.ident.name;
                 if builtins::is_builtin_proc(name) {
@@ -1518,6 +1518,33 @@ impl SemanticAnalyzer {
                     // W05: INC/DEC on bounded subrange
                     self.lint_inc_dec_subrange(name, args, &stmt.loc);
                 } else {
+                    // Catch calls to procedures not in scope (not imported)
+                    if desig_type == TY_ERROR && desig.ident.module.is_none() {
+                        let resolved = self.symtab.lookup_in_scope(self.current_scope, name);
+                        if resolved.is_none() {
+                            if let Some(sym) = self.symtab.lookup_any(name) {
+                                if let Some(ref module) = sym.module {
+                                    self.error(
+                                        &desig.ident.loc,
+                                        format!(
+                                            "'{}' is not imported; add it to FROM {} IMPORT ...",
+                                            name, module
+                                        ),
+                                    );
+                                } else {
+                                    self.error(
+                                        &desig.ident.loc,
+                                        format!("'{}' is not declared", name),
+                                    );
+                                }
+                            } else {
+                                self.error(
+                                    &desig.ident.loc,
+                                    format!("'{}' is not declared", name),
+                                );
+                            }
+                        }
+                    }
                     self.check_call_arg_types(name, args);
                     // W04: VAR parameter aliasing
                     self.lint_var_param_aliasing(name, args);
@@ -1745,13 +1772,40 @@ impl SemanticAnalyzer {
             ExprKind::NilLit => TY_NIL,
             ExprKind::Designator(d) => self.analyze_designator(d),
             ExprKind::FuncCall { desig, args } => {
-                self.analyze_designator(desig);
+                let desig_type = self.analyze_designator(desig);
                 let name = &desig.ident.name;
                 if builtins::is_builtin_proc(name) {
                     for arg in args {
                         self.analyze_expr(arg);
                     }
                     return builtins::builtin_return_type(name);
+                }
+                // Catch calls to functions not in scope (not imported)
+                if desig_type == TY_ERROR && desig.ident.module.is_none() {
+                    let resolved = self.symtab.lookup_in_scope(self.current_scope, name);
+                    if resolved.is_none() {
+                        if let Some(sym) = self.symtab.lookup_any(name) {
+                            if let Some(ref module) = sym.module {
+                                self.error(
+                                    &desig.ident.loc,
+                                    format!(
+                                        "'{}' is not imported; add it to FROM {} IMPORT ...",
+                                        name, module
+                                    ),
+                                );
+                            } else {
+                                self.error(
+                                    &desig.ident.loc,
+                                    format!("'{}' is not declared", name),
+                                );
+                            }
+                        } else {
+                            self.error(
+                                &desig.ident.loc,
+                                format!("'{}' is not declared", name),
+                            );
+                        }
+                    }
                 }
                 // Look up procedure and get return type
                 let ret = if let Some(sym) = self.symtab.lookup(name).cloned() {
@@ -1944,7 +1998,10 @@ impl SemanticAnalyzer {
                 self.record_use_ref(&desig.ident.loc, &desig.ident.name, def_scope);
                 typ
             } else {
-                // Don't error for imported names that might be forward-declared
+                // Don't error here — forward refs (VAR/CONST declared after
+                // procedure), WITH field names, and TYPECASE bindings are
+                // legitimately unresolved at this point. Unresolved procedure
+                // calls are caught separately in ProcCall analysis.
                 TY_ERROR
             }
         };
