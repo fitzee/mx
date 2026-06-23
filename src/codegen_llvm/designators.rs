@@ -188,6 +188,7 @@ impl LLVMCodeGen {
         };
 
         // Apply projections
+        let mut after_type_transfer = false;
         for proj in &place.projections {
             match &proj.kind {
                 ProjectionKind::Field { index, record_ty, .. } => {
@@ -268,15 +269,22 @@ impl LLVMCodeGen {
                     current_type_id = Some(proj.ty);
                 }
                 ProjectionKind::Deref => {
-                    let loaded = self.next_tmp();
-                    self.emitln(&format!("  {} = load ptr, ptr {}", loaded, current_addr));
-                    current_addr = loaded;
+                    if after_type_transfer {
+                        // After TypeTransfer, current_addr IS the pointer
+                        // value (the result of the type cast).  Deref means
+                        // "use this pointer as the data address" — no load.
+                        after_type_transfer = false;
+                    } else {
+                        let loaded = self.next_tmp();
+                        self.emitln(&format!("  {} = load ptr, ptr {}", loaded, current_addr));
+                        current_addr = loaded;
+                    }
                     current_ty = self.tl_type_str(proj.ty);
                     current_type_id = Some(proj.ty);
                 }
                 ProjectionKind::TypeTransfer(arg_expr) => {
                     // Type transfer in designator: TypeName(expr)
-                    // The result is a pointer type (used before ^ deref).
+                    // The result is a pointer value (used before ^ deref).
                     // If the arg is an integer, emit inttoptr; otherwise
                     // the arg is already a ptr.
                     let arg_val = self.gen_hir_expr(arg_expr);
@@ -292,6 +300,7 @@ impl LLVMCodeGen {
                     }
                     current_ty = self.tl_type_str(proj.ty);
                     current_type_id = Some(proj.ty);
+                    after_type_transfer = true;
                 }
             }
         }

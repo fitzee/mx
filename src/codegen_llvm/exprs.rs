@@ -222,12 +222,34 @@ impl LLVMCodeGen {
                             return Val::with_tid("4", "i32".to_string(), expr.ty);
                         }
                         "MAX" | "MIN" => {
-                            // Type queries — handled as constants during lowering ideally
-                            // For now, default values
+                            // Resolve the type argument to determine correct max/min value
+                            let type_name = if let Some(arg) = args.first() {
+                                if let HirExprKind::Place(ref place) = arg.kind {
+                                    match &place.base {
+                                        crate::hir::PlaceBase::Local(sid) | crate::hir::PlaceBase::Global(sid)
+                                            => sid.source_name.clone(),
+                                        _ => String::new(),
+                                    }
+                                } else { String::new() }
+                            } else { String::new() };
+                            let is_unsigned = matches!(type_name.as_str(),
+                                "CARDINAL" | "LONGCARD" | "BITSET" | "CHAR" | "BOOLEAN" | "BYTE" | "WORD");
                             if name == "MAX" {
-                                return Val::with_tid(format!("{}", i32::MAX), "i32".to_string(), expr.ty);
+                                let val = match type_name.as_str() {
+                                    "CARDINAL" | "LONGCARD" | "BITSET" | "WORD" => format!("{}", u32::MAX),
+                                    "CHAR" | "BYTE" => "255".to_string(),
+                                    "BOOLEAN" => "1".to_string(),
+                                    _ => format!("{}", i32::MAX),
+                                };
+                                let ty = if is_unsigned { "i32" } else { "i32" };
+                                return Val::with_tid(val, ty.to_string(), expr.ty);
                             } else {
-                                return Val::with_tid(format!("{}", i32::MIN), "i32".to_string(), expr.ty);
+                                let val = match type_name.as_str() {
+                                    "CARDINAL" | "LONGCARD" | "BITSET" | "CHAR" | "BYTE"
+                                    | "BOOLEAN" | "WORD" => "0".to_string(),
+                                    _ => format!("{}", i32::MIN),
+                                };
+                                return Val::with_tid(val, "i32".to_string(), expr.ty);
                             }
                         }
                         "BAND" | "BOR" | "BXOR" => {
