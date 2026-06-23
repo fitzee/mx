@@ -84,6 +84,10 @@ pub enum ProjectionKind {
         name: String,
         record_ty: TypeId,
     },
+    /// Type transfer in designator context: TypeName(expr)^.field
+    /// Used when a type cast appears as an assignment target with
+    /// subsequent selectors (e.g. CharPtr(p)^ := val).
+    TypeTransfer(Box<HirExpr>),
 }
 
 /// A constant value resolved during HIR construction.

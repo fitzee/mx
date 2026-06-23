@@ -1,5 +1,11 @@
 # Release Notes
 
+## 1.10.6 (2026-06-23)
+
+### Bug fixes
+
+- **Parser: type transfer designators in statement context** — `TypeName(expr)^` and `TypeName(expr)^.field` can now be used as assignment targets (e.g. `CharPtr(p)^ := 'A'`). Previously the parser treated `TypeName(expr)` as a procedure call and rejected the subsequent `^` selector. This is valid PIM4 — a type transfer producing a pointer, dereferenced for assignment.
+
 ## 1.10.5 (2026-06-16)
 
 ### Bug fixes

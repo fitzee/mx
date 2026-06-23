@@ -480,4 +480,7 @@ pub enum Selector {
     Field(Ident, SourceLoc),
     Index(Vec<Expr>, SourceLoc),
     Deref(SourceLoc),
+    /// Type transfer call in a designator context: TypeName(expr)^.field
+    /// The args are the type transfer arguments (typically one expression).
+    Call(Vec<Expr>, SourceLoc),
 }

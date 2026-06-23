@@ -274,6 +274,25 @@ impl LLVMCodeGen {
                     current_ty = self.tl_type_str(proj.ty);
                     current_type_id = Some(proj.ty);
                 }
+                ProjectionKind::TypeTransfer(arg_expr) => {
+                    // Type transfer in designator: TypeName(expr)
+                    // The result is a pointer type (used before ^ deref).
+                    // If the arg is an integer, emit inttoptr; otherwise
+                    // the arg is already a ptr.
+                    let arg_val = self.gen_hir_expr(arg_expr);
+                    if arg_val.ty == "ptr" {
+                        current_addr = arg_val.name;
+                    } else {
+                        let cast = self.next_tmp();
+                        self.emitln(&format!(
+                            "  {} = inttoptr {} {} to ptr",
+                            cast, arg_val.ty, arg_val.name
+                        ));
+                        current_addr = cast;
+                    }
+                    current_ty = self.tl_type_str(proj.ty);
+                    current_type_id = Some(proj.ty);
+                }
             }
         }
 

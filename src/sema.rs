@@ -2109,6 +2109,20 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
+                Selector::Call(args, _) => {
+                    // Type transfer in designator context: TypeName(expr)^
+                    // The designator ident names a type; the call applies a
+                    // type transfer.  Analyze args and resolve the target type.
+                    for arg in args {
+                        self.analyze_expr(arg);
+                    }
+                    if let Some(tid) = self.symtab.find_type(&desig.ident.name) {
+                        current_type = tid;
+                    } else {
+                        // Could be a pointer type — just trust it
+                        current_type = TY_ADDRESS;
+                    }
+                }
             }
         }
         current_type
@@ -2487,6 +2501,7 @@ impl SemanticAnalyzer {
                 }
                 Selector::Index(_, _) => key.push_str("[*]"),
                 Selector::Deref(_) => key.push('^'),
+                Selector::Call(_, _) => key.push_str("()"),
             }
         }
         key

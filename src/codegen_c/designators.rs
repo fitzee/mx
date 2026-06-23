@@ -220,6 +220,13 @@ impl CodeGen {
                     }
                     result = format!("(*{})", result);
                 }
+                ProjectionKind::TypeTransfer(arg_expr) => {
+                    // Type transfer in designator: TypeName(expr)
+                    // Emit as a C cast: (TargetType)(arg)
+                    let arg_str = self.hir_expr_to_string(arg_expr);
+                    let target_type = self.type_id_to_c(proj.ty);
+                    result = format!("(({})({}))", target_type, arg_str);
+                }
             }
             i += 1;
         }

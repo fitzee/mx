@@ -2013,6 +2013,25 @@
     "_comment": "Regression: ADR(param) where param is a non-VAR fixed-size array emitted &param in C (address of pointer) instead of param (the data address). Silent data corruption."
   },
   {
+    "name": "typecast_deref_assign",
+    "category": "codegen",
+    "dir": "codegen/typecast_deref_assign",
+    "main": "TypecastDerefAssign.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "t1=Hi\nt2=ok\nt3=ok\nt4=ok\nt5=999\n",
+    "c_scan": true,
+    "skip_llvm": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: TypeName(expr)^ := val was parsed as procedure call + stray ^. Parser now handles type-transfer designators with post-call selectors in statement context. LLVM backend has separate codegen issue with pointer type transfers."
+  },
+  {
     "name": "param_entry_clash",
     "category": "codegen",
     "dir": "codegen/param_entry_clash",

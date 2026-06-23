@@ -1214,6 +1214,7 @@ impl Parser {
                 loc,
             })
         } else if self.eat(&TokenKind::LParen) {
+            let call_loc = self.loc();
             let mut args = Vec::new();
             if !self.at(&TokenKind::RParen) {
                 args.push(self.parse_expression()?);
@@ -1222,10 +1223,50 @@ impl Parser {
                 }
             }
             self.expect(&TokenKind::RParen)?;
-            Ok(Statement {
-                kind: StatementKind::ProcCall { desig, args },
-                loc,
-            })
+            // Check for post-call selectors: ^, ., [
+            // If present, this is a type-transfer designator (e.g. CharPtr(p)^ := val),
+            // not a procedure call.
+            if matches!(self.peek(), TokenKind::Caret | TokenKind::Dot | TokenKind::LBrack) {
+                let mut desig = desig;
+                desig.selectors.push(Selector::Call(args, call_loc));
+                loop {
+                    match self.peek() {
+                        TokenKind::Dot => {
+                            let sloc = self.loc();
+                            self.advance();
+                            let field = self.expect_ident()?;
+                            desig.selectors.push(Selector::Field(field, sloc));
+                        }
+                        TokenKind::LBrack => {
+                            let sloc = self.loc();
+                            self.advance();
+                            let mut indices = vec![self.parse_expression()?];
+                            while self.eat(&TokenKind::Comma) {
+                                indices.push(self.parse_expression()?);
+                            }
+                            self.expect(&TokenKind::RBrack)?;
+                            desig.selectors.push(Selector::Index(indices, sloc));
+                        }
+                        TokenKind::Caret => {
+                            let sloc = self.loc();
+                            self.advance();
+                            desig.selectors.push(Selector::Deref(sloc));
+                        }
+                        _ => break,
+                    }
+                }
+                self.expect(&TokenKind::Assign)?;
+                let expr = self.parse_expression()?;
+                Ok(Statement {
+                    kind: StatementKind::Assign { desig, expr },
+                    loc,
+                })
+            } else {
+                Ok(Statement {
+                    kind: StatementKind::ProcCall { desig, args },
+                    loc,
+                })
+            }
         } else {
             // bare procedure call with no args
             Ok(Statement {

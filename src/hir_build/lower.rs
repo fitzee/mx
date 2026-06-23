@@ -808,6 +808,24 @@ impl<'a> HirBuilder<'a> {
                     }
                 }
             }
+            Selector::Call(args, _) => {
+                // Type transfer in designator context: TypeName(expr)^
+                // Emits as a TypeTransfer projection — the type is the
+                // target type named by the designator ident.
+                let arg_expr = if let Some(a) = args.first() {
+                    self.lower_expr(a)
+                } else {
+                    HirExpr {
+                        kind: HirExprKind::IntLit(0),
+                        ty: TY_INTEGER,
+                        loc: crate::errors::SourceLoc::new("", 0, 0),
+                    }
+                };
+                Some(Projection {
+                    kind: ProjectionKind::TypeTransfer(Box::new(arg_expr)),
+                    ty: resolved,
+                })
+            }
         }
     }
 
