@@ -124,6 +124,21 @@ impl CodeGen {
         false
     }
 
+    /// Check if a TypeId is an alias to a different named type.
+    /// Returns Some(target_name) if so, None otherwise.
+    /// Used to emit `typedef TargetName AliasName;` instead of
+    /// duplicating the struct definition.
+    pub(crate) fn is_alias_to_named_type(&self, tid: crate::types::TypeId, name: &str) -> Option<String> {
+        if let crate::types::Type::Alias { target, .. } = self.sema.types.get(tid) {
+            if let crate::types::Type::Alias { name: target_name, .. } = self.sema.types.get(*target) {
+                if target_name != name {
+                    return Some(target_name.clone());
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn is_named_array_value_param(&self, name: &str) -> bool {
         for scope in self.named_array_value_params.iter().rev() {
             if scope.contains(name) {

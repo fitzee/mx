@@ -5,6 +5,7 @@
 ### Bug fixes
 
 - **Parser: type transfer designators in statement context** — `TypeName(expr)^` and `TypeName(expr)^.field` can now be used as assignment targets (e.g. `CharPtr(p)^ := 'A'`). Previously the parser treated `TypeName(expr)` as a procedure call and rejected the subsequent `^` selector. This is valid PIM4 — a type transfer producing a pointer, dereferenced for assignment.
+- **C backend: type aliases emit typedef instead of duplicate struct** — `TYPE Alias = RecordType` now emits `typedef RecordType Alias;` in the generated C instead of a separate `struct Alias { ... }` with duplicated fields. The duplicate struct caused C compiler errors when passing alias-typed values to procedures expecting the original type.
 
 ## 1.10.5 (2026-06-16)
 

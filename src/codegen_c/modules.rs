@@ -98,6 +98,15 @@ impl CodeGen {
                     .collect()
             }).unwrap_or_default();
             for (name, tid) in &type_syms {
+                // Skip aliases to other named types — they'll get a
+                // plain typedef (not a struct forward decl) later.
+                if let crate::types::Type::Alias { target, .. } = self.sema.types.get(*tid) {
+                    if let crate::types::Type::Alias { name: target_name, .. } = self.sema.types.get(*target) {
+                        if target_name != name {
+                            continue;
+                        }
+                    }
+                }
                 let resolved = self.resolve_hir_alias(*tid);
                 let cn = self.mangle(name);
                 match self.sema.types.get(resolved) {
@@ -438,6 +447,9 @@ impl CodeGen {
                         .collect()
                 }).unwrap_or_default();
                 for (name, tid) in &def_types {
+                    if self.is_alias_to_named_type(*tid, name).is_some() {
+                        continue;
+                    }
                     let resolved = self.resolve_hir_alias(*tid);
                     if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
                         let cn = self.type_decl_c_name(name);
@@ -452,6 +464,9 @@ impl CodeGen {
         // uses the named record's own forward decl.
         if let Some(ref emb) = hir_emb {
             for td in &emb.type_decls {
+                if self.is_alias_to_named_type(td.type_id, &td.name).is_some() {
+                    continue;
+                }
                 let resolved = self.resolve_hir_alias(td.type_id);
                 if matches!(self.sema.types.get(resolved), crate::types::Type::Record { .. }) {
                     let cn = self.type_decl_c_name(&td.name);
@@ -1252,6 +1267,10 @@ impl CodeGen {
             return;
         };
         for td in &types {
+            // Skip aliases to other named types — they get a plain typedef.
+            if self.is_alias_to_named_type(td.type_id, &td.name).is_some() {
+                continue;
+            }
             let resolved = self.resolve_hir_alias(td.type_id);
             // Only forward-declare direct Record types. Pointer-to-Record with
             // inline record body gets its _r tag from gen_type_decl.

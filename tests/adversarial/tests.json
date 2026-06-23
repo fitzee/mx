@@ -2032,6 +2032,24 @@
     "_comment": "Regression: TypeName(expr)^ := val was parsed as procedure call + stray ^. Parser now handles type-transfer designators with post-call selectors in statement context. LLVM backend has separate codegen issue with pointer type transfers."
   },
   {
+    "name": "type_alias_record",
+    "category": "codegen",
+    "dir": "codegen/type_alias_record",
+    "main": "TypeAliasRecord.mod",
+    "include_dirs": [
+      "."
+    ],
+    "m2plus": false,
+    "expected_exit": 0,
+    "expected_stdout": "sum=(4,6)\np=(4,6)\ncx=3\n",
+    "c_scan": true,
+    "tags": [
+      "ci",
+      "regression"
+    ],
+    "_comment": "Regression: TYPE Alias = RecordType emitted a duplicate struct in C instead of typedef, causing incompatible type errors when passing alias-typed values to procedures."
+  },
+  {
     "name": "param_entry_clash",
     "category": "codegen",
     "dir": "codegen/param_entry_clash",

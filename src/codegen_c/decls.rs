@@ -87,6 +87,17 @@ impl CodeGen {
         if resolved != type_id && resolved >= 20 {
             self.typeid_c_names.insert(resolved, c_type_name.clone());
         }
+        // Type alias to an already-declared named type: emit a C typedef
+        // instead of duplicating the struct definition.
+        if let Some(target_name) = self.is_alias_to_named_type(type_id, name) {
+            let target_c = self.type_decl_c_name(&target_name);
+            if self.known_type_names.contains(target_name.as_str())
+                || self.known_type_names.contains(&target_c)
+            {
+                self.emitln(&format!("typedef {} {};", target_c, c_type_name));
+                return;
+            }
+        }
         let ty = self.sema.types.get(resolved).clone();
         match &ty {
             crate::types::Type::Record { fields, variants } => {
