@@ -6,6 +6,7 @@
 
 - **Parser: type transfer designators in statement context** — `TypeName(expr)^` and `TypeName(expr)^.field` can now be used as assignment targets (e.g. `CharPtr(p)^ := 'A'`). Previously the parser treated `TypeName(expr)` as a procedure call and rejected the subsequent `^` selector. This is valid PIM4 — a type transfer producing a pointer, dereferenced for assignment.
 - **C backend: type aliases emit typedef instead of duplicate struct** — `TYPE Alias = RecordType` now emits `typedef RecordType Alias;` in the generated C instead of a separate `struct Alias { ... }` with duplicated fields. The duplicate struct caused C compiler errors when passing alias-typed values to procedures expecting the original type.
+- **Sema: TSIZE/SIZE evaluated correctly in constant expressions** — `TSIZE(RecordType)` in array bounds and constant declarations now computes the correct size using `TargetInfo::type_size`. Previously it returned 0 for cross-module types, causing zero-length arrays and buffer overflows.
 - **LLVM backend: MAX/MIN return correct values for unsigned types** — `MAX(CARDINAL)` now correctly returns 4294967295 (2^32-1) on the LLVM backend. Previously it returned 2147483647 (signed i32 max) for all types, causing silent data corruption in unsigned arithmetic.
 - **LLVM backend: type transfer deref in designator context** — `TypeName(expr)^` as an assignment target no longer crashes on the LLVM backend. The TypeTransfer+Deref projection sequence was emitting a spurious pointer load.
 

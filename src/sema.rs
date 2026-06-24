@@ -2718,6 +2718,29 @@ impl SemanticAnalyzer {
                             other => other,
                         }
                     }
+                    "TSIZE" | "SIZE" if args.len() == 1 => {
+                        // Resolve the type argument and compute its size
+                        if let ExprKind::Designator(d) = &args[0].kind {
+                            let type_name = &d.ident.name;
+                            // Look up as a type in the symbol table
+                            if let Some(tid) = self.symtab.find_type(type_name) {
+                                let target = crate::target::TargetInfo::from_host();
+                                let size = target.type_size(tid, &self.types);
+                                ConstValue::Integer(size as i64)
+                            } else {
+                                // Try built-in type names
+                                let size = match type_name.as_str() {
+                                    "INTEGER" | "CARDINAL" | "REAL" | "BITSET" | "WORD" => 4,
+                                    "LONGINT" | "LONGCARD" | "LONGREAL" | "ADDRESS" => 8,
+                                    "CHAR" | "BYTE" | "BOOLEAN" => 1,
+                                    _ => 0,
+                                };
+                                ConstValue::Integer(size)
+                            }
+                        } else {
+                            ConstValue::Integer(0)
+                        }
+                    }
                     _ => ConstValue::Integer(0),
                 }
             }
